@@ -4,7 +4,6 @@
 **Một bảng điều khiển web sing-box được duy trì tích cực để quản lý proxy đa giao thức, phân phối subscription, giám sát lưu lượng và triển khai tự lưu trữ.**
 
 ![](https://img.shields.io/github/v/release/shenaba/2s-ui.svg)
-[![Container image](https://img.shields.io/badge/container-ghcr.io%2Fshenaba%2F2s--ui-blue?logo=docker)](https://github.com/shenaba/2s-ui/actions/workflows/docker.yml)
 [![Docker Pulls](https://img.shields.io/docker/pulls/shenaba/2s-ui.svg)](https://hub.docker.com/r/shenaba/2s-ui)
 [![Go Report Card](https://goreportcard.com/badge/github.com/shenaba/2s-ui)](https://goreportcard.com/report/github.com/shenaba/2s-ui)
 [![Downloads](https://img.shields.io/github/downloads/shenaba/2s-ui/total.svg)](https://github.com/shenaba/2s-ui/releases)
