@@ -135,27 +135,31 @@ install_s-ui() {
     cd /tmp/
 
     if [ $# == 0 ]; then
-        last_version=$(curl -Ls "https://api.github.com/repos/shenaba/2s-ui/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-        if [[ ! -n "$last_version" ]]; then
+        tag=$(curl -Ls "https://api.github.com/repos/shenaba/2s-ui/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+        if [[ ! -n "$tag" ]]; then
             echo -e "${red}Failed to fetch s-ui version, it maybe due to Github API restrictions, please try it later${plain}"
             exit 1
         fi
-        echo -e "Got s-ui latest version: ${last_version}, beginning the installation..."
-        wget -N --no-check-certificate -O /tmp/s-ui-linux-$(arch).tar.gz https://github.com/shenaba/2s-ui/releases/download/${last_version}/s-ui-linux-$(arch).tar.gz
+        echo -e "Got s-ui latest version: ${tag}, beginning the installation..."
+        wget -N --no-check-certificate -O /tmp/s-ui-linux-$(arch).tar.gz https://github.com/shenaba/2s-ui/releases/download/${tag}/s-ui-linux-$(arch).tar.gz
         if [[ $? -ne 0 ]]; then
             echo -e "${red}Downloading s-ui failed, please be sure that your server can access Github ${plain}"
             exit 1
         fi
     else
-        last_version=$1
-        url="https://github.com/shenaba/2s-ui/releases/download/${last_version}/s-ui-linux-$(arch).tar.gz"
-        echo -e "Beginning the install s-ui v$1"
+        # Every release tag is v-prefixed, so accept the argument with or without it.
+        tag="v${1#v}"
+        url="https://github.com/shenaba/2s-ui/releases/download/${tag}/s-ui-linux-$(arch).tar.gz"
+        echo -e "Beginning the install s-ui ${tag}"
         wget -N --no-check-certificate -O /tmp/s-ui-linux-$(arch).tar.gz ${url}
         if [[ $? -ne 0 ]]; then
-            echo -e "${red}download s-ui v$1 failed,please check the version exists${plain}"
+            echo -e "${red}download s-ui ${tag} failed, please check the version exists${plain}"
             exit 1
         fi
     fi
+
+    # ${tag} keeps the v prefix for URLs; ${last_version} is bare for display.
+    last_version="${tag#v}"
 
     if [[ -e /usr/local/s-ui/ ]]; then
         systemctl stop s-ui
