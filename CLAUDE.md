@@ -144,7 +144,7 @@ Related: `vite.config.mts` gives assets **random filenames per build** (not cont
 
 ### Version & migrations
 
-`config/version` (currently **1.5.5**) is `//go:embed`ed — **not** injected via `-X` ldflags. Bumping a release means editing that file in-tree; the git tag and the embedded version can drift. `cmd/migration/` gates on the **2s-ui** version line, not upstream's (users' `dbVersion` tracks 2s-ui releases) — see the comment in `cmd/migration/main.go` before adding one.
+`config/version` is `//go:embed`ed — **not** injected via `-X` ldflags. Bumping a release means editing that file in-tree; the git tag and the embedded version can drift. `cmd/migration/` gates on the **2s-ui** version line, not upstream's (users' `dbVersion` tracks 2s-ui releases) — see the comment in `cmd/migration/main.go` before adding one.
 
 ### `sui` CLI
 
