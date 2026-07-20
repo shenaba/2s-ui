@@ -20,7 +20,7 @@
     "pinia": "^4.0.2",
     "qrcode.vue": "^3.10.0",
     "vue": "^3.5.40",
-    "vue-i18n": "^11.4.6",
+    "vue-i18n": "^11.4.7",
     "vue-router": "^5.2.0",
     "vue3-persian-datetime-picker": "^1.2.2",
     "yaml": "^2.9.0"
