@@ -300,6 +300,7 @@ export default {
     path: "Default Path",
     update: "Automatic Update Time",
     subUri: "Subscription URI",
+    subUriPathMismatch: "Its path differs from Default Path. This field only sets the base of the links handed to clients — it does not change the path the subscription serves. To move it, edit Default Path instead.",
     jsonSub: "JSON Subscription",
     toDirect: "Route to Direct",
     toBlock: "Route to Block",

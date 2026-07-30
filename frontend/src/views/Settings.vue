@@ -102,7 +102,7 @@
         <input class="input mono" type="number" min="1" v-model.number="subPort" />
       </SRow>
       <ToggleRow v-model="subBehindProxy" :label="$t('setting.behindProxy')" :desc="subBehindProxyDesc" />
-      <SRow :label="$t('setting.subUri')">
+      <SRow :label="$t('setting.subUri')" :hint="subUriHint">
         <input class="input mono" v-model="settings.subURI" placeholder="https://sub.example.com/sub/" />
       </SRow>
       <ToggleRow v-model="subEncode" :label="$t('setting.subEncode')" />
@@ -624,6 +624,17 @@ const webUriPathMismatch = computed(() => {
   const p = uriPathOf(settings.value.webURI)
   return p !== '' && p !== normalizePath(settings.value.webPath)
 })
+
+// Same trap on the subscription side, and quieter: this URI is the base of the
+// links handed to clients, so a mismatch does not 404 in front of you — the
+// subscriptions simply stop updating for everyone.
+const subUriPathMismatch = computed(() => {
+  const p = uriPathOf(settings.value.subURI)
+  return p !== '' && p !== normalizePath(settings.value.subPath)
+})
+
+const subUriHint = computed(() =>
+  subUriPathMismatch.value ? i18n.global.t('setting.subUriPathMismatch') : '')
 
 // 反代模式下面板只知道自己是 http://内网:端口,推断不出对外地址(代理的域名/端口/协议
 // 它都看不到),重启后的跳转只能靠 webURI。仅此时提示,非反代模式它是可选覆盖项。

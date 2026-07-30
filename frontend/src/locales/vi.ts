@@ -300,6 +300,7 @@ export default {
     path: "Đường dẫn mặc định",
     update: "Thời gian cập nhật tự động",
     subUri: "URI đăng ký",
+    subUriPathMismatch: "Đường dẫn của nó khác với «Đường dẫn mặc định». Mục này chỉ đặt phần gốc của liên kết gửi cho client, không đổi đường dẫn mà đăng ký thực sự phục vụ — muốn đổi hãy sửa «Đường dẫn mặc định».",
     jsonSub: "Đăng ký JSON",
     toDirect: "Chuyển hướng tới Trực tiếp",
     toBlock: "Chuyển hướng tới Chặn",

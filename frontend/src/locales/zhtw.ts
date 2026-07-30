@@ -300,6 +300,7 @@ export default {
     path: "默認路徑",
     update: "自動更新時間",
     subUri: "訂閱 URL",
+    subUriPathMismatch: "路徑與「預設路徑」不一致。這一項只決定發給用戶端的連結前綴,不會改變訂閱實際服務的路徑——要換路徑請改「預設路徑」。",
     jsonSub: "JSON 訂閱",
     toDirect: "路由到直連",
     toBlock: "路由到阻止",

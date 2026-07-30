@@ -300,6 +300,7 @@ export default {
     path: "默认路径",
     update: "自动更新时间",
     subUri: "订阅 URI",
+    subUriPathMismatch: "路径与「默认路径」不一致。这一项只决定发给客户端的链接前缀,不会改变订阅实际服务的路径——要换路径请改「默认路径」。",
     jsonSub: "JSON 订阅",
     toDirect: "路由到直连",
     toBlock: "路由到阻止",
