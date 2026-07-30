@@ -621,7 +621,13 @@ func (a *ApiService) readProxyForm(c *gin.Context, prefix string, scope string) 
 
 	f := proxyForm{enabled: get("Nginx") == "true"}
 
-	if f.domain = get("Domain"); f.domain == "" {
+	// 域名的空值是有含义的,不能当「没传」回退读库。开关开着却没填域名是个必须当场报出来
+	// 的半成品状态(BuildVhostSpecs 负责报),回退拿上一个域名凑数会让它变成:用旧域名生成
+	// 了 vhost、保存又把空值写进库,下次启动对账读到空就跳过——DB 与 nginx 从此长期不一致
+	// 且不再自愈。与 ListenSet / CertSet 同理,用独立标志表示表单确实带了这一项。
+	if get("DomainSet") == "true" {
+		f.domain = get("Domain")
+	} else if f.domain = get("Domain"); f.domain == "" {
 		if scope == "web" {
 			f.domain, _ = a.SettingService.GetWebDomain()
 		} else {
@@ -677,10 +683,22 @@ func (a *ApiService) readProxyForm(c *gin.Context, prefix string, scope string) 
 			}
 		}
 	}
-	// 域名统一小写:nginx 的 server_name 不分大小写,大小写不同的同一域名若各生成
-	// 一份 vhost,后一份会被判 conflicting server name 静默忽略,一侧就失联了。
-	f.domain = strings.ToLower(strings.TrimSpace(f.domain))
+	// 大小写归一化不在这里做:BuildVhostSpecs 统一处理,它同时服务表单和启动对账
+	// 两条路径,只能有一个来源。
 	return f
+}
+
+// proxySides 把两侧表单值转成 BuildVhostSpecs 的输入。SyncNginxProxy 与
+// CheckNginxProxy 读同一份表单、问同一批问题,只是一个落盘一个不落盘。
+func (a *ApiService) proxySides(c *gin.Context) []service.ProxySide {
+	web := a.readProxyForm(c, "web", "web")
+	sub := a.readProxyForm(c, "sub", "sub")
+	return []service.ProxySide{
+		{Name: "panel", Enabled: web.enabled, Domain: web.domain, Path: web.path,
+			Listen: web.listen, Port: web.port, CertFile: web.cert, KeyFile: web.key},
+		{Name: "subscription", Enabled: sub.enabled, Domain: sub.domain, Path: sub.path,
+			Listen: sub.listen, Port: sub.port, CertFile: sub.cert, KeyFile: sub.key},
+	}
 }
 
 // SyncNginxProxy keeps the auto-generated reverse-proxy configs in nginx in sync
@@ -692,24 +710,45 @@ func (a *ApiService) readProxyForm(c *gin.Context, prefix string, scope string) 
 // startup reconciliation after the panel restarts (see app.Start).
 func (a *ApiService) SyncNginxProxy(c *gin.Context) {
 	var acme service.AcmeService
-
-	web := a.readProxyForm(c, "web", "web")
-	sub := a.readProxyForm(c, "sub", "sub")
-
 	// Same aggregation as the startup reconciliation; both must agree exactly
-	specs := service.BuildVhostSpecs(
-		service.ProxySide{Name: "panel", Enabled: web.enabled, Domain: web.domain, Path: web.path,
-			Listen: web.listen, Port: web.port, CertFile: web.cert, KeyFile: web.key},
-		service.ProxySide{Name: "subscription", Enabled: sub.enabled, Domain: sub.domain, Path: sub.path,
-			Listen: sub.listen, Port: sub.port, CertFile: sub.cert, KeyFile: sub.key},
-	)
-
+	specs, err := service.BuildVhostSpecs(a.proxySides(c)...)
+	if err != nil {
+		pureJsonMsg(c, false, err.Error())
+		return
+	}
 	res, err := acme.SyncVhosts(specs)
 	if err != nil {
 		pureJsonMsg(c, false, err.Error())
 		return
 	}
 	jsonMsgObj(c, "", res, nil)
+}
+
+// CheckNginxProxy is SyncNginxProxy's read-only twin: same form, same questions,
+// but it writes nothing and never reloads nginx.
+//
+// The frontend calls it in the two places where writing is not an option:
+//   - before saving while the proxy is already ON. The vhost cannot be rewritten
+//     there (this page is the location it serves), so the write is deferred to the
+//     startup reconciliation — and a failure in that gap reaches nobody, because by
+//     then the service is plaintext and 443 is unanswered. Failing here instead
+//     keeps the user on a working page with nothing saved.
+//   - when the settings page loads, to report drift between nginx and the saved
+//     settings; the page then points at its own "restart panel" button, which
+//     re-runs the reconciliation.
+func (a *ApiService) CheckNginxProxy(c *gin.Context) {
+	var acme service.AcmeService
+	specs, err := service.BuildVhostSpecs(a.proxySides(c)...)
+	if err != nil {
+		pureJsonMsg(c, false, err.Error())
+		return
+	}
+	drift, err := acme.CheckVhosts(specs)
+	if err != nil {
+		pureJsonMsg(c, false, err.Error())
+		return
+	}
+	jsonMsgObj(c, "", map[string]bool{"drift": drift}, nil)
 }
 
 func (a *ApiService) IssueCert(c *gin.Context) {

@@ -39,10 +39,19 @@ func TestBuildVhostSpecs(t *testing.T) {
 	panel := ProxySide{Name: "panel", Enabled: true, Domain: "a.com", Path: "/app/", Port: 2095}
 	sub := ProxySide{Name: "subscription", Enabled: true, Domain: "a.com", Path: "/sub/", Port: 2096}
 
+	build := func(t *testing.T, sides ...ProxySide) []VhostOptions {
+		t.Helper()
+		specs, err := BuildVhostSpecs(sides...)
+		if err != nil {
+			t.Fatalf("BuildVhostSpecs() unexpected error: %v", err)
+		}
+		return specs
+	}
+
 	// A shared domain must collapse into two locations in one vhost: emitting a server
 	// block each makes nginx drop the second as a conflicting server name, silently
 	// taking one side offline.
-	specs := BuildVhostSpecs(panel, sub)
+	specs := build(t, panel, sub)
 	if len(specs) != 1 {
 		t.Fatalf("same domain should collapse into 1 vhost, got %d", len(specs))
 	}
@@ -53,7 +62,7 @@ func TestBuildVhostSpecs(t *testing.T) {
 	// Distinct domains get one vhost each.
 	sub2 := sub
 	sub2.Domain = "b.com"
-	if specs := BuildVhostSpecs(panel, sub2); len(specs) != 2 {
+	if specs := build(t, panel, sub2); len(specs) != 2 {
 		t.Errorf("distinct domains should yield 2 vhosts, got %d", len(specs))
 	}
 
@@ -62,26 +71,37 @@ func TestBuildVhostSpecs(t *testing.T) {
 	// switching the proxy off.
 	off := panel
 	off.Enabled = false
-	if specs := BuildVhostSpecs(off, sub); len(specs) != 1 || specs[0].Endpoints[0].Name != "subscription" {
+	if specs := build(t, off, sub); len(specs) != 1 || specs[0].Endpoints[0].Name != "subscription" {
 		t.Errorf("a disabled side must not participate: %+v", specs)
 	}
-	if specs := BuildVhostSpecs(off); len(specs) != 0 {
+	if specs := build(t, off); len(specs) != 0 {
 		t.Errorf("want no vhosts when both sides are off, got %+v", specs)
 	}
 
-	// A blank domain is always skipped, else we would emit a dead config with an empty
-	// server_name.
+	// Switched ON with no domain is an error, NOT a silent skip. Skipping it shrinks
+	// specs — here to empty — and SyncVhosts would then delete the generated vhosts as
+	// no longer wanted, while the service already runs plaintext because the switch
+	// says so: nothing left answering on 443, and the save reported success.
 	blank := panel
 	blank.Domain = "  "
-	if specs := BuildVhostSpecs(blank); len(specs) != 0 {
-		t.Errorf("blank domain should be skipped, got %+v", specs)
+	if _, err := BuildVhostSpecs(blank); err == nil {
+		t.Error("an enabled side with a blank domain must be an error, not a silent skip")
+	}
+	if _, err := BuildVhostSpecs(panel, ProxySide{Name: "subscription", Enabled: true}); err == nil {
+		t.Error("one good side does not excuse an enabled side with no domain")
+	}
+	// A disabled side with no domain is the normal untouched state and must stay silent.
+	blankOff := blank
+	blankOff.Enabled = false
+	if specs, err := BuildVhostSpecs(blankOff); err != nil || len(specs) != 0 {
+		t.Errorf("a disabled side without a domain is fine, got %+v / %v", specs, err)
 	}
 
 	// Case is normalised: two spellings of one domain emitting a vhost each means the
 	// second is silently dropped as conflicting.
 	upper := sub
 	upper.Domain = "A.COM"
-	specs = BuildVhostSpecs(panel, upper)
+	specs = build(t, panel, upper)
 	if len(specs) != 1 || specs[0].Domain != "a.com" {
 		t.Errorf("same domain in different case should merge and lowercase: %+v", specs)
 	}
@@ -108,15 +128,34 @@ nginx: configuration file /etc/nginx/nginx.conf test is successful`
 		t.Errorf("clean nginx -t output should parse to no conflicts, got %+v", got)
 	}
 
-	// A unix socket has no port, so Port stays 0 and vhostConflictsOn443 excludes it
+	// A unix socket has no port, so Port stays 0 and conflictsOnPort excludes it
 	// as not-443.
 	if got := parseNginxConflicts(`conflicting server name "a.com" on unix:/var/run/nginx.sock, ignored`); len(got) != 1 ||
 		got[0].Port != 0 || got[0].Addr != "unix:/var/run/nginx.sock" {
 		t.Errorf("unix socket parsed wrong: %+v", got)
 	}
+
+	// Verbatim from nginx 1.22.1 on Debian. The prefix is a timestamp and pid, NOT the
+	// "nginx: " the cases above assume — `nginx -t` writes warnings through the error
+	// log, and only its own final verdict lines carry the "nginx: " prefix. Parsing
+	// locates the marker substring rather than anchoring at the start of the line, so
+	// the prefix is irrelevant; this case exists so a future rewrite cannot quietly
+	// start depending on it.
+	real := `2026/07/30 09:50:32 [warn] 2031855#2031855: conflicting server name "us.koiup.com" on 0.0.0.0:443, ignored
+2026/07/30 09:50:32 [warn] 2031855#2031855: conflicting server name "us.koiup.com" on [::]:443, ignored
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful`
+	gotReal := parseNginxConflicts(real)
+	wantReal := []nginxConflict{
+		{Name: "us.koiup.com", Addr: "0.0.0.0:443", Port: 443},
+		{Name: "us.koiup.com", Addr: "[::]:443", Port: 443},
+	}
+	if !reflect.DeepEqual(gotReal, wantReal) {
+		t.Errorf("real nginx 1.22.1 output parsed as %+v, want %+v", gotReal, wantReal)
+	}
 }
 
-func TestVhostConflictsOn443(t *testing.T) {
+func TestConflictsOnPort(t *testing.T) {
 	const domain = "us.koiup.com"
 	tests := []struct {
 		name string
@@ -149,8 +188,36 @@ nginx: [warn] conflicting server name "us.koiup.com" on 0.0.0.0:443, ignored`, t
 		{"no conflict", "nginx: configuration file /etc/nginx/nginx.conf test is successful", false},
 	}
 	for _, tt := range tests {
-		if got := vhostConflictsOn443(parseNginxConflicts(tt.out), domain); got != tt.want {
-			t.Errorf("%s: vhostConflictsOn443() = %v, want %v", tt.name, got, tt.want)
+		if got := conflictsOnPort(parseNginxConflicts(tt.out), domain, httpsPort); got != tt.want {
+			t.Errorf("%s: conflictsOnPort(443) = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+
+	// The :80 direction, used by ensureNginxServerBlock right after it writes the
+	// validation block. Getting here means the guard concluded no :80 block existed
+	// for this domain, so a warn naming :80 proves it missed one (server_name in an
+	// included snippet, or wrapped onto its own line) and the generated block would
+	// silently replace whichever of the two nginx reads second.
+	on80 := []struct {
+		name string
+		out  string
+		want bool
+	}{
+		{"our domain on :80", `nginx: [warn] conflicting server name "us.koiup.com" on 0.0.0.0:80, ignored`, true},
+		{"our domain on v6 :80", `nginx: [warn] conflicting server name "us.koiup.com" on [::]:80, ignored`, true},
+		{"domain differs in case", `nginx: [warn] conflicting server name "US.KOIUP.COM" on 0.0.0.0:80, ignored`, true},
+		// The proxy vhost colliding on 443 says nothing about the validation block.
+		{"our domain on :443", `nginx: [warn] conflicting server name "us.koiup.com" on 0.0.0.0:443, ignored`, false},
+		{"another domain on :80", `nginx: [warn] conflicting server name "other.com" on 0.0.0.0:80, ignored`, false},
+		{"unix socket", `nginx: [warn] conflicting server name "us.koiup.com" on unix:/var/run/nginx.sock, ignored`, false},
+		// Same fail-open rule as 443: an unparsed address costs a rollback plus an
+		// explanation, while missing a real one hands the user's site to our block.
+		{"missing the on-clause", `nginx: [warn] conflicting server name "us.koiup.com", ignored`, true},
+		{"no conflict", "nginx: configuration file /etc/nginx/nginx.conf test is successful", false},
+	}
+	for _, tt := range on80 {
+		if got := conflictsOnPort(parseNginxConflicts(tt.out), domain, httpPort); got != tt.want {
+			t.Errorf("%s: conflictsOnPort(80) = %v, want %v", tt.name, got, tt.want)
 		}
 	}
 }

@@ -218,9 +218,15 @@ func (s *SettingService) GetWebCertMode() (string, error) {
 }
 
 func (s *SettingService) GetWebNginx() (bool, error) {
-	// 空字符串表示"尚未设置/未部署",安全地按 false 处理(避免 ParseBool("") 报错)
+	// 空字符串表示"尚未设置/未部署",安全地按 false 处理(避免 ParseBool("") 报错)。
+	// 读失败则必须把错误传出去,不能一样塌成 false:ProxyVhostSpecs 拿它决定 nginx 里
+	// 该有哪些 vhost,把「读不出来」当成「用户关掉了」会让启动时的对账删掉正在服务的
+	// 443 入口。调用方要么处理,要么显式丢弃。
 	v, err := s.getString("webNginx")
-	if err != nil || v == "" {
+	if err != nil {
+		return false, err
+	}
+	if v == "" {
 		return false, nil
 	}
 	return strconv.ParseBool(v)
@@ -366,10 +372,14 @@ func (s *SettingService) GetSubCertMode() (string, error) {
 
 // GetSubNginx 是订阅侧的「由反向代理终结 TLS」,语义与 webNginx 对称:
 // 开着时订阅服务只跑明文 HTTP,TLS 交给前面的 nginx。
-// 空字符串表示尚未设置,按 false 处理(避免 ParseBool("") 报错)。
+// 空字符串表示尚未设置,按 false 处理(避免 ParseBool("") 报错);读失败按 GetWebNginx
+// 同样的理由往上传,不塌成 false。
 func (s *SettingService) GetSubNginx() (bool, error) {
 	v, err := s.getString("subNginx")
-	if err != nil || v == "" {
+	if err != nil {
+		return false, err
+	}
+	if v == "" {
 		return false, nil
 	}
 	return strconv.ParseBool(v)
@@ -384,12 +394,26 @@ func (s *SettingService) GetSubNginx() (bool, error) {
 // vhost instantly cuts the 443 the current page is served over, so the frontend
 // dares not touch nginx while switching the panel side off, and defers cleanup
 // until the panel has restarted and gone back to terminating TLS itself.
-func (s *SettingService) ProxyVhostSpecs() []ProxySide {
-	get := func(f func() (string, error)) string { v, _ := f(); return v }
-	getInt := func(f func() (int, error)) int { v, _ := f(); return v }
-	getBool := func(f func() (bool, error)) bool { v, _ := f(); return v }
+//
+// Every read error is reported rather than defaulted away. The reconciliation
+// deletes any generated vhost whose side comes back disabled, so a failed read
+// silently collapsing to Enabled=false would tear down a live 443 entrypoint over
+// a transient DB error. "Could not read it" and "the user switched it off" have to
+// stay distinguishable; the caller skips the whole reconciliation on error.
+// Every key here is in defaultValueMap, so a missing row yields the default and not
+// an error — reaching this path means the DB read itself failed.
+func (s *SettingService) ProxyVhostSpecs() ([]ProxySide, error) {
+	var firstErr error
+	keep := func(err error) {
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	get := func(f func() (string, error)) string { v, err := f(); keep(err); return v }
+	getInt := func(f func() (int, error)) int { v, err := f(); keep(err); return v }
+	getBool := func(f func() (bool, error)) bool { v, err := f(); keep(err); return v }
 
-	return []ProxySide{
+	sides := []ProxySide{
 		{
 			Name: "panel", Enabled: getBool(s.GetWebNginx), Domain: get(s.GetWebDomain),
 			Path: get(s.GetWebPath), Listen: get(s.GetListen), Port: getInt(s.GetPort),
@@ -401,6 +425,10 @@ func (s *SettingService) ProxyVhostSpecs() []ProxySide {
 			CertFile: get(s.GetSubCertFile), KeyFile: get(s.GetSubKeyFile),
 		},
 	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return sides, nil
 }
 
 func (s *SettingService) GetSubAcmeEmail() (string, error) {

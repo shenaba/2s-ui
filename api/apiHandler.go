@@ -64,6 +64,8 @@ func (a *APIHandler) postHandler(c *gin.Context) {
 		a.ApiService.IssueCert(c)
 	case "syncNginxProxy":
 		a.ApiService.SyncNginxProxy(c)
+	case "checkNginxProxy":
+		a.ApiService.CheckNginxProxy(c)
 	case "deleteCert":
 		a.ApiService.DeleteCert(c)
 	case "saveManualCert":

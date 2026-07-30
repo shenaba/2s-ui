@@ -126,8 +126,23 @@ func (a *APP) Start() error {
 // Failures are logged only: whether nginx is installed, or whether the panel runs
 // as root, must never block startup.
 func (a *APP) syncNginxProxy() {
+	sides, err := a.SettingService.ProxyVhostSpecs()
+	if err != nil {
+		// A read failure must not be reconciled on. Whichever side failed comes back
+		// disabled, and SyncVhosts deletes every generated vhost for a disabled side —
+		// a transient DB error would take down a 443 entrypoint that is serving fine.
+		// Doing nothing leaves nginx exactly as it is, which is always recoverable.
+		logger.Warning("读取反代设置失败,跳过启动时的 nginx 对账(nginx 保持原样):", err)
+		return
+	}
+	specs, err := service.BuildVhostSpecs(sides...)
+	if err != nil {
+		// 典型是「开关开着但域名空」这种半成品状态。同样不能继续:那一侧被跳过后 specs
+		// 会少一份甚至变空,对账随即把已生成的 vhost 当成多余的删掉。
+		logger.Warning("反代设置不完整,跳过启动时的 nginx 对账(nginx 保持原样):", err)
+		return
+	}
 	var acme service.AcmeService
-	specs := service.BuildVhostSpecs(a.SettingService.ProxyVhostSpecs()...)
 	if _, err := acme.SyncVhosts(specs); err != nil {
 		logger.Warning("启动时对账 nginx 反代配置失败(不影响面板运行):", err)
 	}
