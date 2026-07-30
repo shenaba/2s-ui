@@ -291,6 +291,7 @@ export default {
     forceRenewConfirm: "強制續期會立即重新簽發憑證，並佔用 Let's Encrypt 限速額度（同網域約 5 張/週）。確定繼續？",
     webUri: "面板 URI",
     webUriProxyHint: "反向代理模式下必填:面板推斷不出對外位址,重啟後的跳轉依賴此項",
+    webUriPathMismatch: "路徑與「面板路徑」不一致。這一項只決定跳轉到哪,不會改變面板實際服務的路徑——要換路徑請改「面板路徑」。",
     sessionAge: "會話最大連接數",
     trafficAge: "流量最大年齡",
     timeLoc: "時區",

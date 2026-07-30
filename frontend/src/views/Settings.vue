@@ -394,23 +394,36 @@ const save = async () => {
   const webWasOn = before.webNginx === 'true'
   const subWasOn = before.subNginx === 'true'
 
-  // When the panel-side proxy is being switched OFF, this save must not touch nginx
-  // at all: the current page is served over the 443 that vhost provides, and the
-  // moment it is deleted the follow-up api/save and api/restartApp become
-  // undeliverable. The result is "vhost gone, settings unsaved" — the panel keeps
-  // serving plaintext while nobody answers on 443, locking the user out.
-  // Deleting the vhost and restarting the panel deadlock either way round: whichever
-  // goes first, the step in between dies on the road it just cut. So the whole
-  // shutdown path moves later — save, restart, and once the panel terminates TLS
-  // itself again the startup reconciliation deletes it (syncNginxProxy in app.Start).
-  // Subscription-side changes ride along with it; a restart is imminent anyway.
-  const closingPanelProxy = webWasOn && !webOn
+  // Configuring nginx before the save is safe in exactly one case: the panel-side
+  // proxy going from OFF to ON. Only then is this page still served by the panel's
+  // own TLS port rather than through nginx, so rewriting nginx cannot cut the road
+  // out from under the requests that follow — and it has to happen first, because
+  // the panel is about to drop to plaintext HTTP and something must already be
+  // answering on 443.
+  //
+  // Once the proxy is on, this page IS the nginx location, and touching nginx here
+  // strands the save. Changing the path or domain moves the location (/app/ ->
+  // /app1/), so the very next request, api/save at /app/api/save, is no longer
+  // proxied; switching the proxy off deletes the location outright. Either way the
+  // browser cannot deliver api/save or api/restartApp, and the install is left with
+  // nginx pointing at the new config while the DB still holds the old one — the two
+  // disagree and the panel is unreachable from the internet. Deleting/rewriting the
+  // vhost and restarting the panel cannot be ordered safely against each other:
+  // whichever goes first, the step in between dies on the road it just cut.
+  //
+  // So every change made while the proxy is on lands later instead: save, restart,
+  // and the startup reconciliation rewrites nginx from the persisted settings
+  // (syncNginxProxy in app.Start), by which point the panel is already serving the
+  // new path. waitReachable then holds the redirect until the new address answers.
+  // The whole test reduces to "was the panel behind nginx when this page loaded":
+  // if it was not, this page does not go through nginx and configuring it now is
+  // safe (and required, for whichever side is being switched on).
+  const panelWasBehindProxy = webWasOn
 
   // 一次调用把两侧都交给后端:它按域名聚合(同域名合并成一份 vhost 的两个 location),
-  // 并删掉不再需要的旧配置。任何一侧开着就得同步——不止是刚打开的那一次,改端口/路径/
-  // 域名要跟着改,而「开关开着、配置却不在」的实例(升级上来的、或被手工删过)也靠这步自愈。
+  // 并删掉不再需要的旧配置。
   // 内容没变且已生效时后端直接返回,不会白 reload 一次 nginx。
-  if (!closingPanelProxy && (webOn || subOn || webWasOn || subWasOn)) {
+  if (!panelWasBehindProxy && (webOn || subOn)) {
     loading.value = true
     // CertSet 告诉后端「证书路径这两项表单确实带了,空串就是空」:域名没有证书时
     // 必须让 vhost 生成失败、把用户拦在这里,不能回退读库拿上一个域名的证书凑数
@@ -588,10 +601,37 @@ const subBehindProxyDesc = computed(() => {
   return base + ' ' + i18n.global.t('setting.behindProxyListenWarn')
 })
 
+// uriPathOf returns the path of a manually entered public address, or "" if the
+// value is not a parseable absolute URL (something else already reports that).
+const uriPathOf = (uri: string) => {
+  const v = (uri ?? '').trim()
+  if (!v) return ''
+  try {
+    return normalizePath(new URL(v).pathname)
+  } catch {
+    return ''
+  }
+}
+
+// This field only decides where the redirect goes after a restart and how
+// subscription links are built. It changes no routing whatsoever — the path the
+// panel actually serves comes from webPath, which is also what the generated nginx
+// location is built from. Nothing in the two names says so ("面板路径" vs
+// "面板 URI"; worse in English, "Base URI" vs "Panel URI"), so editing this one to
+// move the panel to a new path is an easy and costly mistake: the redirect lands on
+// a 404 while the panel keeps serving the old path. Say it the moment they diverge.
+const webUriPathMismatch = computed(() => {
+  const p = uriPathOf(settings.value.webURI)
+  return p !== '' && p !== normalizePath(settings.value.webPath)
+})
+
 // 反代模式下面板只知道自己是 http://内网:端口,推断不出对外地址(代理的域名/端口/协议
 // 它都看不到),重启后的跳转只能靠 webURI。仅此时提示,非反代模式它是可选覆盖项。
 const webUriHint = computed(() => {
-  return webBehindProxy.value ? i18n.global.t('setting.webUriProxyHint') : ''
+  const parts: string[] = []
+  if (webBehindProxy.value) parts.push(i18n.global.t('setting.webUriProxyHint'))
+  if (webUriPathMismatch.value) parts.push(i18n.global.t('setting.webUriPathMismatch'))
+  return parts.join(' ')
 })
 
 // ===== 域名 ↔ 证书 =====

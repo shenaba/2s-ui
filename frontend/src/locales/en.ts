@@ -291,6 +291,7 @@ export default {
     forceRenewConfirm: "Force renewal re-issues the certificate now and counts against Let's Encrypt's rate limit (about 5 duplicate certs per week). Continue?",
     webUri: "Panel URI",
     webUriProxyHint: "Required behind a proxy: the panel cannot infer its public address, and the redirect after a restart relies on this",
+    webUriPathMismatch: "Its path differs from Base URI. This field only decides where you are redirected — it does not change the path the panel serves. To move the panel, edit Base URI instead.",
     sessionAge: "Session Maximum Age",
     trafficAge: "Traffic Maximum Age",
     timeLoc: "Timezone Location",
