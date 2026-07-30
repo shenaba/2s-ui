@@ -264,15 +264,11 @@ func (a *AcmeService) resolveMethod(method string) (string, error) {
 }
 
 // nginxHasServerName reports whether a chunk of nginx config declares the domain
-// as a server_name. Parsed line by line, so the legal form where the value wraps
-// onto its own line is missed — the result is one redundant block. That is not
-// free: a duplicate name on the same port makes nginx drop whichever block it
-// reads second, which is exactly what EnsureVhost rolls back on (see its
-// conflicting handling). A duplicate on :80 does not affect the proxy, but can
-// make acme.sh --nginx pick the wrong block.
+// as a server_name. Parsed line by line, so a value wrapped onto its own line is
+// missed and we generate a redundant block — nginx then drops whichever of the two
+// it reads second, which is what EnsureVhost rolls back on.
 //
-// It looks only at server_name, never at listen, so it cannot answer "is there a
-// block for this domain on port N" — use nginxFilesServing(dump, domain, port).
+// It never looks at listen: for "is there a block on port N" use nginxFilesServing.
 func nginxHasServerName(conf, domain string) bool {
 	const directive = "server_name"
 	for _, line := range strings.Split(conf, "\n") {
@@ -301,13 +297,9 @@ func nginxHasServerName(conf, domain string) bool {
 // 缺失时生成自包含的最小验证块(只加自己的文件,不碰用户已有配置):nginx -t 通过才
 // reload,失败立即回滚删除;文件常驻,以后自动续期仍靠它验证。
 func (a *AcmeService) ensureNginxServerBlock(domain string) error {
-	// The check must be port-aware. Matching server_name alone lets the reverse
-	// proxy's own s-ui-proxy-<domain>.conf pose as the validation block: it listens
-	// on 443 only, while the HTTP-01 challenge always arrives on 80 first and gets
-	// served by default_server, i.e. a 404. acme.sh --nginx ignores listen too, so
-	// it injects the challenge location into that 443-only block. Typical way in:
-	// the cert was issued standalone or registered by hand (no :80 block ever
-	// generated) -> proxy switched on -> next issue/renew via nginx fails at once.
+	// Port-aware on purpose: matching server_name alone lets the reverse proxy's own
+	// 443-only vhost pose as the validation block, and acme.sh --nginx ignores listen
+	// too, so it would inject the challenge location there while HTTP-01 arrives on 80.
 	if out, err := runCmd(cmdDetectTO, "/root", "nginx", "-T"); err == nil &&
 		len(nginxFilesServing(out, domain, httpPort)) > 0 {
 		return nil
@@ -343,15 +335,11 @@ func (a *AcmeService) ensureNginxServerBlock(domain string) error {
 		_ = os.Remove(confPath) // 绝不留下会卡住 reload 的配置
 		return common.NewErrorf("自动生成的 nginx 验证配置未通过 nginx -t,已回滚删除 %s:\n%s", confPath, testOut)
 	}
-	// The guard above concluded there is no :80 block for this domain. nginx now
-	// saying otherwise means the guard missed one that does exist: nginxFilesServing
-	// wants listen and server_name in the same server block body, which does not hold
-	// when server_name sits in an included snippet (nginx -T dumps every file as its
-	// own section) or when its value wraps onto the next line.
-	// A warn must not be shrugged off here. On a duplicate nginx keeps whichever it
-	// read first, conf.d is read before sites-enabled and s-ui-acme- sorts early
-	// within it, so the block that gets dropped is very likely the user's own :80
-	// site — replaced by ours, which serves nothing but root /var/www/html.
+	// A conflict here means the guard missed an existing :80 block — nginxFilesServing
+	// needs listen and server_name in the same block body, which fails when server_name
+	// sits in an included snippet or wraps onto the next line. Not shruggable: nginx
+	// keeps whichever it read first, and conf.d/s-ui-acme- sorts early, so the block
+	// dropped is likely the user's own site.
 	if conflictsOnPort(parseNginxConflicts(testOut), domain, httpPort) {
 		_ = os.Remove(confPath)
 		return common.NewErrorf("nginx 报 %s 在 :80 上 server_name 重名,说明它其实已经有这个域名的 80 端口"+
@@ -367,9 +355,7 @@ func (a *AcmeService) ensureNginxServerBlock(domain string) error {
 	// 复验块是否真的生效:若本机 nginx.conf 没有 include conf.d/*.conf(源码编译、
 	// openresty、手写配置都常见),上面三步会全部「成功」——文件根本没被解析,nginx -t
 	// 自然通过——随后 acme.sh 才报它自己的 "Can not find conf file",离真因十万八千里。
-	// 复验把它变成一条指向根因的错误。
-	// Same port-aware check as the guard above; without it the 443-only proxy block
-	// would fool this into thinking the validation block took effect.
+	// 复验把它变成一条指向根因的错误。端口同样要带上,否则 443 的反代块会冒充它。
 	if out, err := runCmd(cmdDetectTO, "/root", "nginx", "-T"); err != nil ||
 		len(nginxFilesServing(out, domain, httpPort)) == 0 {
 		_ = os.Remove(confPath)
@@ -386,10 +372,9 @@ func (a *AcmeService) ensureNginxServerBlock(domain string) error {
 
 // ===== 反向代理 vhost:由面板自动生成、自动校验、失败自动回滚 =====
 
-// Proxy blocks always listen on 443; 80 belongs to the ACME HTTP-01 validation
-// block alone. Deciding whether a conflicting-server-name warning means "our
-// block got dropped" has to take the port into account — matching on the domain
-// alone misreads a duplicate on :80 as a 443 conflict.
+// Proxy blocks always listen on 443, the ACME validation block on 80 — so a
+// conflicting-server-name warning only means "our block got dropped" once the port
+// matches; on the domain alone a duplicate on :80 reads as a 443 conflict.
 const (
 	httpPort  = 80
 	httpsPort = 443
@@ -400,11 +385,9 @@ const (
 // 那个删掉证书就续不了期了。
 //
 // First entry is the current prefix (proxyConfPath builds from it); the rest are
-// historical. This name changed once (s-ui-panel- -> s-ui-proxy-) and upgraded
-// installs still have the old file on disk: it carries the exact same server_name
-// on 443 as the freshly generated one, so nginx reports a conflict and drops
-// whichever it reads second, and EnsureVhost then rolls back. Without sweeping
-// both prefixes the proxy can NEVER be switched on, and every save repeats it.
+// historical. The name changed once (s-ui-panel- -> s-ui-proxy-), and an upgraded
+// install still has the old file carrying the same server_name on 443 — sweep only
+// the current prefix and every save conflicts, so the proxy can never be switched on.
 var nginxProxyConfPrefixes = []string{"s-ui-proxy-", "s-ui-panel-"}
 
 // ProxyEndpoint 是一个域名下的一条反代规则:把 Path 交给本机的某个端口。
@@ -426,9 +409,8 @@ type VhostOptions struct {
 }
 
 // ProxySide is the reverse-proxy input for one side (panel or subscription).
-// It comes from two places: the form when settings are saved (values not yet in
-// the DB), and the database when the panel reconciles at startup. Both paths must
-// aggregate to identical results, hence the shared BuildVhostSpecs.
+// It comes either from the form on save (values not yet in the DB) or from the DB
+// at startup; both must aggregate identically, hence the shared BuildVhostSpecs.
 type ProxySide struct {
 	Name     string // goes into the config comment and the log: panel / subscription
 	Enabled  bool
@@ -441,19 +423,14 @@ type ProxySide struct {
 }
 
 // BuildVhostSpecs groups endpoints by DOMAIN rather than by service: panel and
-// subscription sharing one domain is a common setup, and emitting a server block
-// each makes nginx report a conflicting server name and drop the second one,
-// silently taking one of them offline.
-// Argument order is location order (panel first); keeping it fixed makes the
-// generated content comparable, which is what lets EnsureVhost short-circuit
-// instead of reloading nginx for nothing when nothing changed.
+// subscription commonly share one, and a server block each makes nginx report a
+// conflicting server name and silently drop one of them. Argument order is location
+// order (panel first), and keeping it fixed is what makes the generated content
+// comparable, so EnsureVhost can short-circuit instead of reloading for nothing.
 //
-// A side that is switched ON with no domain is an error, never a silent skip. It
-// is the one input that reads like "disabled" but is not: the service already runs
-// plaintext because the switch says so, while skipping it shrinks specs — possibly
-// to empty — and SyncVhosts then deletes the generated vhosts as no longer wanted.
-// The result is plaintext on the inside, nobody answering on 443, and a save that
-// reported success.
+// A side switched ON with no domain is an error, never a silent skip: it reads like
+// "disabled" but the service already runs plaintext, and skipping it shrinks specs —
+// possibly to empty — so SyncVhosts deletes the vhost that was answering on 443.
 func BuildVhostSpecs(sides ...ProxySide) ([]VhostOptions, error) {
 	var specs []VhostOptions
 	byDomain := map[string]int{}
@@ -525,8 +502,8 @@ func nginxVersion() (major, minor, patch int) {
 	return get(0), get(1), get(2)
 }
 
-// nginxEnv 是生成配置时需要的本机 nginx 事实,由 EnsurePanelProxy 探测后传入,
-// 好让 buildPanelProxyConf 保持纯函数、能脱离 nginx 直接验证输出。
+// nginxEnv 是生成配置时需要的本机 nginx 事实,由 detectNginxEnv 探测后传入,
+// 好让 buildVhostConf 保持纯函数、能脱离 nginx 直接验证输出。
 type nginxEnv struct {
 	http2Listen    string // 加在 listen 后面的 http2 参数(老语法)
 	http2Directive string // 独立的 http2 指令行(1.25.1+ 新语法)
@@ -690,15 +667,13 @@ func proxyConfPath(domain string) string {
 }
 
 // vhostDomainOf recovers the domain from a filename WE generated; anything else
-// returns "".
+// returns "" — s-ui-acme- is not in the prefix list, so a validation block can
+// never be swept away as if it were a proxy.
 //
-// It must strip the prefix that actually matched, not the current one: on a file
-// with a historical prefix, trimming the current prefix is a no-op and the domain
-// comes out as "s-ui-panel-example.com". That never matches SyncVhosts' wanted
-// set, so the file slips past the "delete stale copies first" pass and only gets
-// removed after generation — which is the exact moment it collides.
-// s-ui-acme- is not in the prefix list, so validation blocks always return "" and
-// can never be swept away as if they were proxies.
+// It strips the prefix that actually matched, not the current one: trimming the
+// current prefix off a historical filename is a no-op and yields
+// "s-ui-panel-example.com", which no longer matches SyncVhosts' wanted set, so the
+// file survives the stale sweep and collides with what we generate right after.
 func vhostDomainOf(path string) string {
 	base := filepath.Base(path)
 	if !strings.HasSuffix(base, ".conf") {
@@ -730,14 +705,14 @@ type nginxConflict struct {
 // parseNginxConflicts picks every conflicting-server-name warning out of the
 // output of nginx -t / -T. nginx prints (src/http/ngx_http.c, ngx_http_server_names):
 //
-//	nginx: [warn] conflicting server name "example.com" on 0.0.0.0:443, ignored
+//	2026/07/30 09:50:32 [warn] 2031855#2031855: conflicting server name "example.com" on 0.0.0.0:443, ignored
 //
-// The address is ngx_sock_ntop's normalised text and varies with listen:
-// 0.0.0.0:443, [::]:443, 1.2.3.4:443, [2001:db8::1]:443, and portless unix:/path.
-// The port is always whatever follows the last colon, so the bracketed v6 form
-// needs no special case. A dual-stack block reports once for v4 and once for v6,
-// hence a slice. The warning carries no filename (it goes through ngx_log_error,
-// not ngx_conf_log_error), so locating the culprit needs a separate nginx -T.
+// The prefix is the error log's, not "nginx: ", and is matched on the marker rather
+// than anchored. The address is ngx_sock_ntop's normalised text (0.0.0.0:443, [::]:443,
+// [2001:db8::1]:443, portless unix:/path), so taking everything after the last
+// colon covers the bracketed v6 form too. A dual-stack block reports once per
+// family, hence a slice. The warning carries no filename — locating the culprit
+// needs a separate nginx -T.
 func parseNginxConflicts(out string) []nginxConflict {
 	const marker = "conflicting server name "
 	var res []nginxConflict
@@ -756,9 +731,8 @@ func parseNginxConflicts(out string) []nginxConflict {
 		}
 		c := nginxConflict{Name: rest[1 : 1+j]}
 		rest = rest[1+j+1:]
-		// What is left is ` on <addr>, ignored`. Should the wording ever change we
-		// keep just the name and leave Addr empty, letting the caller treat the port
-		// as unknown and stay on the safe side.
+		// What is left is ` on <addr>, ignored`. If the wording ever changes, keep the
+		// name and leave Addr empty so the caller treats the port as unknown.
 		const on = " on "
 		if strings.HasPrefix(rest, on) {
 			addr := rest[len(on):]
@@ -781,17 +755,14 @@ func parseNginxConflicts(out string) []nginxConflict {
 // collided with another one". Case-insensitive: nginx lowercases server_name while
 // parsing, and the domain stored in settings is lowercased too.
 //
-// The port has to be part of the test. Both blocks we generate are single-port —
-// the proxy vhost on 443, the ACME validation block on 80 — so a duplicate on the
-// other port says nothing about ours, and matching on the domain alone condemns a
-// perfectly good config and rolls it back. On the 443 side the rollback deletes the
-// file, so on the next save hadPrevious is still false, the identical-content
-// short-circuit is unreachable, and every single save replays the same misdiagnosis.
+// The port has to be part of the test. Both blocks we generate are single-port (the
+// proxy vhost on 443, the ACME validation block on 80), so a duplicate on the other
+// port says nothing about ours — and on the domain alone a healthy config gets rolled
+// back on every save, forever: the rollback deletes the file, so hadPrevious stays
+// false and the identical-content short-circuit is never reached.
 //
-// An empty Addr means the wording did not parse and the port is unknown; there we
-// would rather over-report than miss one, because both callers treat a hit as
-// "roll back and tell the user", which is the safe direction. A parsed address on
-// another port (or a portless unix socket) is excluded outright.
+// An empty Addr means the wording did not parse; over-report there rather than miss
+// one, since both callers respond by rolling back and telling the user.
 func conflictsOnPort(conflicts []nginxConflict, domain string, port int) bool {
 	for _, c := range conflicts {
 		if strings.EqualFold(c.Name, domain) && (c.Addr == "" || c.Port == port) {
@@ -838,11 +809,9 @@ func splitNginxDump(dump string) []nginxConfSection {
 }
 
 // nginxServerBlocks extracts the body of every server { ... } block (braces
-// excluded). It only strips comments and balances braces, without parsing
-// directives, so a brace inside a quoted string would cut in the wrong place.
-// That is acceptable: this function exists purely to name the offending file in
-// an error message, and a bad cut costs at most one filename. Whether to roll
-// back does not depend on it at all — vhostConflictsOn443 decides that alone.
+// excluded). It only strips comments and balances braces, so a brace inside a
+// quoted string cuts in the wrong place. Acceptable: this only names the offending
+// file in an error message, and whether to roll back is conflictsOnPort's call.
 func nginxServerBlocks(conf string) []string {
 	var sb strings.Builder
 	sb.Grow(len(conf))
@@ -860,9 +829,8 @@ func nginxServerBlocks(conf string) []string {
 		if s[i] != '{' {
 			continue
 		}
-		// The word right before '{' must be server. An upstream's `server 1.2.3.4:80;`
-		// ends in a semicolon with no brace and is excluded for free; a stream server
-		// block has no server_name and gets filtered out by the caller.
+		// The word right before '{' must be server: an upstream's `server 1.2.3.4:80;`
+		// has no brace, and a stream server block has no server_name so the caller drops it.
 		head := strings.TrimRight(s[:i], " \t\r\n")
 		if head[strings.LastIndexAny(head, " \t\r\n;{}")+1:] != "server" {
 			continue
@@ -914,11 +882,10 @@ func nginxListensOn(block string, port int) bool {
 }
 
 // nginxFilesServing returns which files in the dump provide a server block for
-// domain on port, deduplicated and in nginx's own read order.
-// Two callers: the conflicting warning carries no filename, and without this the
-// user has no idea which file to edit; and ensureNginxServerBlock, which needs to
-// know whether the :80 validation block exists — matching server_name alone there
-// gets fooled by the 443-only block the reverse proxy generates.
+// domain on port, deduplicated and in nginx's own read order. It exists because
+// neither caller can work from server_name alone: the conflicting warning carries
+// no filename, and ensureNginxServerBlock asking for a :80 block would otherwise be
+// answered by the reverse proxy's 443-only vhost.
 func nginxFilesServing(dump, domain string, port int) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -927,11 +894,9 @@ func nginxFilesServing(dump, domain string, port int) []string {
 			continue
 		}
 		for _, b := range nginxServerBlocks(sec.Body) {
-			// Split into statements first. nginxHasServerName parses line by line, but a
-			// block body may well sit entirely on one line
-			// (`server { listen 443 ssl; server_name a.com; }`), where server_name is not
-			// at the start of a line and would be missed. nginxStmtSplitter is idempotent,
-			// so nginxListensOn replacing again internally is harmless.
+			// Split into statements first: nginxHasServerName parses line by line and would
+			// miss `server { listen 443 ssl; server_name a.com; }`. The splitter is
+			// idempotent, so nginxListensOn replacing again internally is harmless.
 			stmts := nginxStmtSplitter.Replace(b)
 			if nginxListensOn(stmts, port) && nginxHasServerName(stmts, domain) {
 				seen[sec.Path] = true
@@ -947,15 +912,10 @@ func nginxFilesServing(dump, domain string, port int) []string {
 // options well formed, is nginx usable, is there a certificate. It normalises
 // opt.Domain in place and hands back the resolved certificate paths.
 //
-// It is separate because saving settings sometimes has to ask the very same
-// questions WITHOUT writing anything. Once the proxy is on, this panel's own page
-// is the nginx location, so rewriting the vhost before api/save cuts the road that
-// request travels on; that path can only validate now and let the startup
-// reconciliation (syncNginxProxy in app.Start) do the writing after the restart.
-// Validation and generation must ask one identical set of questions — if they
-// drift, a save passes and the reconciliation fails afterwards, by which point the
-// service already runs plaintext with nothing answering on 443 and nobody left to
-// report it.
+// Separate because saving settings sometimes has to ask the same questions WITHOUT
+// writing (CheckVhosts). The two must ask an identical set: if they drift, the save
+// passes and the startup reconciliation fails afterwards — by which point the
+// service runs plaintext, nothing answers on 443, and nobody is left to report it.
 func (a *AcmeService) precheckVhost(opt *VhostOptions) (certFile, keyFile string, err error) {
 	if runtime.GOOS == "windows" {
 		return "", "", common.NewError("Windows 不支持自动生成 nginx 配置")
@@ -991,31 +951,29 @@ func (a *AcmeService) precheckVhost(opt *VhostOptions) (certFile, keyFile string
 	return resolveDomainCert(opt.Domain, opt.CertFile, opt.KeyFile)
 }
 
-// CheckVhosts answers two questions without writing a single byte or reloading
-// nginx:
+// CheckVhosts answers two questions without writing a byte or reloading nginx:
 //
-//  1. would generating this set fail right now (a missing certificate being by far
-//     the most common reason), returned as an error;
+//  1. would generating this set fail right now (usually a missing certificate),
+//     returned as an error;
 //  2. is nginx already exactly this, returned as drift=false.
 //
-// Question 1 exists for the save path while the proxy is on: it cannot rewrite the
-// vhost before saving (this page is that location), so it saves, restarts, and lets
-// the startup reconciliation write. Nobody can report a failure in that gap — the
-// service is already plaintext by then — so the failure has to be surfaced before
-// the save, and this is the only way to ask without writing.
+// Question 1 serves the save path while the proxy is already on: it cannot rewrite
+// the vhost first (this page is that location), so it saves, restarts, and lets the
+// startup reconciliation write — and a failure in that gap reaches nobody, because
+// by then the service is plaintext. Asking here is the only way to ask without writing.
 //
-// Question 2 is the self-healing handle. When a reconciliation failed at the last
-// restart, or the file was removed by hand, nothing says so: the settings page
-// looks fine while the panel is gone from 443. Reporting drift lets the page point
-// at the "restart panel" button it already has, which re-runs the reconciliation.
+// Question 2 is the self-healing handle: a reconciliation that failed at the last
+// restart, or a file removed by hand, says nothing — the settings page looks fine
+// while the panel is gone from 443. Reporting drift lets the page point at its own
+// "restart panel" button, which re-runs the reconciliation.
 func (a *AcmeService) CheckVhosts(specs []VhostOptions) (drift bool, err error) {
 	if len(specs) == 0 {
 		return false, nil
 	}
-	// Read the effective config once for the whole batch. If nginx -T cannot be run
-	// we do not guess: the "file is right but was never included" case is dropped and
-	// only the on-disk comparison decides. This is a hint on a settings page, and a
-	// warning that a failed probe pins there permanently is worse than a missed one.
+	// Read the effective config once for the whole batch. If nginx -T will not run we
+	// do not guess — the "file is right but never included" case is dropped and only
+	// the on-disk comparison decides. This is a hint on a settings page: a warning
+	// that a failed probe pins there permanently is worse than a missed one.
 	var effective string
 	if out, e := runCmd(cmdDetectTO, "/root", "nginx", "-T"); e == nil {
 		effective = out
@@ -1027,8 +985,7 @@ func (a *AcmeService) CheckVhosts(specs []VhostOptions) (drift bool, err error) 
 			return false, err
 		}
 		// Same yardstick as EnsureVhost's short-circuit: identical content AND nginx
-		// really did read the file. Anything else means what is running is not what the
-		// settings say.
+		// really did read the file. Anything else means running ≠ saved.
 		confPath := proxyConfPath(spec.Domain)
 		previous, readErr := os.ReadFile(confPath)
 		if readErr != nil || string(previous) != buildVhostConf(spec, certFile, keyFile, env) ||
@@ -1092,23 +1049,19 @@ func (a *AcmeService) EnsureVhost(opt VhostOptions) (*VhostResult, error) {
 		return nil, common.NewErrorf("生成的 nginx 配置未通过 nginx -t,已回滚:\n%s", out)
 	}
 	// With two server blocks for one domain on 443, nginx keeps whichever it parsed
-	// first, drops the other, emits a single warn, and -t still passes. Skipping
-	// this check would "succeed" meaninglessly: file present, nginx healthy, panel
-	// unreachable. Which one loses depends on include order (Debian reads conf.d
-	// before sites-enabled, and globs conf.d alphabetically), so the block that gets
-	// dropped may be the user's site or may be ours. Both are broken states, so roll
-	// back either way and let the user decide which copy to keep.
+	// first, drops the other, emits one warn, and -t still passes — so without this
+	// check the success is meaningless: file present, nginx healthy, panel unreachable.
+	// Which one loses depends on include order, so the casualty may be the user's site
+	// or ours; both are broken, so roll back either way and let them pick.
 	//
-	// This check is the ONLY line of defence: nginx -T dumps during parsing, before
-	// the conflict is adjudicated, so a dropped block is still dumped. That makes
-	// the confIsEffective + nginxProxiesPort pair below always true here — they
-	// cannot detect a block that got ignored.
+	// This is the ONLY line of defence. nginx -T dumps during parsing, before the
+	// conflict is adjudicated, so a dropped block is still dumped — the confIsEffective
+	// + nginxProxiesPort pair below cannot see it and is always true here.
 	conflicts := parseNginxConflicts(out)
 	if conflictsOnPort(conflicts, opt.Domain, httpsPort) {
-		// Dump once more BEFORE rolling back (restore deletes our file) to list the
-		// other files serving a 443 block — the warning itself carries no filename, and
-		// without this the user cannot tell which one to edit. Failing to locate it
-		// does not change the verdict, it only makes the message weaker.
+		// Dump once more BEFORE rolling back (restore deletes our file) to name the other
+		// files serving a 443 block — the warning carries no filename, so without this the
+		// user cannot tell which one to edit. Failing to locate it only weakens the message.
 		where := "没能定位到冲突的文件,请自行查 nginx -T 的输出"
 		if dump, e := runCmd(cmdDetectTO, "/root", "nginx", "-T"); e == nil {
 			var others []string
@@ -1133,9 +1086,8 @@ func (a *AcmeService) EnsureVhost(opt VhostOptions) (*VhostResult, error) {
 			opt.Domain, where, normalizeProxyPath(opt.Endpoints[0].Path),
 			upstreamAddr(opt.Endpoints[0].Listen, opt.Endpoints[0].Port), out)
 	}
-	// Any remaining duplicate is not on 443 (typically :80). It does not affect this
-	// vhost and must not block the save, but it can make acme.sh --nginx pick the
-	// wrong block during validation, so leave a log line for later.
+	// Any remaining duplicate is not on 443 (typically :80): harmless here and no reason
+	// to block the save, but it can make acme.sh --nginx pick the wrong block later.
 	for _, c := range conflicts {
 		if strings.EqualFold(c.Name, opt.Domain) {
 			logger.Warning("nginx 里有 ", opt.Domain, " 的重名 server 块(", c.Addr,
@@ -1180,18 +1132,13 @@ func (a *AcmeService) SyncVhosts(specs []VhostOptions) ([]*VhostResult, error) {
 		wanted[strings.ToLower(strings.TrimSpace(s.Domain))] = true
 	}
 
-	// 先生成,全部成功后再删多余的。反过来的话,生成失败(典型:换成的新域名还没有
-	// 证书)时旧配置已经被删,而调用方失败时是【不保存设置】的——磁盘上的反代被销毁、
-	// 数据库里还是旧配置,正在服务的域名就此断掉,且要等到下一次 reload 才暴露。
-	// 同域名的更新由 EnsureVhost 原地覆盖 + 失败回滚,不依赖先删。
+	// 先生成、全部成功后再删多余的:反过来的话,生成失败(典型:新域名还没有证书)时
+	// 旧配置已经被删,而调用方失败时是【不保存设置】的,正在服务的域名就此断掉。
 	//
-	// EnsureVhost 只回滚它自己那个域名;而批次里排在前面的域名一旦成功就已经写盘 +
-	// reload。后面任一域名失败时,调用方是【不保存设置】的,那些先生效的 vhost 就成了
-	// 「库里没记、nginx 却在转发」的孤儿(典型:面板有证书、订阅没有,面板那份先生效,
-	// save 却因订阅失败整体中止,443 上多出一份没人管的反代)。所以逐个记下前一状态,
-	// 失败时把这一批已应用的一起还原,让磁盘和「未保存」的语义对齐。
-	// The "delete stale copies first" pass below records into this too: what it
-	// removes may well be a config that is currently serving traffic.
+	// EnsureVhost 只回滚它自己那个域名,批次里先成功的已经写盘 + reload 了。所以逐个
+	// 记下前一状态,任一域名失败就整批还原,让磁盘和「未保存」的语义对齐——否则会留下
+	// 「库里没记、nginx 却在转发」的孤儿。下面删历史副本那一步也记进这里,它删掉的
+	// 可能正在服务流量。
 	type appliedVhost struct {
 		path        string
 		prev        []byte
@@ -1214,18 +1161,15 @@ func (a *AcmeService) SyncVhosts(specs []VhostOptions) ([]*VhostResult, error) {
 		}
 	}
 
-	// Renamed leftovers must go first: if a domain still has an old conf at a
-	// different path (prefix changed, or case differs), nginx calls the two a
-	// conflicting server name and silently drops the one it reads second — conf.d is
-	// globbed alphabetically and s-ui-panel- sorts before s-ui-proxy-, so the one
-	// dropped is precisely the newly generated file. This domain is about to be
-	// regenerated, so delete now; leaving it until after generation is already too late.
+	// Renamed leftovers must go first. A domain whose old conf sits at a different path
+	// (prefix changed, or case differs) is a conflicting server name, and conf.d globs
+	// alphabetically — s-ui-panel- before s-ui-proxy- — so the block nginx drops is the
+	// file we are about to generate. Sweeping after generation is already too late.
 	//
-	// Deleting first is not free when generation then fails: the pre-rename copy is
-	// very likely serving traffic (every upgraded install is in that state), and on
-	// failure the caller does NOT save the settings. So take a copy first and record
-	// it in applied, letting rollbackApplied restore it — one failed save must not
-	// take a live 443 entrypoint with it.
+	// Not free, though: that pre-rename copy is very likely serving traffic (every
+	// upgraded install is in that state) and a failed generation means the caller does
+	// NOT save. So copy it into applied first — one failed save must not take a live
+	// 443 entrypoint with it.
 	removed := 0
 	list := func() []string {
 		var entries []string

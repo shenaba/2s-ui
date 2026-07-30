@@ -104,34 +104,24 @@ func (a *APP) Start() error {
 	return nil
 }
 
-// syncNginxProxy aligns the auto-generated reverse-proxy configs in nginx with
-// the settings ALREADY PERSISTED in the DB.
+// syncNginxProxy aligns the auto-generated reverse-proxy configs in nginx with the
+// settings ALREADY PERSISTED in the DB. It runs after both servers are up, so the
+// panel has already decided whether it serves plaintext or TLS and touching nginx
+// cannot open a window where neither side is serving.
 //
-// Runs after both servers are up: by then the panel has decided, per the new
-// settings, whether it serves plaintext or TLS, so touching nginx now cannot open
-// a window where neither side is serving.
+// Turning the proxy OFF can only be finished here. The frontend dares not delete the
+// vhost while switching the panel side off — that vhost is the 443 the current page
+// arrives on, so the follow-up api/save and api/restartApp would never be sent, and
+// the panel would end up plaintext with nobody answering on 443. It also heals
+// pre-rename s-ui-panel-*.conf files and orphans left by an earlier switch-off.
 //
-// Turning the proxy OFF can only be finished here. The frontend dares not touch
-// nginx while switching the panel side off — the current page is served over the
-// 443 that vhost provides, and the moment it is deleted the follow-up api/save and
-// api/restartApp can no longer be sent. The result would be "vhost gone, settings
-// unsaved": the panel keeps serving plaintext while nobody answers on 443, locking
-// the user out. So that step waits until after the restart and happens here, once
-// the panel terminates TLS itself again.
-//
-// It also heals two classes of leftovers: pre-rename s-ui-panel-*.conf files, and
-// orphans left behind when the proxy was switched off without cleanup.
-// With the proxy on and nothing changed, SyncVhosts short-circuits and will not
-// reload nginx for nothing.
-// Failures are logged only: whether nginx is installed, or whether the panel runs
-// as root, must never block startup.
+// Failures are logged only: whether nginx is installed, or whether the panel runs as
+// root, must never block startup.
 func (a *APP) syncNginxProxy() {
 	sides, err := a.SettingService.ProxyVhostSpecs()
 	if err != nil {
-		// A read failure must not be reconciled on. Whichever side failed comes back
-		// disabled, and SyncVhosts deletes every generated vhost for a disabled side —
-		// a transient DB error would take down a 443 entrypoint that is serving fine.
-		// Doing nothing leaves nginx exactly as it is, which is always recoverable.
+		// Never reconcile on a failed read: the side comes back disabled and SyncVhosts
+		// would delete a 443 entrypoint that is serving fine. Doing nothing is recoverable.
 		logger.Warning("读取反代设置失败,跳过启动时的 nginx 对账(nginx 保持原样):", err)
 		return
 	}

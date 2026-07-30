@@ -621,10 +621,9 @@ func (a *ApiService) readProxyForm(c *gin.Context, prefix string, scope string) 
 
 	f := proxyForm{enabled: get("Nginx") == "true"}
 
-	// 域名的空值是有含义的,不能当「没传」回退读库。开关开着却没填域名是个必须当场报出来
-	// 的半成品状态(BuildVhostSpecs 负责报),回退拿上一个域名凑数会让它变成:用旧域名生成
-	// 了 vhost、保存又把空值写进库,下次启动对账读到空就跳过——DB 与 nginx 从此长期不一致
-	// 且不再自愈。与 ListenSet / CertSet 同理,用独立标志表示表单确实带了这一项。
+	// 域名的空值是有含义的(开关开着却没填域名,BuildVhostSpecs 会当场报错),不能当
+	// 「没传」回退读库:那会用旧域名生成 vhost、再把空值存进库,下次启动对账读到空就跳过,
+	// DB 与 nginx 从此长期不一致且不再自愈。与 ListenSet / CertSet 同理用独立标志。
 	if get("DomainSet") == "true" {
 		f.domain = get("Domain")
 	} else if f.domain = get("Domain"); f.domain == "" {
@@ -701,13 +700,11 @@ func (a *ApiService) proxySides(c *gin.Context) []service.ProxySide {
 	}
 }
 
-// SyncNginxProxy keeps the auto-generated reverse-proxy configs in nginx in sync
-// with the current form values. The frontend calls it before saving when the proxy
-// is being switched ON or adjusted: only once this succeeds is it safe to move the
-// panel/subscription to plaintext HTTP. Switching the panel side OFF does NOT come
-// through here — the current page is served over that very vhost, and deleting it
-// makes every follow-up request undeliverable; that path is cleaned up by the
-// startup reconciliation after the panel restarts (see app.Start).
+// SyncNginxProxy syncs the auto-generated reverse-proxy configs with the current
+// form values. The frontend calls it before saving when the proxy is switched ON or
+// adjusted: only once this succeeds is it safe to move the panel/subscription to
+// plaintext HTTP. Switching the panel side OFF never comes through here — see
+// app.syncNginxProxy for why that has to wait until after the restart.
 func (a *ApiService) SyncNginxProxy(c *gin.Context) {
 	var acme service.AcmeService
 	// Same aggregation as the startup reconciliation; both must agree exactly
@@ -725,17 +722,9 @@ func (a *ApiService) SyncNginxProxy(c *gin.Context) {
 }
 
 // CheckNginxProxy is SyncNginxProxy's read-only twin: same form, same questions,
-// but it writes nothing and never reloads nginx.
-//
-// The frontend calls it in the two places where writing is not an option:
-//   - before saving while the proxy is already ON. The vhost cannot be rewritten
-//     there (this page is the location it serves), so the write is deferred to the
-//     startup reconciliation — and a failure in that gap reaches nobody, because by
-//     then the service is plaintext and 443 is unanswered. Failing here instead
-//     keeps the user on a working page with nothing saved.
-//   - when the settings page loads, to report drift between nginx and the saved
-//     settings; the page then points at its own "restart panel" button, which
-//     re-runs the reconciliation.
+// but it writes nothing and never reloads nginx. The frontend calls it in the two
+// places where writing is not an option — before saving while the proxy is already
+// on, and when the settings page loads, to report drift. See service.CheckVhosts.
 func (a *ApiService) CheckNginxProxy(c *gin.Context) {
 	var acme service.AcmeService
 	specs, err := service.BuildVhostSpecs(a.proxySides(c)...)

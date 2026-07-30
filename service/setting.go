@@ -219,9 +219,8 @@ func (s *SettingService) GetWebCertMode() (string, error) {
 
 func (s *SettingService) GetWebNginx() (bool, error) {
 	// 空字符串表示"尚未设置/未部署",安全地按 false 处理(避免 ParseBool("") 报错)。
-	// 读失败则必须把错误传出去,不能一样塌成 false:ProxyVhostSpecs 拿它决定 nginx 里
-	// 该有哪些 vhost,把「读不出来」当成「用户关掉了」会让启动时的对账删掉正在服务的
-	// 443 入口。调用方要么处理,要么显式丢弃。
+	// 读失败则必须传出去、不能一样塌成 false:那会让启动时的对账把「读不出来」当成
+	// 「用户关掉了」,删掉正在服务的 443 入口(详见 ProxyVhostSpecs)。
 	v, err := s.getString("webNginx")
 	if err != nil {
 		return false, err
@@ -386,22 +385,15 @@ func (s *SettingService) GetSubNginx() (bool, error) {
 }
 
 // ProxyVhostSpecs derives which reverse-proxy vhosts nginx should have from the
-// settings ALREADY PERSISTED in the DB. It shares BuildVhostSpecs with the API
-// path that reads the form; the two must produce identical results.
+// settings ALREADY PERSISTED in the DB, for the startup reconciliation in
+// app.syncNginxProxy. It shares BuildVhostSpecs with the API path that reads the
+// form; the two must produce identical results.
 //
-// Used to reconcile at panel startup (see app.Start). This is not optional
-// self-healing: turning the proxy OFF can only be cleaned up here. Deleting the
-// vhost instantly cuts the 443 the current page is served over, so the frontend
-// dares not touch nginx while switching the panel side off, and defers cleanup
-// until the panel has restarted and gone back to terminating TLS itself.
-//
-// Every read error is reported rather than defaulted away. The reconciliation
-// deletes any generated vhost whose side comes back disabled, so a failed read
-// silently collapsing to Enabled=false would tear down a live 443 entrypoint over
-// a transient DB error. "Could not read it" and "the user switched it off" have to
-// stay distinguishable; the caller skips the whole reconciliation on error.
-// Every key here is in defaultValueMap, so a missing row yields the default and not
-// an error — reaching this path means the DB read itself failed.
+// Every read error is reported rather than defaulted away: the reconciliation
+// deletes any generated vhost whose side comes back disabled, so collapsing a failed
+// read to Enabled=false would tear down a live 443 entrypoint over a transient DB
+// error. Every key here is in defaultValueMap, so a missing row yields the default —
+// reaching this path means the read itself failed.
 func (s *SettingService) ProxyVhostSpecs() ([]ProxySide, error) {
 	var firstErr error
 	keep := func(err error) {

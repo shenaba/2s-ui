@@ -78,10 +78,9 @@ func TestBuildVhostSpecs(t *testing.T) {
 		t.Errorf("want no vhosts when both sides are off, got %+v", specs)
 	}
 
-	// Switched ON with no domain is an error, NOT a silent skip. Skipping it shrinks
-	// specs — here to empty — and SyncVhosts would then delete the generated vhosts as
-	// no longer wanted, while the service already runs plaintext because the switch
-	// says so: nothing left answering on 443, and the save reported success.
+	// Switched ON with no domain is an error, NOT a silent skip: skipping shrinks specs
+	// (here to empty) and SyncVhosts then deletes the generated vhosts, while the
+	// service already runs plaintext — nothing left answering on 443.
 	blank := panel
 	blank.Domain = "  "
 	if _, err := BuildVhostSpecs(blank); err == nil {
@@ -135,12 +134,10 @@ nginx: configuration file /etc/nginx/nginx.conf test is successful`
 		t.Errorf("unix socket parsed wrong: %+v", got)
 	}
 
-	// Verbatim from nginx 1.22.1 on Debian. The prefix is a timestamp and pid, NOT the
-	// "nginx: " the cases above assume — `nginx -t` writes warnings through the error
-	// log, and only its own final verdict lines carry the "nginx: " prefix. Parsing
-	// locates the marker substring rather than anchoring at the start of the line, so
-	// the prefix is irrelevant; this case exists so a future rewrite cannot quietly
-	// start depending on it.
+	// Verbatim from nginx 1.22.1 on Debian: the prefix is a timestamp and pid, not the
+	// "nginx: " the cases above assume — warnings go through the error log, and only
+	// the final verdict lines carry that prefix. Parsing looks for the marker anywhere
+	// in the line, and this case exists so a rewrite cannot quietly start anchoring it.
 	real := `2026/07/30 09:50:32 [warn] 2031855#2031855: conflicting server name "us.koiup.com" on 0.0.0.0:443, ignored
 2026/07/30 09:50:32 [warn] 2031855#2031855: conflicting server name "us.koiup.com" on [::]:443, ignored
 nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
@@ -162,10 +159,8 @@ func TestConflictsOnPort(t *testing.T) {
 		out  string
 		want bool
 	}{
-		// Regression guard: a duplicate on :80 (the ACME validation block clashing with
-		// another :80 block) has nothing to do with this 443 vhost. The old code used two
-		// bare Contains calls, misread it as a 443 conflict, and rolled back a perfectly
-		// good config.
+		// Regression guard: a duplicate on :80 says nothing about this 443 vhost. The old
+		// code used two bare Contains calls, misread it, and rolled back a good config.
 		{"duplicate on :80", `nginx: [warn] conflicting server name "us.koiup.com" on 0.0.0.0:80, ignored`, false},
 		{"duplicate on v6 :80", `nginx: [warn] conflicting server name "us.koiup.com" on [::]:80, ignored`, false},
 		{"443 v4", `nginx: [warn] conflicting server name "us.koiup.com" on 0.0.0.0:443, ignored`, true},
@@ -175,8 +170,7 @@ func TestConflictsOnPort(t *testing.T) {
 		{"domain differs in case", `nginx: [warn] conflicting server name "US.KOIUP.COM" on 0.0.0.0:443, ignored`, true},
 		{"another domain conflicts on 443", `nginx: [warn] conflicting server name "other.com" on 0.0.0.0:443, ignored`, false},
 		// Reproduces the old bug exactly: the two Contains calls matched independently
-		// across the whole text — "conflicting server name" from line one, the domain from
-		// line two — so it declared a conflict.
+		// across the text — the marker from line one, the domain from line two.
 		{"other domain on 443 plus our domain on 80", `nginx: [warn] conflicting server name "other.com" on 0.0.0.0:443, ignored
 nginx: [warn] conflicting server name "us.koiup.com" on 0.0.0.0:80, ignored`, false},
 		{"443 and 80 interleaved", `nginx: [warn] conflicting server name "us.koiup.com" on 0.0.0.0:80, ignored
@@ -194,10 +188,8 @@ nginx: [warn] conflicting server name "us.koiup.com" on 0.0.0.0:443, ignored`, t
 	}
 
 	// The :80 direction, used by ensureNginxServerBlock right after it writes the
-	// validation block. Getting here means the guard concluded no :80 block existed
-	// for this domain, so a warn naming :80 proves it missed one (server_name in an
-	// included snippet, or wrapped onto its own line) and the generated block would
-	// silently replace whichever of the two nginx reads second.
+	// validation block. Its guard concluded no :80 block existed, so a warn naming :80
+	// proves it missed one and our block would silently replace the user's.
 	on80 := []struct {
 		name string
 		out  string
