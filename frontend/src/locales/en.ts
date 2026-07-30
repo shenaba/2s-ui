@@ -280,6 +280,8 @@ export default {
     proxyGenerated: "Reverse proxy configured",
     proxyGeneratedHint: "The panel is now served at {url} (generated {conf})",
     proxyRestarting: "Restarting the panel to apply it, then switching to the new address…",
+    proxyReverted: "Reverse proxy not applied",
+    proxyRevertedHint: "Nothing was saved. The \"TLS terminated by reverse proxy\" switch has been reset to the value that is actually running, so the page matches the server. Fix the nginx problem above and try again.",
     behindProxyListenWarn: "Set Listen IP to 127.0.0.1, otherwise the panel's plain-HTTP port stays reachable from the internet and bypasses the proxy.",
     proxyRenewHint: "Nginx was not detected, so no reload hook was installed. Configure your proxy to reload after renewal, otherwise it keeps serving the old certificate once this one is renewed.",
     issuedVia: "Certificate issued via {method} validation.",

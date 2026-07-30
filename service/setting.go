@@ -375,6 +375,34 @@ func (s *SettingService) GetSubNginx() (bool, error) {
 	return strconv.ParseBool(v)
 }
 
+// ProxyVhostSpecs derives which reverse-proxy vhosts nginx should have from the
+// settings ALREADY PERSISTED in the DB. It shares BuildVhostSpecs with the API
+// path that reads the form; the two must produce identical results.
+//
+// Used to reconcile at panel startup (see app.Start). This is not optional
+// self-healing: turning the proxy OFF can only be cleaned up here. Deleting the
+// vhost instantly cuts the 443 the current page is served over, so the frontend
+// dares not touch nginx while switching the panel side off, and defers cleanup
+// until the panel has restarted and gone back to terminating TLS itself.
+func (s *SettingService) ProxyVhostSpecs() []ProxySide {
+	get := func(f func() (string, error)) string { v, _ := f(); return v }
+	getInt := func(f func() (int, error)) int { v, _ := f(); return v }
+	getBool := func(f func() (bool, error)) bool { v, _ := f(); return v }
+
+	return []ProxySide{
+		{
+			Name: "panel", Enabled: getBool(s.GetWebNginx), Domain: get(s.GetWebDomain),
+			Path: get(s.GetWebPath), Listen: get(s.GetListen), Port: getInt(s.GetPort),
+			CertFile: get(s.GetCertFile), KeyFile: get(s.GetKeyFile),
+		},
+		{
+			Name: "subscription", Enabled: getBool(s.GetSubNginx), Domain: get(s.GetSubDomain),
+			Path: get(s.GetSubPath), Listen: get(s.GetSubListen), Port: getInt(s.GetSubPort),
+			CertFile: get(s.GetSubCertFile), KeyFile: get(s.GetSubKeyFile),
+		},
+	}
+}
+
 func (s *SettingService) GetSubAcmeEmail() (string, error) {
 	return s.getString("subAcmeEmail")
 }

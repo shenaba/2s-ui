@@ -325,7 +325,7 @@ ký được đưa vào các bản sao lưu cơ sở dữ liệu.
 ### Đứng sau reverse proxy
 
 Bật **TLS được kết thúc bởi reverse proxy** và 2S-UI sẽ viết vhost giúp bạn:
-`/etc/nginx/conf.d/s-ui-panel-<tên-miền>.conf`, trỏ về bảng điều khiển kèm đúng các header
+`/etc/nginx/conf.d/s-ui-proxy-<tên-miền>.conf`, trỏ về bảng điều khiển kèm đúng các header
 chuyển tiếp, kiểm tra bằng `nginx -t`, reload, và khôi phục lại trạng thái cũ kèm chính
 thông báo lỗi của nginx nếu có bước nào thất bại. Máy chủ subscription có thể đứng sau
 cùng một proxy.

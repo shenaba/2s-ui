@@ -99,7 +99,38 @@ func (a *APP) Start() error {
 		logger.Error(err)
 	}
 
+	a.syncNginxProxy()
+
 	return nil
+}
+
+// syncNginxProxy aligns the auto-generated reverse-proxy configs in nginx with
+// the settings ALREADY PERSISTED in the DB.
+//
+// Runs after both servers are up: by then the panel has decided, per the new
+// settings, whether it serves plaintext or TLS, so touching nginx now cannot open
+// a window where neither side is serving.
+//
+// Turning the proxy OFF can only be finished here. The frontend dares not touch
+// nginx while switching the panel side off — the current page is served over the
+// 443 that vhost provides, and the moment it is deleted the follow-up api/save and
+// api/restartApp can no longer be sent. The result would be "vhost gone, settings
+// unsaved": the panel keeps serving plaintext while nobody answers on 443, locking
+// the user out. So that step waits until after the restart and happens here, once
+// the panel terminates TLS itself again.
+//
+// It also heals two classes of leftovers: pre-rename s-ui-panel-*.conf files, and
+// orphans left behind when the proxy was switched off without cleanup.
+// With the proxy on and nothing changed, SyncVhosts short-circuits and will not
+// reload nginx for nothing.
+// Failures are logged only: whether nginx is installed, or whether the panel runs
+// as root, must never block startup.
+func (a *APP) syncNginxProxy() {
+	var acme service.AcmeService
+	specs := service.BuildVhostSpecs(a.SettingService.ProxyVhostSpecs()...)
+	if _, err := acme.SyncVhosts(specs); err != nil {
+		logger.Warning("启动时对账 nginx 反代配置失败(不影响面板运行):", err)
+	}
 }
 
 func (a *APP) Stop() {

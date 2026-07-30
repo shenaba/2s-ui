@@ -683,40 +683,26 @@ func (a *ApiService) readProxyForm(c *gin.Context, prefix string, scope string) 
 	return f
 }
 
-// SyncNginxProxy 按当前表单值,让 nginx 里自动生成的那些反代配置与设置保持一致。
-// 前端在【保存设置之前】调用:只有这里成功了,把面板/订阅切成明文 HTTP 才是安全的。
-//
-// 按【域名】而不是按服务聚合:面板和订阅共用一个域名是常见配置,各生成一份 server 块
-// 会被 nginx 判 conflicting server name 而忽略掉后一个,于是其中一个静默失联。
+// SyncNginxProxy keeps the auto-generated reverse-proxy configs in nginx in sync
+// with the current form values. The frontend calls it before saving when the proxy
+// is being switched ON or adjusted: only once this succeeds is it safe to move the
+// panel/subscription to plaintext HTTP. Switching the panel side OFF does NOT come
+// through here — the current page is served over that very vhost, and deleting it
+// makes every follow-up request undeliverable; that path is cleaned up by the
+// startup reconciliation after the panel restarts (see app.Start).
 func (a *ApiService) SyncNginxProxy(c *gin.Context) {
 	var acme service.AcmeService
 
 	web := a.readProxyForm(c, "web", "web")
 	sub := a.readProxyForm(c, "sub", "sub")
 
-	// 同域名的端点合进同一份 vhost;顺序固定(面板在前)好让配置内容可比对,
-	// 这样内容没变时 EnsureVhost 能直接短路、不白 reload 一次 nginx。
-	var specs []service.VhostOptions
-	byDomain := map[string]int{}
-	add := func(f proxyForm, name string) {
-		if !f.enabled || strings.TrimSpace(f.domain) == "" {
-			return
-		}
-		ep := service.ProxyEndpoint{Name: name, Path: f.path, Listen: f.listen, Port: f.port}
-		if i, ok := byDomain[f.domain]; ok {
-			specs[i].Endpoints = append(specs[i].Endpoints, ep)
-			return
-		}
-		byDomain[f.domain] = len(specs)
-		specs = append(specs, service.VhostOptions{
-			Domain:    f.domain,
-			CertFile:  f.cert,
-			KeyFile:   f.key,
-			Endpoints: []service.ProxyEndpoint{ep},
-		})
-	}
-	add(web, "panel")
-	add(sub, "subscription")
+	// Same aggregation as the startup reconciliation; both must agree exactly
+	specs := service.BuildVhostSpecs(
+		service.ProxySide{Name: "panel", Enabled: web.enabled, Domain: web.domain, Path: web.path,
+			Listen: web.listen, Port: web.port, CertFile: web.cert, KeyFile: web.key},
+		service.ProxySide{Name: "subscription", Enabled: sub.enabled, Domain: sub.domain, Path: sub.path,
+			Listen: sub.listen, Port: sub.port, CertFile: sub.cert, KeyFile: sub.key},
+	)
 
 	res, err := acme.SyncVhosts(specs)
 	if err != nil {

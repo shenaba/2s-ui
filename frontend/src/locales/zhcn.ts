@@ -280,6 +280,8 @@ export default {
     proxyGenerated: "已自动配置反向代理",
     proxyGeneratedHint: "面板地址:{url}(已生成 {conf})",
     proxyRestarting: "正在重启面板使其生效,随后跳转到新地址…",
+    proxyReverted: "反向代理未生效",
+    proxyRevertedHint: "本次设置未保存。「由反向代理终结 TLS」开关已还原为当前实际生效的值,页面状态与服务器一致。请按上面的错误修好 nginx 配置后重试。",
     behindProxyListenWarn: "请将监听 IP 设为 127.0.0.1,否则面板的明文 HTTP 端口仍可从公网直连,绕过反向代理",
     proxyRenewHint: "未检测到 nginx,未配置重载钩子;请自行让反向代理在续期后重载,否则证书更新后它仍会使用旧证书",
     issuedVia: "已通过 {method} 验证签发证书。",

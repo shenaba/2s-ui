@@ -394,11 +394,23 @@ const save = async () => {
   const webWasOn = before.webNginx === 'true'
   const subWasOn = before.subNginx === 'true'
 
+  // When the panel-side proxy is being switched OFF, this save must not touch nginx
+  // at all: the current page is served over the 443 that vhost provides, and the
+  // moment it is deleted the follow-up api/save and api/restartApp become
+  // undeliverable. The result is "vhost gone, settings unsaved" — the panel keeps
+  // serving plaintext while nobody answers on 443, locking the user out.
+  // Deleting the vhost and restarting the panel deadlock either way round: whichever
+  // goes first, the step in between dies on the road it just cut. So the whole
+  // shutdown path moves later — save, restart, and once the panel terminates TLS
+  // itself again the startup reconciliation deletes it (syncNginxProxy in app.Start).
+  // Subscription-side changes ride along with it; a restart is imminent anyway.
+  const closingPanelProxy = webWasOn && !webOn
+
   // 一次调用把两侧都交给后端:它按域名聚合(同域名合并成一份 vhost 的两个 location),
   // 并删掉不再需要的旧配置。任何一侧开着就得同步——不止是刚打开的那一次,改端口/路径/
   // 域名要跟着改,而「开关开着、配置却不在」的实例(升级上来的、或被手工删过)也靠这步自愈。
   // 内容没变且已生效时后端直接返回,不会白 reload 一次 nginx。
-  if (webOn || subOn || webWasOn || subWasOn) {
+  if (!closingPanelProxy && (webOn || subOn || webWasOn || subWasOn)) {
     loading.value = true
     // CertSet 告诉后端「证书路径这两项表单确实带了,空串就是空」:域名没有证书时
     // 必须让 vhost 生成失败、把用户拦在这里,不能回退读库拿上一个域名的证书凑数
@@ -413,7 +425,31 @@ const save = async () => {
     loading.value = false
     // 生成失败就【不保存】:服务继续自己终结 TLS,访问方式不变。
     // 反过来先存后配的话,服务已经改跑明文 HTTP 而 nginx 没接住,人就进不来了。
-    if (!r.success) return
+    if (!r.success) {
+      // The switch was written into settings by webBehindProxy/subBehindProxy's setter
+      // BEFORE this step, and this save never reached the DB. Without reverting it the
+      // UI shows "on" while the DB still says "off", and from then on changing anything
+      // at all (panel URI, timezone, session age...) carries that switched-on flag into
+      // another sync and another failure — the page is wedged, and only a reload escapes.
+      // Revert just these two switches, leaving domain/port and the rest of what the user
+      // just typed alone: the switch is the one safety-critical field that moves a service
+      // to plaintext HTTP and must match the DB, everything else is an unsaved draft.
+      // Restore before's ORIGINAL value rather than a hardcoded "false": the DB default is
+      // an empty string, so writing "false" conjures up a phantom change in proxyInputs and
+      // the next save would restart the panel for nothing.
+      // reverted must be computed before assigning — now is the same object as settings.value.
+      const reverted = now.webNginx !== before.webNginx || now.subNginx !== before.subNginx
+      settings.value.webNginx = before.webNginx ?? ''
+      settings.value.subNginx = before.subNginx ?? ''
+      if (reverted) {
+        push.warning({
+          title: i18n.global.t('setting.proxyReverted'),
+          duration: 9000,
+          message: i18n.global.t('setting.proxyRevertedHint'),
+        })
+      }
+      return
+    }
     const vhosts: any[] = Array.isArray(r.obj) ? r.obj : []
     if (vhosts.length) {
       push.success({

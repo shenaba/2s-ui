@@ -329,7 +329,7 @@ database backups.
 ### Behind a reverse proxy
 
 Turn on **TLS terminated by a reverse proxy** and 2S-UI writes the vhost for
-you: `/etc/nginx/conf.d/s-ui-panel-<domain>.conf`, pointed at the panel with the
+you: `/etc/nginx/conf.d/s-ui-proxy-<domain>.conf`, pointed at the panel with the
 right forwarding headers, checked with `nginx -t`, reloaded, and rolled back
 with nginx's own error message if anything fails. The subscription server can
 sit behind the same proxy.

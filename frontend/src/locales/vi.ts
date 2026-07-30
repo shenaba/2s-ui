@@ -280,6 +280,8 @@ export default {
     proxyGenerated: "Đã cấu hình reverse proxy",
     proxyGeneratedHint: "Bảng điều khiển hiện ở {url} (đã tạo {conf})",
     proxyRestarting: "Đang khởi động lại bảng điều khiển để áp dụng, sau đó chuyển sang địa chỉ mới…",
+    proxyReverted: "Chưa áp dụng reverse proxy",
+    proxyRevertedHint: "Không có gì được lưu. Công tắc «TLS kết thúc tại reverse proxy» đã được đặt lại về giá trị đang thực sự chạy để trang khớp với máy chủ. Hãy khắc phục lỗi nginx ở trên rồi thử lại.",
     behindProxyListenWarn: "Hãy đặt IP lắng nghe là 127.0.0.1, nếu không cổng HTTP thuần của bảng điều khiển vẫn truy cập được từ Internet và bỏ qua reverse proxy.",
     proxyRenewHint: "Không phát hiện nginx nên chưa cài lệnh tải lại. Hãy tự cấu hình reverse proxy tải lại sau khi gia hạn, nếu không nó sẽ tiếp tục dùng chứng chỉ cũ.",
     issuedVia: "Đã cấp chứng chỉ qua xác minh {method}.",
