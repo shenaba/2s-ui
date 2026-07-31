@@ -55,12 +55,14 @@ npm run lint     # eslint . --fix
 
 ### Tests
 
-**Two Go test files, and nothing runs them.** `util/outJson_test.go` (`TestStripServerTlsFields` — the server-only TLS fields stripped from client configs, issue #51) and `cmd/migration/version_test.go` (`TestVersionBefore` — the version comparison that gates migrations). 148 lines between them. There are no frontend unit tests.
+**Three Go test files, and nothing runs them.** `util/outJson_test.go` (`TestStripServerTlsFields` — the server-only TLS fields stripped from client configs, issue #51), `cmd/migration/version_test.go` (`TestVersionBefore` — the version comparison that gates migrations), and `service/acme_test.go` (8 tests over the nginx-facing decisions in `EnsureVhost`/`SyncVhosts`/`ensureNginxServerBlock` — conflict parsing, port matching, `nginx -T` dump splitting, vhost spec aggregation). ~500 lines between them. There are no frontend unit tests.
 
-**No workflow invokes `go test`** — `ci.yml` runs `go vet`, `go build`, and `vue-tsc`/`vite build`, nothing else. So these two can break and CI stays green. Run them by hand when you touch either area:
+`service/acme_test.go` is deliberately all pure functions: every one of those decisions was factored out so it can be verified on a machine with no nginx. Keep it that way — the fs/exec halves (`precheckVhost`, `CheckVhosts`) have no coverage precisely because they cannot get any here.
+
+**No workflow invokes `go test`** — `ci.yml` runs `go vet`, `go build`, and `vue-tsc`/`vite build`, nothing else. So these can break and CI stays green. Run them by hand when you touch either area (`-checklinkname=0` is required for the `service` package, same as the main build):
 
 ```bash
-go test ./util/... ./cmd/migration/...
+go test -ldflags="-checklinkname=0" -tags "$BUILD_TAGS" ./util/... ./cmd/migration/... ./service/...
 ```
 
 Everything else is verified the same way it always was: build, run, exercise the changed area by hand (both themes, mobile ≤820px, `fa` RTL for UI work). Don't claim a change is tested because CI is green — for almost all of this repo, green means it compiles.
@@ -154,7 +156,7 @@ The panel path is a **runtime DB setting**, not a build constant. This spans fiv
 
 **Never hardcode `/app/` and never make axios paths absolute** — it breaks both custom web paths and dev mode.
 
-Related: `vite.config.mts` gives assets **random filenames per build** (not content hashes), because `web.go` serves `assets/` with `Cache-Control: max-age=31536000`.
+Related: `web.go` serves `assets/` with `Cache-Control: max-age=31536000`, so `vite.config.mts` names every emitted file `[name]-[hash]` — **content** hashes, not the per-build id it used before 1.6.2. An unchanged chunk therefore keeps its name across an upgrade and stays cached; only changed ones are refetched. `[name]` stays in front so split chunks remain tellable apart, and `assetFileNames` covers the CSS chunks and `@fontsource` woff2 files, which used to land under bare upstream names and so carried a year-long max-age they could never invalidate. `public/assets/` (the two favicons) bypasses this and keeps the literal names `index.html` hardcodes.
 
 ### Auth
 
@@ -182,7 +184,7 @@ Related: `vite.config.mts` gives assets **random filenames per build** (not cont
 - **No global component registration**; always import explicitly.
 - **Never use native `<select>`** — use `<Select>` (it parses slot vnodes so bound values keep their type).
 - **Overlays must use `pushOverlay()`** from `components/ui/overlay.ts`; never hand-roll an Esc listener.
-- Drawers/modals live in `layouts/drawers/`, not `components/`. Forms split by direction under `components/forms/in|out/`.
+- Drawers/modals live in `layouts/drawers/`, not `components/`. Forms are under `components/forms/in|out/`, but since 1.6.2 that split is no longer by direction: the shared ones (`Dial`, `Listen`, `Multiplex`, `Transport`, `Headers`, `OutTLS`) all live in `out/` and are imported by the **inbound** and **DNS** drawers too. Look there before adding a second copy under `in/`.
 - After touching `components/ui/`, `npx vue-tsc --noEmit` must be 0 errors; `scripts/extract-component-api.mjs` regenerates the doc's prop tables.
 
 i18n keys are **structural, not just display**: route `name`s are i18n keys, and toasts are built as `t('actions.'+action) + ' ' + t('objects.'+obj)` — renaming a key silently breaks them. File names ≠ locale keys (`zhcn.ts` → `zhHans`, `zhtw.ts` → `zhHant`). `locales/ui/*.ts` are nominally generated, but the generator needs an external design-handoff dir that isn't in this repo — **treat them as source**.
