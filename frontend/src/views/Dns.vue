@@ -150,7 +150,7 @@
 
 <script lang="ts" setup>
 import Select from '@/components/ui/Select.vue'
-import { computed, onBeforeMount, ref } from 'vue'
+import { computed, onBeforeMount, ref, watch } from 'vue'
 import Data from '@/store/modules/data'
 import DnsServerDrawer from '@/layouts/drawers/dns/DnsServerDrawer.vue'
 import DnsRuleDrawer from '@/layouts/drawers/dns/DnsRuleDrawer.vue'
@@ -179,6 +179,18 @@ const appConfig = computed((): Config => {
   return <Config>Data().config
 })
 
+const init = () => {
+  // fix old configs
+  if (!appConfig.value.dns) appConfig.value.dns = { servers: [], rules: [] }
+  if (!appConfig.value.dns.servers) appConfig.value.dns.servers = []
+  if (!appConfig.value.dns.rules) appConfig.value.dns.rules = []
+
+  oldConfig.value = JSON.parse(JSON.stringify(Data().config))
+  ready.value = true
+  failed.value = false
+  loading.value = false
+}
+
 onBeforeMount(async () => {
   loading.value = true
   // Never touch the config without real data: the "fix old configs" writes
@@ -189,16 +201,13 @@ onBeforeMount(async () => {
     failed.value = true
     return
   }
-
-  // fix old configs
-  if (!appConfig.value.dns) appConfig.value.dns = { servers: [], rules: [] }
-  if (!appConfig.value.dns.servers) appConfig.value.dns.servers = []
-  if (!appConfig.value.dns.rules) appConfig.value.dns.rules = []
-
-  oldConfig.value = JSON.parse(JSON.stringify(Data().config))
-  ready.value = true
-  loading.value = false
+  init()
 })
+
+// waitReady gives up after 15s, but the socket's reconnect backoff can put a
+// successful attempt past that. Without this the page keeps claiming it cannot
+// load the configuration while the rest of the panel is live again.
+watch(() => Data().lastLoad, (lu) => { if (lu > 0 && failed.value) init() })
 
 const unchanged = computed(() => FindDiff.deepCompare(appConfig.value.dns, oldConfig.value.dns))
 
