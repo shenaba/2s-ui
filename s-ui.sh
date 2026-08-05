@@ -883,6 +883,9 @@ enable_bbr() {
     arch | manjaro | parch)
         pacman -Sy --noconfirm ca-certificates
         ;;
+    alpine)
+        apk update && apk add --no-cache ca-certificates
+        ;;
     *)
         echo -e "${red}Unsupported operating system. Please check the script and install the necessary packages manually.${plain}\n"
         exit 1
@@ -957,6 +960,9 @@ ssl_cert_issue() {
         ;;
     arch | manjaro | parch)
         pacman -Sy --noconfirm socat
+        ;;
+    alpine)
+        apk update && apk add --no-cache socat
         ;;
     *)
         echo -e "${red}Unsupported operating system. Please check the script and install the necessary packages manually.${plain}\n"
