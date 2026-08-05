@@ -185,6 +185,28 @@ func getHub() *Hub {
 	return hub
 }
 
+// DropAllClients closes every live connection but leaves the hub running.
+// Authentication is handshake-only, so after the admin credentials change an
+// already-open socket would keep streaming the full config — client UUIDs,
+// passwords, subURI — to a tab that authenticated with the old ones. Browsers
+// reconnect within a second; a session that is still valid simply re-auths.
+func DropAllClients() {
+	h := getHub()
+	if h == nil {
+		return
+	}
+	// Collect first: dropClient takes h.mu itself.
+	h.mu.Lock()
+	clients := make([]*hubClient, 0, len(h.clients))
+	for c := range h.clients {
+		clients = append(clients, c)
+	}
+	h.mu.Unlock()
+	for _, c := range clients {
+		h.dropClient(c)
+	}
+}
+
 // HubServe registers an accepted connection and blocks reading it until it
 // drops. Runs on the (hijacked) HTTP handler goroutine.
 func HubServe(conn *websocket.Conn, hostname string) {

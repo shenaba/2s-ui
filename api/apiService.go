@@ -265,6 +265,10 @@ func (a *ApiService) ChangePass(c *gin.Context) {
 	err := a.UserService.ChangePass(id, oldPass, newUsername, newPass)
 	if err == nil {
 		logger.Info("change user credentials success")
+		// Websocket auth is checked at the handshake only, so sockets opened
+		// under the old credentials would otherwise keep receiving the full
+		// config. Dropping them forces a fresh handshake.
+		service.DropAllClients()
 		jsonMsg(c, "save", nil)
 	} else {
 		logger.Warning("change user credentials failed:", err)
