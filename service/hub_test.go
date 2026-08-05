@@ -1,10 +1,16 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 // The hub's decisions are factored into pure helpers for the same reason
@@ -176,4 +182,137 @@ func TestStartStopHubIsIdempotent(t *testing.T) {
 	NotifyConfigChanged()
 	HubAfterStatsFlush()
 	HubPushNodesStatus()
+}
+
+// "cpu" throughout the tests below: the default resource set includes "sbd",
+// which reaches corePtr — nil without a running core.
+const testStatusParams = `{"r":["cpu"]}`
+
+func TestStatusLoopStartsAndStopsWithSubscribers(t *testing.T) {
+	// The 2s gopsutil sampler must exist only while somebody watches: it is the
+	// one piece of periodic work an idle panel would otherwise keep paying for.
+	StartHub()
+	defer StopHub()
+	h := getHub()
+
+	c := &hubClient{send: make(chan []byte, hubSendBuffer), closed: make(chan struct{})}
+	h.mu.Lock()
+	h.clients[c] = struct{}{}
+	h.mu.Unlock()
+	// Runs before StopHub (LIFO): this client has no conn, and StopHub would
+	// dereference it.
+	defer func() {
+		h.mu.Lock()
+		delete(h.clients, c)
+		h.mu.Unlock()
+	}()
+
+	running := func() bool {
+		h.statusMu.Lock()
+		defer h.statusMu.Unlock()
+		return h.statusStop != nil
+	}
+
+	if running() {
+		t.Fatal("sampler must not run before anyone subscribes")
+	}
+
+	h.subscribe(c, "status", json.RawMessage(testStatusParams))
+	if !running() {
+		t.Error("subscribing to status must start the sampler")
+	}
+	// Subscribes are answered immediately; waiting a full tick is what the
+	// ticker alone would do.
+	select {
+	case msg := <-c.send:
+		var env struct {
+			Topic string                 `json:"topic"`
+			Data  map[string]interface{} `json:"data"`
+		}
+		if err := json.Unmarshal(msg, &env); err != nil {
+			t.Fatalf("subscribe answer is not valid JSON: %v", err)
+		}
+		if env.Topic != "status" {
+			t.Errorf("topic = %q, want status", env.Topic)
+		}
+		if _, ok := env.Data["t"]; !ok {
+			t.Error("sample must carry the server timestamp clients derive rates from")
+		}
+	default:
+		t.Error("subscribe must answer immediately, not wait for the first tick")
+	}
+
+	h.unsubscribe(c, "status")
+	if running() {
+		t.Error("the last unsubscribe must stop the sampler")
+	}
+}
+
+func TestHubServeSubscribeAndDisconnect(t *testing.T) {
+	// Covers what the pure helpers cannot: HubServe registering a real
+	// connection, the read pump decoding a frame, the write pump delivering the
+	// answer, and the drop path deregistering on disconnect. A leak here means
+	// every closed tab keeps a goroutine pair for the panel's lifetime.
+	StartHub()
+	defer StopHub()
+	h := getHub()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Origin checking is WsHandler's business, not the hub's.
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		HubServe(conn, "test.local")
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cl, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer cl.CloseNow()
+
+	clients := func() int {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.clients)
+	}
+
+	sub := `{"op":"subscribe","topic":"status","params":` + testStatusParams + `}`
+	if err := cl.Write(ctx, websocket.MessageText, []byte(sub)); err != nil {
+		t.Fatalf("write subscribe: %v", err)
+	}
+	_, data, err := cl.Read(ctx)
+	if err != nil {
+		t.Fatalf("read answer: %v", err)
+	}
+	var env struct {
+		Topic string                 `json:"topic"`
+		Data  map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &env); err != nil {
+		t.Fatalf("answer is not valid JSON: %v", err)
+	}
+	if env.Topic != "status" {
+		t.Errorf("topic = %q, want status", env.Topic)
+	}
+	if _, ok := env.Data["cpu"]; !ok {
+		t.Errorf("requested resource missing from the sample: %v", env.Data)
+	}
+
+	if got := clients(); got != 1 {
+		t.Fatalf("registered clients = %d, want 1", got)
+	}
+
+	_ = cl.Close(websocket.StatusNormalClosure, "")
+	deadline := time.Now().Add(5 * time.Second)
+	for clients() != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := clients(); got != 0 {
+		t.Errorf("client still registered %v after disconnect: %d", time.Since(deadline), got)
+	}
 }
