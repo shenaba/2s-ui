@@ -34,6 +34,12 @@ export default {
     core: "Sing-Box 错误",
     invalidData: "无效数据",
   },
+  ws: {
+    down: "连接已断开",
+    downHint: "实时数据已暂停。若面板位于反向代理之后，请确认代理转发了 Upgrade 头。",
+    offlineTitle: "无法加载配置",
+    offlineDesc: "面板的推送通道未连接，因此暂时没有可编辑的配置。若面板位于反向代理之后，请确认代理转发了 Upgrade 头。",
+  },
   theme: {
     light: "浅色",
     dark: "深色",

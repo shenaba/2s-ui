@@ -36,7 +36,7 @@
 
   <div class="page-stack-lg fade-up">
     <!-- ===================== toolbar ===================== -->
-    <div class="toolbar" style="justify-content: center;">
+    <div v-if="!failed" class="toolbar" style="justify-content: center;">
       <Btn variant="primary" sm @click="showRuleDrawer(-1)">
         <Ico name="plus" :size="15" /> {{ $t('ui.addRule') }}
       </Btn>
@@ -61,6 +61,12 @@
       <Btn :variant="unchanged ? 'ghost' : 'primary'" sm :loading="loading" :disabled="unchanged" @click="saveConfig">
         <Ico name="check" :size="15" /> {{ $t('actions.save') }}
       </Btn>
+    </div>
+
+    <!-- No config arrived: say why instead of leaving a blank page under a
+         spinning save button. -->
+    <div v-if="failed" style="padding: 24px 0;">
+      <EmptyState icon="link" :title="$t('ws.offlineTitle')" :desc="$t('ws.offlineDesc')" />
     </div>
 
     <template v-if="ready">
@@ -176,10 +182,12 @@ import SectionLabel from '@/components/ui/SectionLabel.vue'
 import EntityCard from '@/components/ui/EntityCard.vue'
 import RuleCard from '@/components/ui/RuleCard.vue'
 import CardBtn from '@/components/ui/CardBtn.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
 
 const oldConfig = ref({})
 const loading = ref(false)
 const ready = ref(false)
+const failed = ref(false)
 
 const appConfig = computed((): Config => {
   return <Config>Data().config
@@ -189,7 +197,11 @@ onBeforeMount(async () => {
   loading.value = true
   // Never render the form without real data: it edits the live config object,
   // so an empty one would let a save wipe the panel's whole configuration.
-  if (!await Data().waitReady()) return
+  if (!await Data().waitReady()) {
+    loading.value = false
+    failed.value = true
+    return
+  }
   oldConfig.value = JSON.parse(JSON.stringify(Data().config))
   ready.value = true
   loading.value = false

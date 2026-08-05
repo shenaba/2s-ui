@@ -7,7 +7,14 @@
 // resubscribe() double as "apply new params now" (status resource list, stats
 // period) and keeps reconnects cheap (the load topic's lu gate skips the full
 // config payload when nothing changed).
+import { ref } from 'vue'
 import HttpUtils from '@/plugins/httputil'
+
+// Set once a connect attempt fails or an open socket drops, cleared on the next
+// successful open. Starts false so the first (still pending) handshake does not
+// flash a warning on every page load. Without this the UI just freezes on its
+// last data — the topbar reads it so a drop is at least visible.
+export const wsDown = ref(false)
 
 export interface LiveSub {
   stop(): void
@@ -105,6 +112,7 @@ const connect = () => {
     clearTimeout(handshakeTimer)
     if (socket !== s) return
     failures = 0
+    wsDown.value = false
     startWatchdog()
     for (const sub of subs) sendSubscribe(sub)
   }
@@ -135,6 +143,7 @@ const connect = () => {
 const scheduleReconnect = () => {
   if (subs.size === 0 || reconnectTimer) return
   failures++
+  wsDown.value = true
   // A failed handshake looks the same to the browser whether the backend is
   // down or the session cookie expired (401). Probe over HTTP every third
   // failure: an expired session hits httputil's "Invalid login" handler and
@@ -168,6 +177,8 @@ const maybeTeardown = () => {
     reconnectTimer = null
   }
   failures = 0
+  // A deliberate teardown (logout) is not an outage.
+  wsDown.value = false
   stopWatchdog()
   if (socket) {
     const s = socket

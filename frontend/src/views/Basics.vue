@@ -1,10 +1,16 @@
 <template>
   <div class="page-stack fade-up" style="gap: 14px; max-width: 880px;">
     <!-- toolbar -->
-    <div class="toolbar" style="justify-content: center;">
+    <div v-if="!failed" class="toolbar" style="justify-content: center;">
       <Btn :variant="unchanged ? 'ghost' : 'primary'" sm :loading="loading" :disabled="unchanged" @click="saveConfig">
         <Ico name="check" :size="15" /> {{ $t('actions.save') }}
       </Btn>
+    </div>
+
+    <!-- No config arrived: say why instead of leaving a blank page under a
+         spinning save button. -->
+    <div v-if="failed" style="padding: 24px 0;">
+      <EmptyState icon="link" :title="$t('ws.offlineTitle')" :desc="$t('ws.offlineDesc')" />
     </div>
 
     <template v-if="ready">
@@ -203,10 +209,12 @@ import Pop from '@/components/ui/Pop.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import SwitchLabel from '@/components/ui/SwitchLabel.vue'
 import ChipSelect from '@/components/ui/ChipSelect.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
 
 const oldConfig = ref({})
 const loading = ref(false)
 const ready = ref(false)
+const failed = ref(false)
 
 const appConfig = computed((): Config => {
   return <Config>Data().config
@@ -216,8 +224,14 @@ onBeforeMount(async () => {
   loading.value = true
   // Never render the form without real data: it edits the live config object,
   // so an empty one would let a save wipe the panel's whole configuration.
-  // Keep the spinner instead — there is genuinely nothing to show yet.
-  if (!await Data().waitReady()) return
+  // Show the offline notice instead — a bare spinner reads as "still loading"
+  // forever, and the usual cause (a proxy not forwarding Upgrade) is something
+  // only the operator can fix.
+  if (!await Data().waitReady()) {
+    loading.value = false
+    failed.value = true
+    return
+  }
   oldConfig.value = JSON.parse(JSON.stringify(Data().config))
   ready.value = true
   loading.value = false
