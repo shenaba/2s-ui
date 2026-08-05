@@ -79,6 +79,10 @@ func (a *APP) Start() error {
 		return err
 	}
 
+	// The hub must exist before the cron jobs first fire into it and before
+	// the web server accepts the first upgrade.
+	service.StartHub()
+
 	err = a.cronJob.Start(loc, trafficAge, statsBucketSeconds, globalReset)
 	if err != nil {
 		return err
@@ -139,6 +143,8 @@ func (a *APP) syncNginxProxy() {
 }
 
 func (a *APP) Stop() {
+	// cron.Stop does not wait for in-flight jobs; every hub entry point is a
+	// safe no-op once StopHub has swapped the singleton out.
 	a.cronJob.Stop()
 	err := a.subServer.Stop()
 	if err != nil {
@@ -148,6 +154,10 @@ func (a *APP) Stop() {
 	if err != nil {
 		logger.Warning("stop Web Server err:", err)
 	}
+	// After webServer.Stop: the listener is closed, so no new handshake can
+	// race the teardown. Shutdown ignores hijacked connections — closing the
+	// live sockets is the hub's job, or every restart leaks them.
+	service.StopHub()
 	err = a.configService.StopCore()
 	if err != nil {
 		logger.Warning("stop Core err:", err)

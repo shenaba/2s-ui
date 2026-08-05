@@ -1,10 +1,16 @@
 <template>
   <div class="page-stack fade-up" style="gap: 14px; max-width: 880px;">
     <!-- toolbar -->
-    <div class="toolbar" style="justify-content: center;">
+    <div v-if="!failed" class="toolbar" style="justify-content: center;">
       <Btn :variant="unchanged ? 'ghost' : 'primary'" sm :loading="loading" :disabled="unchanged" @click="saveConfig">
         <Ico name="check" :size="15" /> {{ $t('actions.save') }}
       </Btn>
+    </div>
+
+    <!-- No config arrived: say why instead of leaving a blank page under a
+         spinning save button. -->
+    <div v-if="failed" style="padding: 24px 0;">
+      <EmptyState icon="link" :title="$t('ws.offlineTitle')" :desc="$t('ws.offlineDesc')" />
     </div>
 
     <template v-if="ready">
@@ -192,7 +198,7 @@
 
 <script lang="ts" setup>
 import Select from '@/components/ui/Select.vue'
-import { computed, onBeforeMount, ref } from 'vue'
+import { computed, onBeforeMount, ref, watch } from 'vue'
 import Data from '@/store/modules/data'
 import { Config, Ntp } from '@/types/config'
 import { FindDiff } from '@/plugins/utils'
@@ -203,24 +209,43 @@ import Pop from '@/components/ui/Pop.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import SwitchLabel from '@/components/ui/SwitchLabel.vue'
 import ChipSelect from '@/components/ui/ChipSelect.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
 
 const oldConfig = ref({})
 const loading = ref(false)
 const ready = ref(false)
+const failed = ref(false)
 
 const appConfig = computed((): Config => {
   return <Config>Data().config
 })
 
-onBeforeMount(async () => {
-  loading.value = true
-  while (Data().lastLoad == 0) {
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
+const init = () => {
   oldConfig.value = JSON.parse(JSON.stringify(Data().config))
   ready.value = true
+  failed.value = false
   loading.value = false
+}
+
+onBeforeMount(async () => {
+  loading.value = true
+  // Never render the form without real data: it edits the live config object,
+  // so an empty one would let a save wipe the panel's whole configuration.
+  // Show the offline notice instead — a bare spinner reads as "still loading"
+  // forever, and the usual cause (a proxy not forwarding Upgrade) is something
+  // only the operator can fix.
+  if (!await Data().waitReady()) {
+    loading.value = false
+    failed.value = true
+    return
+  }
+  init()
 })
+
+// waitReady gives up after 15s, but the socket's reconnect backoff can put a
+// successful attempt past that. Without this the page keeps claiming it cannot
+// load the configuration while the rest of the panel is live again.
+watch(() => Data().lastLoad, (lu) => { if (lu > 0 && failed.value) init() })
 
 const unchanged = computed(() => {
   return FindDiff.deepCompare(appConfig.value, oldConfig.value)

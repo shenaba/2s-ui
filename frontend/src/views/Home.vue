@@ -162,6 +162,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import HttpUtils from '@/plugins/httputil'
+import { liveSubscribe, type LiveSub } from '@/plugins/ws'
 import { HumanReadable } from '@/plugins/utils'
 import Data from '@/store/modules/data'
 import Btn from '@/components/ui/Btn.vue'
@@ -227,39 +228,44 @@ const logsOpen = ref(false)
 const backupOpen = ref(false)
 const usageOpen = ref(false)
 
-/* ---------- live status polling (2s, like the old dashboard) ---------- */
+/* ---------- live status via websocket push (server samples every 2s) ---------- */
 const status = ref<any>({})
 const sys = ref<any>({})
 const sbd = computed(() => status.value.sbd ?? {})
 const sbVersion = computed(() => sbd.value.version || '—')
 
-// 轮询周期:setInterval 间隔与"增量→每秒速率"换算共用,避免散落魔法数字
-const POLL_MS = 2000
-const POLL_SEC = POLL_MS / 1000
+// 服务端 status 主题的采样周期。只在首拍(还没有时间戳基准)时用来换算速率,
+// 之后一律按推送自带的 t 算真实间隔,所以别当成"轮询周期"
+const FALLBACK_SAMPLE_SEC = 2
 const BUF = 40
 const buf = reactive({
   netIn: [] as number[],
   netOut: [] as number[],
   users: [] as number[],
   inbounds: [] as number[],
+  // 每个速率点对应的采样时刻(毫秒)。推送节奏可变(重连、断流),写死 2 秒会让
+  // x 轴与 tooltip 标注跟真实时间对不上,所以按实际时间戳标注。
+  netAt: [] as number[],
 })
 let lastNet: { recv: number; sent: number } | null = null
+let lastT: number | null = null
 
 const push = (arr: number[], v: number) => { arr.push(v); if (arr.length > BUF) arr.shift() }
 
-const poll = async () => {
-  const r = ['net', 'sbd']
-  if (tiles.resources) r.push('cpu', 'mem', 'dsk', 'swp')
-  const msg = await HttpUtils.get('api/status', { r: r.join(',') })
-  if (!msg.success || !msg.obj) return
-  status.value = { ...status.value, ...msg.obj }
-  const net = msg.obj.net
+const onSample = (obj: any) => {
+  if (!obj) return
+  status.value = { ...status.value, ...obj }
+  // 推送带服务器时间戳 t(毫秒);按真实间隔换算速率,重连间隙不会造出尖峰
+  const dtSec = Number.isFinite(obj.t) && lastT ? Math.max(0.5, (obj.t - lastT) / 1000) : FALLBACK_SAMPLE_SEC
+  if (Number.isFinite(obj.t)) lastT = obj.t
+  const net = obj.net
   // net.recv/sent 可能缺失(后端取不到 IO 计数器时返回空对象)
   if (net && Number.isFinite(net.recv) && Number.isFinite(net.sent)) {
     // 有基准才出速率;恢复后的首个有效拍只重建基准,避免把跨缺口的累计增量当作单拍速率
     if (lastNet) {
-      push(buf.netIn, Math.max(0, (net.recv - lastNet.recv) / POLL_SEC))
-      push(buf.netOut, Math.max(0, (net.sent - lastNet.sent) / POLL_SEC))
+      push(buf.netIn, Math.max(0, (net.recv - lastNet.recv) / dtSec))
+      push(buf.netOut, Math.max(0, (net.sent - lastNet.sent) / dtSec))
+      push(buf.netAt, Number.isFinite(obj.t) ? obj.t : Date.now())
     }
     lastNet = { recv: net.recv, sent: net.sent }
   } else {
@@ -270,19 +276,26 @@ const poll = async () => {
   push(buf.inbounds, data.onlines.inbound?.length ?? 0)
 }
 
+const statusResources = () => {
+  const r = ['net', 'sbd']
+  if (tiles.resources) r.push('cpu', 'mem', 'dsk', 'swp')
+  return r
+}
+
 const loadSys = async () => {
   const msg = await HttpUtils.get('api/status', { r: 'sys' })
   if (msg.success && msg.obj?.sys) sys.value = msg.obj.sys
 }
 
-let pollId: ReturnType<typeof setInterval> | null = null
+let live: LiveSub | null = null
 onMounted(() => {
   loadSys()
-  poll()
   loadChanges()
-  pollId = setInterval(poll, POLL_MS)
+  live = liveSubscribe({ topic: 'status', params: () => ({ r: statusResources() }), onData: onSample })
 })
-onBeforeUnmount(() => { if (pollId) clearInterval(pollId) })
+// 资源卡开关改变要采的指标集合;重订阅即以新参数生效
+watch(() => tiles.resources, () => live?.resubscribe())
+onBeforeUnmount(() => { live?.stop(); live = null })
 
 /* ---------- derived live values ---------- */
 const netInNow = computed(() => buf.netIn[buf.netIn.length - 1] ?? 0)
@@ -292,7 +305,10 @@ const onlineInbounds = computed(() => data.onlines.inbound?.length ?? 0)
 const totalDown = computed(() => data.clients.reduce((a: number, c: any) => a + (c.down ?? 0), 0))
 const totalUp = computed(() => data.clients.reduce((a: number, c: any) => a + (c.up ?? 0), 0))
 const trafficAxis = computed(() => {
-  const span = (buf.netIn.length - 1) * POLL_SEC
+  // 按首尾采样时刻的真实跨度标注,而不是"点数 × 2 秒"
+  const at = buf.netAt
+  if (at.length < 2) return []
+  const span = Math.round((at[at.length - 1] - at[0]) / 1000)
   if (span <= 0) return []
   return [`-${span}s`, `-${Math.round(span * 0.75)}s`, `-${Math.round(span * 0.5)}s`, `-${Math.round(span * 0.25)}s`, 'now']
 })
@@ -300,7 +316,15 @@ const trafficAxis = computed(() => {
 // 实时图 tooltip：速率带单位，标签用相对时间（最后一点为 now）
 const netFmt = (v: number) => HumanReadable.sizeFormat(v) + '/s'
 const trafficLabels = computed(() =>
-  buf.netIn.map((_, i, a) => (i === a.length - 1 ? 'now' : `-${(a.length - 1 - i) * 2}s`)),
+  buf.netIn.map((_, i, a) => {
+    if (i === a.length - 1) return 'now'
+    const at = buf.netAt
+    // 同样按真实时间差,断流后重连的那一点不会被标成 2 秒前
+    if (at.length === a.length && at[at.length - 1] != null && at[i] != null) {
+      return `-${Math.round((at[at.length - 1] - at[i]) / 1000)}s`
+    }
+    return `-${(a.length - 1 - i) * FALLBACK_SAMPLE_SEC}s`
+  }),
 )
 
 const pctOf = (d: any) => (d && d.total ? Math.min(100, Math.ceil((d.current * 100) / d.total)) : 0)

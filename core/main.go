@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"sync"
 
 	"github.com/shenaba/2s-ui/logger"
 
@@ -26,6 +27,13 @@ var (
 )
 
 type Core struct {
+	// Guards isRunning and instance. Both are written by Start/Stop (the app
+	// lifecycle and ConfigService) while ~18 call sites across service/ read
+	// them from unrelated goroutines — gin handlers, the @every 5s checkCore
+	// and stats cron jobs, and the websocket read pump. cron.Stop does not wait
+	// for in-flight jobs, so a shutdown reliably overlaps a checkCore run; the
+	// race detector flags it on every restart.
+	mu        sync.RWMutex
 	isRunning bool
 	instance  *Box
 }
@@ -44,6 +52,8 @@ func (c *Core) GetCtx() context.Context {
 }
 
 func (c *Core) GetInstance() *Box {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.instance
 }
 
@@ -54,7 +64,10 @@ func (c *Core) Start(sbConfig []byte) error {
 		logger.Error("Unmarshal config err:", err.Error())
 	}
 
-	c.instance, err = NewBox(Options{
+	// Built into a local and published at the end: assigning c.instance first
+	// exposed a box that had not started yet, and the write itself raced every
+	// GetInstance reader.
+	instance, err := NewBox(Options{
 		Context: globalCtx,
 		Options: opt,
 	})
@@ -62,10 +75,13 @@ func (c *Core) Start(sbConfig []byte) error {
 		return err
 	}
 
-	err = c.instance.Start()
+	err = instance.Start()
 	if err != nil {
-		_ = c.instance.Close()
+		_ = instance.Close()
+		c.mu.Lock()
 		c.instance = nil
+		c.isRunning = false
+		c.mu.Unlock()
 		return err
 	}
 
@@ -76,20 +92,29 @@ func (c *Core) Start(sbConfig []byte) error {
 	endpoint_manager = service.FromContext[adapter.EndpointManager](globalCtx)
 	router = service.FromContext[adapter.Router](globalCtx)
 
+	c.mu.Lock()
+	c.instance = instance
 	c.isRunning = true
+	c.mu.Unlock()
 	return nil
 }
 
 func (c *Core) Stop() error {
+	// Publish "stopped" first, then close outside the lock: readers see the
+	// core as down immediately instead of blocking behind a slow teardown.
+	c.mu.Lock()
+	instance := c.instance
 	c.isRunning = false
-	if c.instance == nil {
+	c.instance = nil
+	c.mu.Unlock()
+	if instance == nil {
 		return nil
 	}
-	err := c.instance.Close()
-	c.instance = nil
-	return err
+	return instance.Close()
 }
 
 func (c *Core) IsRunning() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.isRunning
 }

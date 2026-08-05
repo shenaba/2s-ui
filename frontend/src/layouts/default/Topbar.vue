@@ -11,6 +11,14 @@
 
     <div class="grow" />
 
+    <!-- Every live number on screen arrives over the push socket. When it is
+         down they simply stop moving, which is indistinguishable from an idle
+         panel — say so instead. -->
+    <Chip v-if="wsDown" color="amber" class="ws-down" :title="$t('ws.downHint')">
+      <Ico name="link" :size="14" />
+      <span class="ws-down-text">{{ $t('ws.down') }}</span>
+    </Chip>
+
     <LangMenu />
 
     <Pop :width="184">
@@ -60,11 +68,13 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import Btn from '@/components/ui/Btn.vue'
+import Chip from '@/components/ui/Chip.vue'
 import Ico from '@/components/ui/Ico.vue'
 import Pop from '@/components/ui/Pop.vue'
 import LangMenu from './LangMenu.vue'
 import AppStore, { type Theme } from '@/store/modules/app'
 import { logout } from '@/plugins/httputil'
+import { wsDown } from '@/plugins/ws'
 
 const app = AppStore()
 const route = useRoute()
@@ -85,6 +95,12 @@ const doLogout = () => logout()
 </script>
 
 <style scoped>
+.ws-down { gap: 6px; flex: none; }
+.ws-down-text { white-space: nowrap; }
+@media (max-width: 820px) {
+  /* The icon alone still reads as a warning; the label is what costs room. */
+  .ws-down-text { display: none; }
+}
 .hamburger { display: none; flex: none; }
 @media (max-width: 820px) {
   .hamburger { display: inline-flex; }

@@ -34,6 +34,14 @@ export default {
     core: "Sing-Box Error",
     invalidData: "Invalid Data",
   },
+  // The push socket carries every live number and the config payload; when it is
+  // down the UI has nothing to fall back on, so both states must say why.
+  ws: {
+    down: "Disconnected",
+    downHint: "Live updates are paused. If the panel sits behind a reverse proxy, make sure it forwards the Upgrade header.",
+    offlineTitle: "Cannot load the configuration",
+    offlineDesc: "The panel's push channel is not connected, so there is nothing to edit yet. If the panel sits behind a reverse proxy, make sure it forwards the Upgrade header.",
+  },
   theme: {
     light: "Light",
     dark: "Dark",

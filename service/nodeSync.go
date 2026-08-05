@@ -233,7 +233,7 @@ func (s *NodeSyncService) AdoptInbounds(nodeId uint, tags []string, actor string
 	}
 
 	db := database.GetDB()
-	return db.Transaction(func(tx *gorm.DB) error {
+	err = db.Transaction(func(tx *gorm.DB) error {
 		dt := time.Now().Unix()
 		adopted := 0
 		for _, raw := range payload.Inbounds {
@@ -278,9 +278,14 @@ func (s *NodeSyncService) AdoptInbounds(nodeId uint, tags []string, actor string
 		if err := tx.Model(model.Node{}).Where("id = ?", nodeId).Update("dirty", true).Error; err != nil {
 			return err
 		}
-		LastUpdate = time.Now().Unix()
+		MarkLastUpdate(time.Now().Unix())
 		return nil
 	})
+	if err == nil {
+		// Only now is the write visible on the hub's own connection.
+		NotifyConfigChanged()
+	}
+	return err
 }
 
 // buildReplicaInbound turns a node's panel-shape inbound into a local replica:
@@ -431,7 +436,7 @@ func (s *NodeSyncService) runReconcile(nodeId uint, startGen uint64) error {
 	if res.RowsAffected > 0 {
 		// The nodes list hides behind the lu gate; without this bump a cleared
 		// badge lingers in every open UI until some unrelated change.
-		LastUpdate = now
+		SetLastUpdate(now)
 		return nil
 	}
 	return db.Model(model.Node{}).Where("id = ?", nodeId).Update("last_sync", now).Error
@@ -738,7 +743,7 @@ func (s *NodeSyncService) refreshNodeLinks(node *model.Node) {
 	}
 
 	if touched {
-		LastUpdate = time.Now().Unix()
+		SetLastUpdate(time.Now().Unix())
 	}
 }
 

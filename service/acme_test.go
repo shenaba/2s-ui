@@ -347,3 +347,33 @@ server { listen 80; server_name b.com; }`
 		}
 	}
 }
+
+func TestBuildVhostConfWebsocketUpgrade(t *testing.T) {
+	panel := ProxySide{Name: "panel", Enabled: true, Domain: "a.com", Path: "/app/", Port: 2095}
+	sub := ProxySide{Name: "subscription", Enabled: true, Domain: "a.com", Path: "/sub/", Port: 2096}
+	specs, err := BuildVhostSpecs(panel, sub)
+	if err != nil || len(specs) != 1 {
+		t.Fatalf("BuildVhostSpecs() = %+v, %v", specs, err)
+	}
+
+	conf := buildVhostConf(specs[0], "cert.pem", "key.pem", nginxEnv{})
+
+	// The panel's /ws push channel dies with a 400 behind nginx unless every
+	// generated location speaks HTTP/1.1 upstream and forwards the upgrade
+	// hop-by-hop headers. One occurrence per location, or a location was left
+	// out and websockets break only for that side.
+	//
+	// Connection is passed through rather than pinned to "upgrade": the
+	// subscription location never speaks WebSocket and must not advertise an
+	// upgrade on every ordinary request.
+	for _, directive := range []string{
+		"proxy_http_version 1.1;",
+		"proxy_set_header Upgrade           $http_upgrade;",
+		"proxy_set_header Connection        $http_connection;",
+	} {
+		if got := strings.Count(conf, directive); got != len(specs[0].Endpoints) {
+			t.Errorf("%q appears %d times, want %d (once per location):\n%s",
+				directive, got, len(specs[0].Endpoints), conf)
+		}
+	}
+}

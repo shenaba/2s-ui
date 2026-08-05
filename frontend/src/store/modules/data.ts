@@ -7,8 +7,11 @@ import { Client } from '@/types/clients'
 import { NodeStatus } from '@/types/node'
 
 const Data = defineStore('Data', {
-  state: () => ({ 
+  state: () => ({
     lastLoad: 0,
+    // Highest config version applied; guards against a stale snapshot landing
+    // after a newer push. See applyLive.
+    cseq: 0,
     reloadItems: localStorage.getItem("reloadItems")?.split(',')?? <string[]>[],
     subURI: "",
     os: "",
@@ -40,28 +43,63 @@ const Data = defineStore('Data', {
     },
   },
   actions: {
+    // Shared by the websocket 'load' topic and the one-shot HTTP load below.
+    // Websocket pushes are partial: a missing key means "unchanged", so only
+    // present keys are applied.
+    applyLive(obj: any) {
+      if (obj.onlines) this.onlines = obj.onlines
+      if (Object.hasOwn(obj, 'nodesStatus')) this.nodesStatus = obj.nodesStatus ?? {}
+      if (obj.lastLog) {
+        push.error({
+          title: i18n.global.t('error.core'),
+          duration: 5000,
+          message: obj.lastLog
+        })
+      }
+      if (obj.config) {
+        // Config payloads carry a version. The hub adds a subscriber to the
+        // broadcast set before building its snapshot, so a push that landed
+        // mid-build can arrive first — applying the older snapshot on top of it
+        // would silently restore the pre-change config. A backend without the
+        // field (older than this) applies unconditionally, as it used to.
+        if (typeof obj.cseq === 'number' && obj.cseq <= this.cseq) return
+        this.setNewData(obj)
+      }
+    },
+    // Views that read config on mount must wait for the first payload. Bounded
+    // on purpose: that payload now arrives over the websocket, so a handshake
+    // that never completes would otherwise spin here forever behind a spinner
+    // that never clears. On timeout the caller renders what it has.
+    async waitReady(timeoutMs = 15000): Promise<boolean> {
+      const deadline = Date.now() + timeoutMs
+      while (this.lastLoad == 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      if (this.lastLoad == 0) {
+        console.warn('[2s-ui] no panel data after 15s (websocket not connected?) — config views stay blank rather than edit an empty config')
+        return false
+      }
+      return true
+    },
     async loadData() {
       const msg = await HttpUtils.get('api/load', this.lastLoad >0 ? {lu: this.lastLoad} : {} )
+      // The HTTP response omits nodesStatus when there are no nodes but means
+      // "none" — the seed key keeps that reset; spreading obj over it restores
+      // the real value whenever the backend did send one.
       if(msg.success) {
-        this.onlines = msg.obj.onlines
-        // Live node status rides outside the lu gate (like onlines); the
-        // backend omits the key entirely when there are no nodes.
-        this.nodesStatus = msg.obj.nodesStatus ?? {}
-        if (msg.obj.lastLog) {
-          push.error({
-            title: i18n.global.t('error.core'),
-            duration: 5000,
-            message: msg.obj.lastLog
-          })
-        }
-        
-        if (msg.obj.config) {
-          this.setNewData(msg.obj)
-        }
+        this.applyLive({ nodesStatus: {}, ...msg.obj })
       }
     },
     setNewData(data: any) {
-      this.lastLoad = Math.floor((new Date()).getTime()/1000)
+      // Prefer the server's own stamp: lastLoad is sent back as `lu` and
+      // compared against the server's change timestamp, so deriving it from the
+      // browser clock made a fast clock miss changes (and, with no poll left,
+      // never recover) and a slow one refetch the whole config on every
+      // reconnect. The fallback only covers a backend older than this field.
+      this.lastLoad = Number.isFinite(data.lu) && data.lu > 0
+        ? data.lu
+        : Math.floor((new Date()).getTime()/1000)
+      if (typeof data.cseq === 'number') this.cseq = data.cseq
       if (data.subURI) this.subURI = data.subURI
       if (data.os) this.os = data.os
       if (data.enableTraffic) this.enableTraffic = data.enableTraffic

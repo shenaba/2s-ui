@@ -34,6 +34,12 @@ export default {
     core: "Lỗi Sing-Box",
     invalidData: "Dữ liệu khỏ hợp lệ",
   },
+  ws: {
+    down: "Mất kết nối",
+    downHint: "Cập nhật trực tiếp đã tạm dừng. Nếu bảng điều khiển nằm sau reverse proxy, hãy đảm bảo proxy chuyển tiếp header Upgrade.",
+    offlineTitle: "Không tải được cấu hình",
+    offlineDesc: "Kênh đẩy dữ liệu của bảng điều khiển chưa kết nối nên chưa có gì để chỉnh sửa. Nếu bảng điều khiển nằm sau reverse proxy, hãy đảm bảo proxy chuyển tiếp header Upgrade.",
+  },
   theme: {
     light: "Nhật",
     dark: "Xanh",

@@ -84,7 +84,9 @@ func (s *Server) initRouter() (*gin.Engine, error) {
 		return nil, err
 	}
 
-	engine.Use(gzip.Gzip(gzip.DefaultCompression))
+	// The websocket endpoint is excluded: an upgraded connection must not go
+	// through the compressing response writer.
+	engine.Use(gzip.Gzip(gzip.DefaultCompression, gzip.WithExcludedPaths([]string{base_url + "ws"})))
 	assetsBasePath := base_url + "assets/"
 
 	store := cookie.NewStore(secret)
@@ -110,6 +112,10 @@ func (s *Server) initRouter() (*gin.Engine, error) {
 
 	group_api := engine.Group(base_url + "api")
 	api.NewAPIHandler(group_api, apiv2)
+
+	// Push channel for the SPA. Static sibling of api/apiv2 — registering it
+	// inside group_api would collide with the GET /:getAction wildcard.
+	engine.GET(base_url+"ws", api.WsHandler)
 
 	// Serve index.html as the entry point
 	// Handle all other routes by serving index.html

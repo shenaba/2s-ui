@@ -25,7 +25,7 @@
 
   <div class="page-stack-lg fade-up">
     <!-- ===================== toolbar ===================== -->
-    <div class="toolbar" style="justify-content: center;">
+    <div v-if="!failed" class="toolbar" style="justify-content: center;">
       <Btn variant="primary" sm @click="showDnsDrawer(-1)">
         <Ico name="plus" :size="15" /> {{ $t('ui.addDnsServer') }}
       </Btn>
@@ -35,6 +35,12 @@
       <Btn :variant="unchanged ? 'ghost' : 'primary'" sm :loading="loading" :disabled="unchanged" @click="saveConfig">
         <Ico name="check" :size="15" /> {{ $t('actions.save') }}
       </Btn>
+    </div>
+
+    <!-- No config arrived: say why instead of leaving a blank page under a
+         spinning save button. -->
+    <div v-if="failed" style="padding: 24px 0;">
+      <EmptyState icon="link" :title="$t('ws.offlineTitle')" :desc="$t('ws.offlineDesc')" />
     </div>
 
     <template v-if="ready">
@@ -144,7 +150,7 @@
 
 <script lang="ts" setup>
 import Select from '@/components/ui/Select.vue'
-import { computed, onBeforeMount, ref } from 'vue'
+import { computed, onBeforeMount, ref, watch } from 'vue'
 import Data from '@/store/modules/data'
 import DnsServerDrawer from '@/layouts/drawers/dns/DnsServerDrawer.vue'
 import DnsRuleDrawer from '@/layouts/drawers/dns/DnsRuleDrawer.vue'
@@ -162,21 +168,18 @@ import SectionLabel from '@/components/ui/SectionLabel.vue'
 import EntityCard from '@/components/ui/EntityCard.vue'
 import RuleCard from '@/components/ui/RuleCard.vue'
 import CardBtn from '@/components/ui/CardBtn.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
 
 const oldConfig = ref(<any>{})
 const loading = ref(false)
 const ready = ref(false)
+const failed = ref(false)
 
 const appConfig = computed((): Config => {
   return <Config>Data().config
 })
 
-onBeforeMount(async () => {
-  loading.value = true
-  while (Data().lastLoad == 0) {
-    await new Promise((resolve) => setTimeout(resolve, 100))
-  }
-
+const init = () => {
   // fix old configs
   if (!appConfig.value.dns) appConfig.value.dns = { servers: [], rules: [] }
   if (!appConfig.value.dns.servers) appConfig.value.dns.servers = []
@@ -184,8 +187,27 @@ onBeforeMount(async () => {
 
   oldConfig.value = JSON.parse(JSON.stringify(Data().config))
   ready.value = true
+  failed.value = false
   loading.value = false
+}
+
+onBeforeMount(async () => {
+  loading.value = true
+  // Never touch the config without real data: the "fix old configs" writes
+  // below mutate the live object, so on an empty one they would seed a config
+  // that a save then writes over the panel's real one.
+  if (!await Data().waitReady()) {
+    loading.value = false
+    failed.value = true
+    return
+  }
+  init()
 })
+
+// waitReady gives up after 15s, but the socket's reconnect backoff can put a
+// successful attempt past that. Without this the page keeps claiming it cannot
+// load the configuration while the rest of the panel is live again.
+watch(() => Data().lastLoad, (lu) => { if (lu > 0 && failed.value) init() })
 
 const unchanged = computed(() => FindDiff.deepCompare(appConfig.value.dns, oldConfig.value.dns))
 

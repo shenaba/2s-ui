@@ -4,10 +4,13 @@
       <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;">
         <Chip :color="'brand'"><span class="mono">{{ $t('objects.' + resource) }} · {{ tag }}</span></Chip>
         <div style="flex: 1;" />
-        <Segmented v-model="period" :options="periods" @update:model-value="loadData" />
+        <Segmented v-model="period" :options="periods" @update:model-value="onPeriodChange" />
       </div>
 
-      <div v-if="noData" style="padding: 24px 0;">
+      <div v-if="loading" style="padding: 24px 0;">
+        <EmptyState icon="chart" :title="$t('loading')" />
+      </div>
+      <div v-else-if="noData" style="padding: 24px 0;">
         <EmptyState icon="chart" :title="$t('noData')" />
       </div>
       <template v-else>
@@ -39,7 +42,7 @@
 <script lang="ts" setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import HttpUtils from '@/plugins/httputil'
+import { liveSubscribe, wsDown, type LiveSub } from '@/plugins/ws'
 import { HumanReadable } from '@/plugins/utils'
 import Modal from '@/components/ui/Modal.vue'
 import Chip from '@/components/ui/Chip.vue'
@@ -69,6 +72,10 @@ const up = ref<number[]>([])
 const down = ref<number[]>([])
 const times = ref<number[]>([])
 const noData = ref(false)
+// Distinct from noData: "waiting for the answer to a subscribe we just sent".
+// Collapsing the two would render "no data" over a period that simply has not
+// been answered yet.
+const loading = ref(false)
 
 const totalUp = computed(() => up.value.reduce((a, b) => a + b, 0))
 const totalDown = computed(() => down.value.reduce((a, b) => a + b, 0))
@@ -96,14 +103,13 @@ const tooltipLabels = computed(() => {
   })
 })
 
-const loadData = async () => {
-  const data = await HttpUtils.get('api/stats', { resource: props.resource, tag: props.tag, period: period.value })
-  if (data.success && Array.isArray(data.obj) && data.obj.length > 0) {
+const applyRows = (rows: any) => {
+  if (Array.isArray(rows) && rows.length > 0) {
     // one up row + one down row per time bucket, sorted by time
     const upBy: Record<number, number> = {}
     const downBy: Record<number, number> = {}
     const set = new Set<number>()
-    for (const o of data.obj) {
+    for (const o of rows) {
       const tms = Number(o.dateTime)
       if (!tms) continue
       set.add(tms)
@@ -121,19 +127,60 @@ const loadData = async () => {
   }
 }
 
-let intervalId: ReturnType<typeof setInterval> | null = null
+// The websocket 'stats' subscription answers a subscribe with the rows right
+// away and refreshes them after every stats flush (the only moment the data
+// can change). The echoed key drops pushes that raced a period/tag switch.
+let live: LiveSub | null = null
 watch(() => props.visible, (v) => {
   if (v) {
     period.value = 'hour'
     noData.value = false
     up.value = []
     down.value = []
-    loadData()
-    intervalId = setInterval(loadData, 10000)
-  } else if (intervalId) {
-    clearInterval(intervalId)
-    intervalId = null
+    times.value = []
+    live = liveSubscribe({
+      topic: 'stats',
+      params: () => ({ resource: props.resource, tag: props.tag, period: String(period.value) }),
+      onData: (d) => {
+        if (d && d.resource === props.resource && d.tag === props.tag && d.period === String(period.value)) {
+          loading.value = false
+          applyRows(d.stats)
+        }
+      },
+    })
+    // Opened while the socket is down: the subscribe never left the browser,
+    // so show the empty state rather than a blank chart that looks like data.
+    loading.value = live.connected()
+    if (!loading.value) noData.value = true
+  } else {
+    live?.stop()
+    live = null
+    loading.value = false
   }
 })
-onBeforeUnmount(() => { if (intervalId) clearInterval(intervalId) })
+// Clear unconditionally: the axis and tooltips switch format the moment period
+// changes, so the old buckets would render under the new period's labels.
+// resubscribe() only reports that the frame was sent — the server may still
+// withhold the immediate answer (its per-topic query throttle), in which case
+// the next push is a stats flush away. Wait for a push whose echoed key matches
+// rather than leaving stale data on screen for up to that long.
+const onPeriodChange = () => {
+  up.value = []
+  down.value = []
+  times.value = []
+  const sent = live?.resubscribe() ?? false
+  loading.value = sent
+  noData.value = !sent
+}
+
+// A sent subscribe is not an answered one. If the socket drops before the push
+// arrives, onData never fires and nothing else clears loading — the modal would
+// spin until it is closed. Coming back up re-sends every subscription, so an
+// answer is one round trip away and the empty state should not linger either.
+watch(wsDown, (down) => {
+  if (!props.visible) return
+  loading.value = !down
+  if (down) noData.value = true
+})
+onBeforeUnmount(() => { live?.stop(); live = null })
 </script>

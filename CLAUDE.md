@@ -51,7 +51,9 @@ npm run dev      # vite --host on :3000 (frontend/CONTRIBUTING.md's ":5173" is w
 npm run lint     # eslint . --fix
 ```
 
-`npm run dev` proxies `/app/api` → `localhost:2095`. In DEV only, a custom axios adapter falls back to `src/plugins/mock.ts` when the backend is down (the vite proxy turns `ECONNREFUSED` into a 502, which the adapter reads as "not running") — so **the UI silently renders fake data if you forget to start the Go side**.
+`npm run dev` proxies `/app/api` → `localhost:2095` and `/app/ws` (with `ws: true`) to the same place. In DEV only, a custom axios adapter falls back to `src/plugins/mock.ts` when the backend is down (the vite proxy turns `ECONNREFUSED` into a 502, which the adapter reads as "not running").
+
+**That fallback no longer covers the live data.** Since the polling→WebSocket switch, `load`/`status`/`stats` arrive over a native socket that never touches axios, so `mock.ts`'s `api/load` and `api/stats` entries are dead for the live path. **Without the Go side running the dashboard renders empty** — only the one-shot `api/status?r=sys` and `api/changes` still hit the mock. The config views no longer hang on it (`Data().waitReady()` gives up after 15s and logs to the console), but you get an empty panel, not fake data. Start the backend.
 
 ### Tests
 
