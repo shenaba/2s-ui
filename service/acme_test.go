@@ -362,10 +362,14 @@ func TestBuildVhostConfWebsocketUpgrade(t *testing.T) {
 	// generated location speaks HTTP/1.1 upstream and forwards the upgrade
 	// hop-by-hop headers. One occurrence per location, or a location was left
 	// out and websockets break only for that side.
+	//
+	// Connection is passed through rather than pinned to "upgrade": the
+	// subscription location never speaks WebSocket and must not advertise an
+	// upgrade on every ordinary request.
 	for _, directive := range []string{
 		"proxy_http_version 1.1;",
 		"proxy_set_header Upgrade           $http_upgrade;",
-		"proxy_set_header Connection        \"upgrade\";",
+		"proxy_set_header Connection        $http_connection;",
 	} {
 		if got := strings.Count(conf, directive); got != len(specs[0].Endpoints) {
 			t.Errorf("%q appears %d times, want %d (once per location):\n%s",
