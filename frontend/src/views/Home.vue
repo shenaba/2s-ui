@@ -234,8 +234,9 @@ const sys = ref<any>({})
 const sbd = computed(() => status.value.sbd ?? {})
 const sbVersion = computed(() => sbd.value.version || '—')
 
-// 服务端 status 主题的采样周期;也是首拍没有时间戳基准时的速率换算兜底
-const POLL_SEC = 2
+// 服务端 status 主题的采样周期。只在首拍(还没有时间戳基准)时用来换算速率,
+// 之后一律按推送自带的 t 算真实间隔,所以别当成"轮询周期"
+const FALLBACK_SAMPLE_SEC = 2
 const BUF = 40
 const buf = reactive({
   netIn: [] as number[],
@@ -255,7 +256,7 @@ const onSample = (obj: any) => {
   if (!obj) return
   status.value = { ...status.value, ...obj }
   // 推送带服务器时间戳 t(毫秒);按真实间隔换算速率,重连间隙不会造出尖峰
-  const dtSec = Number.isFinite(obj.t) && lastT ? Math.max(0.5, (obj.t - lastT) / 1000) : POLL_SEC
+  const dtSec = Number.isFinite(obj.t) && lastT ? Math.max(0.5, (obj.t - lastT) / 1000) : FALLBACK_SAMPLE_SEC
   if (Number.isFinite(obj.t)) lastT = obj.t
   const net = obj.net
   // net.recv/sent 可能缺失(后端取不到 IO 计数器时返回空对象)
@@ -322,7 +323,7 @@ const trafficLabels = computed(() =>
     if (at.length === a.length && at[at.length - 1] != null && at[i] != null) {
       return `-${Math.round((at[at.length - 1] - at[i]) / 1000)}s`
     }
-    return `-${(a.length - 1 - i) * POLL_SEC}s`
+    return `-${(a.length - 1 - i) * FALLBACK_SAMPLE_SEC}s`
   }),
 )
 
