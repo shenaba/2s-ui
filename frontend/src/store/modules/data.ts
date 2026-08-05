@@ -7,8 +7,11 @@ import { Client } from '@/types/clients'
 import { NodeStatus } from '@/types/node'
 
 const Data = defineStore('Data', {
-  state: () => ({ 
+  state: () => ({
     lastLoad: 0,
+    // Highest config version applied; guards against a stale snapshot landing
+    // after a newer push. See applyLive.
+    cseq: 0,
     reloadItems: localStorage.getItem("reloadItems")?.split(',')?? <string[]>[],
     subURI: "",
     os: "",
@@ -54,6 +57,12 @@ const Data = defineStore('Data', {
         })
       }
       if (obj.config) {
+        // Config payloads carry a version. The hub adds a subscriber to the
+        // broadcast set before building its snapshot, so a push that landed
+        // mid-build can arrive first — applying the older snapshot on top of it
+        // would silently restore the pre-change config. A backend without the
+        // field (older than this) applies unconditionally, as it used to.
+        if (typeof obj.cseq === 'number' && obj.cseq <= this.cseq) return
         this.setNewData(obj)
       }
     },
@@ -90,6 +99,7 @@ const Data = defineStore('Data', {
       this.lastLoad = Number.isFinite(data.lu) && data.lu > 0
         ? data.lu
         : Math.floor((new Date()).getTime()/1000)
+      if (typeof data.cseq === 'number') this.cseq = data.cseq
       if (data.subURI) this.subURI = data.subURI
       if (data.os) this.os = data.os
       if (data.enableTraffic) this.enableTraffic = data.enableTraffic

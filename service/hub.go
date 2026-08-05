@@ -72,6 +72,9 @@ type hubClient struct {
 	send     chan []byte
 	closed   chan struct{}
 	closeOne sync.Once
+	// When the session that authorised this handshake stops being valid. Zero
+	// means no cap. Immutable after construction, so it needs no lock.
+	deadline time.Time
 
 	// mu guards the subscription state below. Lock order is hub.mu before
 	// client.mu; nothing takes hub.mu while holding client.mu.
@@ -209,7 +212,7 @@ func DropAllClients() {
 
 // HubServe registers an accepted connection and blocks reading it until it
 // drops. Runs on the (hijacked) HTTP handler goroutine.
-func HubServe(conn *websocket.Conn, hostname string) {
+func HubServe(conn *websocket.Conn, hostname string, deadline time.Time) {
 	h := getHub()
 	if h == nil {
 		_ = conn.Close(websocket.StatusGoingAway, "hub not running")
@@ -220,6 +223,7 @@ func HubServe(conn *websocket.Conn, hostname string) {
 		hostname: hostname,
 		send:     make(chan []byte, hubSendBuffer),
 		closed:   make(chan struct{}),
+		deadline: deadline,
 	}
 	h.mu.Lock()
 	if h.stopped {
@@ -264,6 +268,15 @@ func (h *Hub) writePump(c *hubClient) {
 				return
 			}
 		case <-ticker.C:
+			// The ping tick doubles as the session check: auth only happens at
+			// the handshake, so this is the only thing that ends a socket whose
+			// session has since expired. Granularity is one ping interval,
+			// which is fine for a bound measured in hours.
+			if !c.deadline.IsZero() && time.Now().After(c.deadline) {
+				logger.Debug("ws: session expired, dropping client")
+				h.dropClient(c)
+				return
+			}
 			ctx, cancel := context.WithTimeout(h.ctx, hubWriteTimeout)
 			err := c.conn.Ping(ctx)
 			cancel()
@@ -337,16 +350,18 @@ func (h *Hub) subscribe(c *hubClient, topic string, params json.RawMessage) {
 		if len(params) > 0 {
 			_ = json.Unmarshal(params, &p)
 		}
-		// Enqueue the snapshot BEFORE joining the broadcast set. The build
-		// takes ~10 DB reads, and a config push landing in that window would
-		// otherwise be queued ahead of the older snapshot — the client would
-		// apply new-then-old and stamp lastLoad from the stale one.
-		if c.allowQuery("load", time.Now()) {
-			h.sendLoadSnapshot(c, p.Lu)
-		}
+		// Join the broadcast set BEFORE building the snapshot, so a config
+		// change committing during the build reaches this client too. That
+		// ordering used to be unsafe -- the push would be queued ahead of the
+		// older snapshot and the client would apply new-then-old -- which is
+		// what the config version now prevents: the snapshot carries the lower
+		// cseq and the client discards it.
 		c.mu.Lock()
 		c.subLoad = true
 		c.mu.Unlock()
+		if c.allowQuery("load", time.Now()) {
+			h.sendLoadSnapshot(c, p.Lu)
+		}
 	case "status":
 		var p struct {
 			R []string `json:"r"`

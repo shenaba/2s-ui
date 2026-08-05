@@ -184,6 +184,47 @@ func TestStartStopHubIsIdempotent(t *testing.T) {
 	HubPushNodesStatus()
 }
 
+func TestConfigCacheUsable(t *testing.T) {
+	const host = "panel.example"
+	fresh := configCacheTTL / 2
+
+	if configCacheUsable(false, host, host, 7, 7, fresh) {
+		t.Error("an empty cache must never be served")
+	}
+	if !configCacheUsable(true, host, host, 7, 7, fresh) {
+		t.Error("same host, same LastUpdate, inside the TTL: should be served")
+	}
+	// subURI is derived from the hostname, so an entry built for one host would
+	// hand the wrong subscription link to another.
+	if configCacheUsable(true, host, "other.example", 7, 7, fresh) {
+		t.Error("a different hostname must rebuild")
+	}
+	// The load-bearing one: any write bumps LastUpdate, and missing this would
+	// serve the pre-change config to every reconnect for the whole TTL.
+	if configCacheUsable(true, host, host, 7, 8, fresh) {
+		t.Error("a bumped LastUpdate must rebuild")
+	}
+	// Backstop for a write path that forgets to bump: staleness stays bounded
+	// by the TTL instead of lasting until the next real change.
+	if configCacheUsable(true, host, host, 7, 7, configCacheTTL) {
+		t.Error("an entry at the TTL boundary must rebuild")
+	}
+}
+
+func TestConfigSeqSeededAboveZero(t *testing.T) {
+	// Clients ignore a config payload whose version is not above the one they
+	// applied. A counter starting at zero would make everything after a restart
+	// look stale to an already-open tab, and it would ignore every push until
+	// the counter climbed past its stored value.
+	if got := configSeq.Load(); got == 0 {
+		t.Fatal("configSeq must be seeded, not start at zero")
+	}
+	first := configSeq.Add(1)
+	if second := configSeq.Add(1); second <= first {
+		t.Errorf("configSeq must increase: %d then %d", first, second)
+	}
+}
+
 // "cpu" throughout the tests below: the default resource set includes "sbd",
 // which reaches corePtr — nil without a running core.
 const testStatusParams = `{"r":["cpu"]}`
@@ -263,7 +304,8 @@ func TestHubServeSubscribeAndDisconnect(t *testing.T) {
 		if err != nil {
 			return
 		}
-		HubServe(conn, "test.local")
+		// Zero deadline: the session cap is not what this test covers.
+		HubServe(conn, "test.local", time.Time{})
 	}))
 	defer srv.Close()
 
