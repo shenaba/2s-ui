@@ -31,7 +31,6 @@ windows/sui-*.exe
 .idea
 .vscode
 
-# Claude Code per-user overrides and scratch worktrees. .claude/launch.json is
-# shared and stays tracked, so ignore these by name rather than the directory.
-.claude/settings.local.json
-.claude/worktrees/
+# Claude Code local docs and config — keep out of the public repo.
+.claude/
+CLAUDE.md
