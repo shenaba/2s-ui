@@ -42,7 +42,7 @@
 <script lang="ts" setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { liveSubscribe, type LiveSub } from '@/plugins/ws'
+import { liveSubscribe, wsDown, type LiveSub } from '@/plugins/ws'
 import { HumanReadable } from '@/plugins/utils'
 import Modal from '@/components/ui/Modal.vue'
 import Chip from '@/components/ui/Chip.vue'
@@ -172,5 +172,15 @@ const onPeriodChange = () => {
   loading.value = sent
   noData.value = !sent
 }
+
+// A sent subscribe is not an answered one. If the socket drops before the push
+// arrives, onData never fires and nothing else clears loading — the modal would
+// spin until it is closed. Coming back up re-sends every subscription, so an
+// answer is one round trip away and the empty state should not linger either.
+watch(wsDown, (down) => {
+  if (!props.visible) return
+  loading.value = !down
+  if (down) noData.value = true
+})
 onBeforeUnmount(() => { live?.stop(); live = null })
 </script>
