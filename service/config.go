@@ -209,6 +209,8 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 	defer func() {
 		if err == nil {
 			tx.Commit()
+			// Only now is the write visible on the hub's own connection.
+			NotifyConfigChanged()
 			// Try to start core if it is not running
 			if !corePtr.IsRunning() {
 				s.StartCore()
@@ -277,9 +279,29 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 		return nil, err
 	}
 
-	LastUpdate = time.Now().Unix()
+	MarkLastUpdate(dt)
 
 	return objs, nil
+}
+
+// SetLastUpdate records a config-change timestamp and wakes the websocket
+// hub's debounced full-payload push. CheckChanges' lazy seeding below must NOT
+// go through it — that is a cache warm-up after a restart, not a change.
+//
+// Only call this OUTSIDE a write transaction. The hub reads the DB on its own
+// pooled connection, so notifying before the commit lands publishes pre-commit
+// state, and since the client stamps its own lastLoad from that push, even a
+// reconnect's lu gate then reports "unchanged" — the stale config sticks.
+// Inside a transaction use MarkLastUpdate and call NotifyConfigChanged after
+// the commit.
+func SetLastUpdate(dt int64) {
+	MarkLastUpdate(dt)
+	NotifyConfigChanged()
+}
+
+// MarkLastUpdate advances the change timestamp without waking the hub.
+func MarkLastUpdate(dt int64) {
+	LastUpdate = dt
 }
 
 func (s *ConfigService) CheckChanges(lu string) (bool, error) {

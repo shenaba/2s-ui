@@ -214,9 +214,10 @@ const appConfig = computed((): Config => {
 
 onBeforeMount(async () => {
   loading.value = true
-  while (Data().lastLoad == 0) {
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
+  // Never render the form without real data: it edits the live config object,
+  // so an empty one would let a save wipe the panel's whole configuration.
+  // Keep the spinner instead — there is genuinely nothing to show yet.
+  if (!await Data().waitReady()) return
   oldConfig.value = JSON.parse(JSON.stringify(Data().config))
   ready.value = true
   loading.value = false

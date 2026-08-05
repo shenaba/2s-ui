@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -68,91 +67,17 @@ func (a *ApiService) LoadData(c *gin.Context) {
 }
 
 func (a *ApiService) getData(c *gin.Context) (interface{}, error) {
-	data := make(map[string]interface{}, 0)
-	lu := c.Query("lu")
-	isUpdated, err := a.ConfigService.CheckChanges(lu)
+	// Payload assembly lives in service.PanelDataService so the websocket hub
+	// pushes exactly what this endpoint returns.
+	isUpdated, err := a.ConfigService.CheckChanges(c.Query("lu"))
 	if err != nil {
 		return "", err
 	}
-	onlines, err := a.StatsService.GetOnlines()
-
-	sysInfo := a.ServerService.GetSingboxInfo()
-	if sysInfo["running"] == false {
-		logs := a.ServerService.GetLogs("1", "debug")
-		if len(logs) > 0 {
-			data["lastLog"] = logs[0]
-		}
-	}
-
-	if err != nil {
-		return "", err
-	}
+	var pd service.PanelDataService
 	if isUpdated {
-		config, err := a.SettingService.GetConfig()
-		if err != nil {
-			return "", err
-		}
-		clients, err := a.ClientService.GetAll()
-		if err != nil {
-			return "", err
-		}
-		tlsConfigs, err := a.TlsService.GetAll()
-		if err != nil {
-			return "", err
-		}
-		inbounds, err := a.InboundService.GetAll()
-		if err != nil {
-			return "", err
-		}
-		outbounds, err := a.OutboundService.GetAll()
-		if err != nil {
-			return "", err
-		}
-		endpoints, err := a.EndpointService.GetAll()
-		if err != nil {
-			return "", err
-		}
-		services, err := a.ServicesService.GetAll()
-		if err != nil {
-			return "", err
-		}
-		subURI, err := a.SettingService.GetFinalSubURI(getHostname(c))
-		if err != nil {
-			return "", err
-		}
-		trafficAge, err := a.SettingService.GetTrafficAge()
-		if err != nil {
-			return "", err
-		}
-		nodes, err := a.NodeService.GetAll()
-		if err != nil {
-			return "", err
-		}
-		data["config"] = json.RawMessage(config)
-		data["clients"] = clients
-		data["tls"] = tlsConfigs
-		data["inbounds"] = inbounds
-		data["outbounds"] = outbounds
-		data["endpoints"] = endpoints
-		data["services"] = services
-		data["nodes"] = nodes
-		data["subURI"] = subURI
-		data["enableTraffic"] = trafficAge > 0
-		data["os"] = runtime.GOOS
-		data["onlines"] = onlines
-	} else {
-		data["onlines"] = onlines
+		return pd.FullPayload(getHostname(c))
 	}
-
-	// Live node status rides along unconditionally (like onlines): it changes
-	// every heartbeat, so it must not hide behind the lu gate. Omitted when
-	// empty so zero-node setups pay nothing.
-	nodesStatus := a.NodeService.GetStatuses()
-	if len(nodesStatus) > 0 {
-		data["nodesStatus"] = nodesStatus
-	}
-
-	return data, nil
+	return pd.LivePayload()
 }
 
 func (a *ApiService) LoadPartialData(c *gin.Context, objs []string) error {

@@ -425,6 +425,8 @@ func (s *ClientService) DepleteClients() ([]uint, []string, error) {
 	defer func() {
 		if err == nil {
 			tx.Commit()
+			// Only now is the write visible on the hub's own connection.
+			NotifyConfigChanged()
 			if err1 := db.Exec("PRAGMA wal_checkpoint(FULL)").Error; err1 != nil {
 				logger.Error("Error checkpointing WAL: ", err1.Error())
 			}
@@ -471,7 +473,7 @@ func (s *ClientService) DepleteClients() ([]uint, []string, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		LastUpdate = dt
+		MarkLastUpdate(dt)
 	}
 
 	return inboundIds, users, nil
@@ -555,7 +557,7 @@ func (s *ClientService) ResetClients(tx *gorm.DB, dt int64) ([]uint, error) {
 		if err != nil {
 			return nil, err
 		}
-		LastUpdate = dt
+		MarkLastUpdate(dt)
 	}
 	return inboundIds, nil
 }
@@ -591,7 +593,7 @@ func (s *ClientService) ResetAllClientsTraffic() error {
 		}).Error; err != nil {
 			return err
 		}
-		LastUpdate = dt
+		SetLastUpdate(dt)
 	}
 
 	return nil

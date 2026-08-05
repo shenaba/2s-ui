@@ -1,6 +1,7 @@
 package service
 
 import (
+	"sync"
 	"time"
 
 	"github.com/shenaba/2s-ui/database"
@@ -16,7 +17,22 @@ type onlines struct {
 	Outbound []string `json:"outbound,omitempty"`
 }
 
-var onlineResources = &onlines{}
+// Guards onlineResources. The flush below rewrites it every 10s while readers
+// run on unrelated goroutines — gin handlers for api/load, and the websocket
+// readPump when a client subscribes. Confirmed as a data race by the race
+// detector against a live panel.
+var (
+	onlineMu        sync.RWMutex
+	onlineResources = &onlines{}
+)
+
+// setOnlines publishes a freshly built snapshot in one guarded swap; readers
+// therefore never observe a half-rebuilt list.
+func setOnlines(o onlines) {
+	onlineMu.Lock()
+	*onlineResources = o
+	onlineMu.Unlock()
+}
 
 type StatsService struct {
 }
@@ -35,12 +51,12 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 	}
 	stats := st.GetStats()
 
-	// Reset onlines
-	onlineResources.Inbound = nil
-	onlineResources.Outbound = nil
-	onlineResources.User = nil
+	// Built locally, then published in one swap at the end — writing the live
+	// struct field by field is what raced with readers.
+	var fresh onlines
 
 	if len(*stats) == 0 {
+		setOnlines(fresh)
 		return nil
 	}
 
@@ -69,19 +85,19 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 		case "inbound":
 			if !seenInbound[stat.Tag] {
 				seenInbound[stat.Tag] = true
-				onlineResources.Inbound = append(onlineResources.Inbound, stat.Tag)
+				fresh.Inbound = append(fresh.Inbound, stat.Tag)
 			}
 		case "outbound":
 			if !seenOutbound[stat.Tag] {
 				seenOutbound[stat.Tag] = true
-				onlineResources.Outbound = append(onlineResources.Outbound, stat.Tag)
+				fresh.Outbound = append(fresh.Outbound, stat.Tag)
 			}
 		case "user":
 			t, ok := userTraffic[stat.Tag]
 			if !ok {
 				t = &traffic{}
 				userTraffic[stat.Tag] = t
-				onlineResources.User = append(onlineResources.User, stat.Tag)
+				fresh.User = append(fresh.User, stat.Tag)
 			}
 			if stat.Direction {
 				t.up += stat.Traffic
@@ -90,6 +106,10 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 			}
 		}
 	}
+
+	// Publish before the DB work below: the online lists are complete now, and
+	// a failed traffic write must not leave readers on a stale set.
+	setOnlines(fresh)
 
 	for name, t := range userTraffic {
 		update := map[string]interface{}{"online_at": now}
@@ -206,6 +226,8 @@ func (s *StatsService) GetStats(resource string, tag string, period string) ([]m
 }
 
 func (s *StatsService) GetOnlines() (onlines, error) {
+	onlineMu.RLock()
+	defer onlineMu.RUnlock()
 	return *onlineResources, nil
 }
 func (s *StatsService) DelOldStats(days int) error {

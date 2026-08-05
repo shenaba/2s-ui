@@ -72,6 +72,16 @@ export default defineConfig({
         target: 'http://localhost:2095',
         changeOrigin: true,
       },
+      '/app/ws': {
+        target: 'http://localhost:2095',
+        ws: true,
+        changeOrigin: true,
+        // coder/websocket's default CSWSH check wants Origin host == Host.
+        // changeOrigin rewrites Host to :2095 but leaves the browser's :3000
+        // Origin; align it (lowercase key — http-proxy merges over the
+        // already-lowercased incoming headers).
+        headers: { origin: 'http://localhost:2095' },
+      },
     },
   }
 })

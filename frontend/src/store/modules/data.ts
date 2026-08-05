@@ -40,24 +40,45 @@ const Data = defineStore('Data', {
     },
   },
   actions: {
+    // Shared by the websocket 'load' topic and the one-shot HTTP load below.
+    // Websocket pushes are partial: a missing key means "unchanged", so only
+    // present keys are applied.
+    applyLive(obj: any) {
+      if (obj.onlines) this.onlines = obj.onlines
+      if (Object.hasOwn(obj, 'nodesStatus')) this.nodesStatus = obj.nodesStatus ?? {}
+      if (obj.lastLog) {
+        push.error({
+          title: i18n.global.t('error.core'),
+          duration: 5000,
+          message: obj.lastLog
+        })
+      }
+      if (obj.config) {
+        this.setNewData(obj)
+      }
+    },
+    // Views that read config on mount must wait for the first payload. Bounded
+    // on purpose: that payload now arrives over the websocket, so a handshake
+    // that never completes would otherwise spin here forever behind a spinner
+    // that never clears. On timeout the caller renders what it has.
+    async waitReady(timeoutMs = 15000): Promise<boolean> {
+      const deadline = Date.now() + timeoutMs
+      while (this.lastLoad == 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      if (this.lastLoad == 0) {
+        console.warn('[2s-ui] no panel data after 15s (websocket not connected?) — config views stay blank rather than edit an empty config')
+        return false
+      }
+      return true
+    },
     async loadData() {
       const msg = await HttpUtils.get('api/load', this.lastLoad >0 ? {lu: this.lastLoad} : {} )
+      // The HTTP response omits nodesStatus when there are no nodes but means
+      // "none" — the seed key keeps that reset; spreading obj over it restores
+      // the real value whenever the backend did send one.
       if(msg.success) {
-        this.onlines = msg.obj.onlines
-        // Live node status rides outside the lu gate (like onlines); the
-        // backend omits the key entirely when there are no nodes.
-        this.nodesStatus = msg.obj.nodesStatus ?? {}
-        if (msg.obj.lastLog) {
-          push.error({
-            title: i18n.global.t('error.core'),
-            duration: 5000,
-            message: msg.obj.lastLog
-          })
-        }
-        
-        if (msg.obj.config) {
-          this.setNewData(msg.obj)
-        }
+        this.applyLive({ nodesStatus: {}, ...msg.obj })
       }
     },
     setNewData(data: any) {

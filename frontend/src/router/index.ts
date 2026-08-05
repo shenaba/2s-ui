@@ -2,6 +2,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Login from '@/views/Login.vue'
 import Data from '@/store/modules/data'
+import { liveSubscribe, type LiveSub } from '@/plugins/ws'
 
 const routes = [
   {
@@ -89,7 +90,7 @@ const router = createRouter({
 })
 
 const DEFAULT_TITLE = '2S-UI'
-let intervalId:any
+let loadLive: LiveSub | null = null
 
 // Chunk names carry a content hash and build.sh wipes web/html before copying, so
 // after an in-place upgrade an already-open tab asks for chunks the server no longer
@@ -115,23 +116,19 @@ router.afterEach(() => sessionStorage.removeItem(RELOADED_KEY))
 
 // Navigation guard to check authentication state
 router.beforeEach((to) => {
-  // Load default data
+  // Live data rides the websocket 'load' topic: a full snapshot on subscribe
+  // (gated by lu so reconnects stay cheap), pushes afterwards. Stopping on the
+  // login page is what closes the shared socket after logout.
   if (to.path !== '/login') {
-    loadDataInterval()
+    loadLive ??= liveSubscribe({
+      topic: 'load',
+      params: () => ({ lu: Data().lastLoad }),
+      onData: (d) => Data().applyLive(d),
+    })
   } else {
-    if (intervalId) {
-      clearInterval(intervalId)
-      intervalId = undefined
-    }
+    loadLive?.stop()
+    loadLive = null
   }
 })
-
-const loadDataInterval = () => {
-  if (intervalId) return
-  Data().loadData()
-  intervalId = setInterval(() => {
-    Data().loadData()
-  }, 10000)
-}
 
 export default router

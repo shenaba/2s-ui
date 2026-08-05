@@ -598,6 +598,13 @@ func buildVhostConf(opt VhostOptions, certFile, keyFile string, env nginxEnv) st
 			"        proxy_set_header X-Real-IP         $remote_addr;\n" +
 			"        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;\n" +
 			"        proxy_set_header X-Forwarded-Proto $scheme;\n" +
+			"        # 面板的 /ws 推送通道要求升级握手直达上游。nginx 默认 HTTP/1.0 上游\n" +
+			"        # 且剥掉逐跳头,少了这三行 WebSocket 握手必 400。写死 \"upgrade\" 而不用\n" +
+			"        # map $http_upgrade:map 只能放 http{} 级,而本文件按域名各生成一份,\n" +
+			"        # 重复定义变量会让 nginx 拒载;对普通请求恒发 Connection: upgrade 无害。\n" +
+			"        proxy_http_version 1.1;\n" +
+			"        proxy_set_header Upgrade           $http_upgrade;\n" +
+			"        proxy_set_header Connection        \"upgrade\";\n" +
 			"        proxy_read_timeout 300s;\n" +
 			"    }\n")
 	}

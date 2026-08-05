@@ -173,9 +173,10 @@ const appConfig = computed((): Config => {
 
 onBeforeMount(async () => {
   loading.value = true
-  while (Data().lastLoad == 0) {
-    await new Promise((resolve) => setTimeout(resolve, 100))
-  }
+  // Never touch the config without real data: the "fix old configs" writes
+  // below mutate the live object, so on an empty one they would seed a config
+  // that a save then writes over the panel's real one.
+  if (!await Data().waitReady()) return
 
   // fix old configs
   if (!appConfig.value.dns) appConfig.value.dns = { servers: [], rules: [] }
