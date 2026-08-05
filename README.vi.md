@@ -78,6 +78,16 @@ mới rồi thay thế tại chỗ và khởi động lại. Không cần SSH, k
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
+Hỗ trợ cả systemd lẫn OpenRC (Alpine); trình cài đặt sẽ tự chọn đúng loại.
+
+Trình cài đặt dùng cùng sáu ngôn ngữ với bảng điều khiển: `en`, `fa`, `ru`,
+`vi`, `zhcn`, `zhtw`. Mặc định theo `$LANG` của hệ thống, hoặc bạn có thể chọn
+một ngôn ngữ và menu `s-ui` sẽ ghi nhớ:
+
+```sh
+SUI_LANG=vi bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
+```
+
 ### Windows
 1. Tải bản phát hành Windows mới nhất từ [GitHub Releases](https://github.com/shenaba/2s-ui/releases/latest)
 2. Giải nén tệp ZIP

@@ -79,6 +79,14 @@
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
+هم systemd و هم OpenRC (آلپاین) پشتیبانی می‌شوند؛ اسکریپت نصب خودش مورد درست را انتخاب می‌کند.
+
+اسکریپت نصب به همان شش زبان پنل صحبت می‌کند: `en`، `fa`، `ru`، `vi`، `zhcn`، `zhtw`. به‌طور پیش‌فرض از `$LANG` سیستم پیروی می‌کند، یا می‌توانید زبان را مشخص کنید تا منوی `s-ui` هم همان را به یاد بسپارد:
+
+```sh
+SUI_LANG=fa bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
+```
+
 ### Windows
 1. آخرین نسخه ویندوز را از [GitHub Releases](https://github.com/shenaba/2s-ui/releases/latest) دانلود کنید
 2. فایل ZIP را استخراج کنید

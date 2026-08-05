@@ -79,6 +79,17 @@ install script.
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
+systemd and OpenRC (Alpine) are both supported; the installer picks the right
+one for your system.
+
+The installer speaks the same six languages as the panel — `en`, `fa`, `ru`,
+`vi`, `zhcn`, `zhtw`. It follows your system `$LANG`, or you can pick one, which
+the `s-ui` menu then remembers:
+
+```sh
+SUI_LANG=zhcn bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
+```
+
 ### Windows
 1. Download the latest Windows release from [GitHub Releases](https://github.com/shenaba/2s-ui/releases/latest)
 2. Extract the ZIP file

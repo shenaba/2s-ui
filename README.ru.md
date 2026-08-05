@@ -80,6 +80,16 @@
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
+Поддерживаются и systemd, и OpenRC (Alpine) — установщик сам выберет нужный.
+
+Установщик говорит на тех же шести языках, что и панель: `en`, `fa`, `ru`,
+`vi`, `zhcn`, `zhtw`. По умолчанию используется системная переменная `$LANG`,
+но язык можно выбрать явно — меню `s-ui` затем его запомнит:
+
+```sh
+SUI_LANG=ru bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
+```
+
 ### Windows
 1. Скачайте последний релиз для Windows с [GitHub Releases](https://github.com/shenaba/2s-ui/releases/latest)
 2. Распакуйте ZIP-файл

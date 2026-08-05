@@ -15,6 +15,7 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 's-ui.service'
+      - 's-ui.openrc'
 
 # Merging several PRs in a row queues one full matrix per push, and only the last
 # one builds the tree that ships. github.ref already separates a release run
@@ -210,6 +211,7 @@ jobs:
           mkdir s-ui
           cp sui s-ui/
           cp s-ui.service s-ui/
+          cp s-ui.openrc s-ui/
           cp s-ui.sh s-ui/
 
       - name: Package

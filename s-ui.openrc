@@ -1,0 +1,15 @@
+#!/sbin/openrc-run
+
+description="s-ui Service"
+command="/usr/local/s-ui/sui"
+directory="/usr/local/s-ui"
+pidfile="/run/s-ui.pid"
+output_log="/var/log/s-ui.log"
+error_log="/var/log/s-ui.log"
+supervisor=supervise-daemon
+respawn_delay=10
+
+depend() {
+	need net
+	after firewall
+}

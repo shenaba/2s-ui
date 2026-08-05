@@ -78,6 +78,14 @@
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
+同時支援 systemd 與 OpenRC（Alpine），安裝腳本會自動選擇。
+
+安裝腳本支援與面板相同的六種語言：`en`、`fa`、`ru`、`vi`、`zhcn`、`zhtw`。預設跟隨系統 `$LANG`，也可以手動指定，之後 `s-ui` 選單會沿用該語言：
+
+```sh
+SUI_LANG=zhtw bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
+```
+
 ### Windows
 1. 從 [GitHub Releases](https://github.com/shenaba/2s-ui/releases/latest) 下載最新 Windows 版本
 2. 解壓縮 ZIP 檔案

@@ -6,10 +6,13 @@ yellow='\033[0;33m'
 plain='\033[0m'
 
 LANG_PREF=$(cat ~/.s2ui_lang 2>/dev/null || echo "en")
+# The menu wrote "zh" before it settled on the frontend's "zhcn", which is also
+# what install.sh writes. Keep reading what older installs left behind.
+[[ $LANG_PREF == "zh" ]] && LANG_PREF="zhcn"
 
 t() {
     local key=$1
-    if [[ $LANG_PREF == "zh" ]]; then
+    if [[ $LANG_PREF == "zhcn" ]]; then
         case $key in
             menu_title)        echo "2S-UI 管理脚本" ;;
             opt_exit)          echo "退出" ;;
@@ -399,6 +402,44 @@ fi
 
 echo "The OS release is: $release"
 
+# Detect the init system: systemd everywhere, OpenRC on Alpine.
+# Keep this block in sync with the identical one in install.sh — the two
+# scripts are downloaded independently and cannot share a source file.
+if [[ "$release" == "alpine" ]]; then
+    init_system="openrc"
+elif command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
+    init_system="systemd"
+elif command -v rc-service >/dev/null 2>&1; then
+    init_system="openrc"
+else
+    init_system="systemd"
+fi
+
+# Service wrappers so every menu action works on both init systems.
+svc_start() { if [[ "${init_system}" == "openrc" ]]; then rc-service $1 start; else systemctl start $1; fi; }
+svc_stop() { if [[ "${init_system}" == "openrc" ]]; then rc-service $1 stop; else systemctl stop $1; fi; }
+svc_restart() { if [[ "${init_system}" == "openrc" ]]; then rc-service $1 restart; else systemctl restart $1; fi; }
+svc_status() { if [[ "${init_system}" == "openrc" ]]; then rc-service $1 status; else systemctl status $1 -l; fi; }
+svc_enable() { if [[ "${init_system}" == "openrc" ]]; then rc-update add $1 default; else systemctl enable $1; fi; }
+svc_disable() { if [[ "${init_system}" == "openrc" ]]; then rc-update del $1 default; else systemctl disable $1; fi; }
+# OpenRC has no journal; the init script sends both streams to this log.
+# Create the file if missing so tail does not exit with "No such file"
+# before the service has ever written anything (unlike journalctl).
+svc_log() {
+    if [[ "${init_system}" == "openrc" ]]; then
+        local log=/var/log/s-ui.log
+        if [[ ! -f "$log" ]]; then
+            touch "$log" 2>/dev/null || {
+                LOGE "Log file $log does not exist and could not be created"
+                return 1
+            }
+        fi
+        tail -n 200 -f "$log"
+    else
+        journalctl -u $1.service -e --no-pager -f
+    fi
+}
+
 confirm() {
     if [[ $# > 1 ]]; then
         echo && read -p "$1 [Default$2]: " temp
@@ -481,11 +522,17 @@ uninstall() {
         fi
         return 0
     fi
-    systemctl stop s-ui
-    systemctl disable s-ui
-    rm /etc/systemd/system/s-ui.service -f
-    systemctl daemon-reload
-    systemctl reset-failed
+    if [[ "${init_system}" == "openrc" ]]; then
+        rc-service s-ui stop
+        rc-update del s-ui default
+        rm /etc/init.d/s-ui -f
+    else
+        systemctl stop s-ui
+        systemctl disable s-ui
+        rm /etc/systemd/system/s-ui.service -f
+        systemctl daemon-reload
+        systemctl reset-failed
+    fi
     rm /etc/s-ui/ -rf
     rm /usr/local/s-ui/ -rf
     rm /usr/bin/s-ui -f
@@ -572,7 +619,7 @@ start() {
         echo ""
         LOGI -e "${1} is running, No need to start again, If you need to restart, please select restart"
     else
-        systemctl start $1
+        svc_start $1
         sleep 2
         check_status $1
         if [[ $? == 0 ]]; then
@@ -593,9 +640,11 @@ stop() {
         echo ""
         LOGI "${1} stopped, No need to stop again!"
     else
-        systemctl stop $1
+        svc_stop $1
         sleep 2
-        check_status
+        # Must pass $1 — empty name makes OpenRC look up /etc/init.d/ and
+        # always report failure even when the stop itself succeeded.
+        check_status $1
         if [[ $? == 1 ]]; then
             LOGI "${1} stopped successfully"
         else
@@ -609,7 +658,7 @@ stop() {
 }
 
 restart() {
-    systemctl restart $1
+    svc_restart $1
     sleep 2
     check_status $1
     if [[ $? == 0 ]]; then
@@ -623,14 +672,14 @@ restart() {
 }
 
 status() {
-    systemctl status s-ui -l
+    svc_status s-ui
     if [[ $# == 0 ]]; then
         before_show_menu
     fi
 }
 
 enable() {
-    systemctl enable $1
+    svc_enable $1
     if [[ $? == 0 ]]; then
         LOGI "Set ${1} to boot automatically on startup successfully"
     else
@@ -643,7 +692,7 @@ enable() {
 }
 
 disable() {
-    systemctl disable $1
+    svc_disable $1
     if [[ $? == 0 ]]; then
         LOGI "Autostart ${1} Cancelled successfully"
     else
@@ -656,7 +705,7 @@ disable() {
 }
 
 show_log() {
-    journalctl -u $1.service -e --no-pager -f
+    svc_log $1
     if [[ $# == 1 ]]; then
         before_show_menu
     fi
@@ -675,6 +724,17 @@ update_shell() {
 }
 
 check_status() {
+    # Contract used by show_status/start/stop/restart:
+    #   0 = running, 1 = stopped/not running, 2 = not installed.
+    # Do not pass rc-service's raw exit codes through — a stopped service
+    # returns 3 (LSB), which matches none of the callers' cases.
+    if [[ "${init_system}" == "openrc" ]]; then
+        [[ -f "/etc/init.d/$1" ]] || return 2
+        if rc-service $1 status >/dev/null 2>&1; then
+            return 0
+        fi
+        return 1
+    fi
     if [[ ! -f "/etc/systemd/system/$1.service" ]]; then
         return 2
     fi
@@ -687,6 +747,10 @@ check_status() {
 }
 
 check_enabled() {
+    if [[ "${init_system}" == "openrc" ]]; then
+        rc-update show default 2>/dev/null | awk '{print $1}' | grep -qx "$1"
+        return $?
+    fi
     temp=$(systemctl is-enabled $1)
     if [[ x"${temp}" == x"enabled" ]]; then
         return 0
@@ -1170,7 +1234,7 @@ switch_language() {
     read -p "Select [1-6]: " lang_choice
     case "$lang_choice" in
     1) LANG_PREF="en" ;;
-    2) LANG_PREF="zh" ;;
+    2) LANG_PREF="zhcn" ;;
     3) LANG_PREF="zhtw" ;;
     4) LANG_PREF="ru" ;;
     5) LANG_PREF="fa" ;;
