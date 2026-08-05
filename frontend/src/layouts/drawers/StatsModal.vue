@@ -7,7 +7,10 @@
         <Segmented v-model="period" :options="periods" @update:model-value="onPeriodChange" />
       </div>
 
-      <div v-if="noData" style="padding: 24px 0;">
+      <div v-if="loading" style="padding: 24px 0;">
+        <EmptyState icon="chart" :title="$t('loading')" />
+      </div>
+      <div v-else-if="noData" style="padding: 24px 0;">
         <EmptyState icon="chart" :title="$t('noData')" />
       </div>
       <template v-else>
@@ -69,6 +72,10 @@ const up = ref<number[]>([])
 const down = ref<number[]>([])
 const times = ref<number[]>([])
 const noData = ref(false)
+// Distinct from noData: "waiting for the answer to a subscribe we just sent".
+// Collapsing the two would render "no data" over a period that simply has not
+// been answered yet.
+const loading = ref(false)
 
 const totalUp = computed(() => up.value.reduce((a, b) => a + b, 0))
 const totalDown = computed(() => down.value.reduce((a, b) => a + b, 0))
@@ -130,33 +137,40 @@ watch(() => props.visible, (v) => {
     noData.value = false
     up.value = []
     down.value = []
+    times.value = []
     live = liveSubscribe({
       topic: 'stats',
       params: () => ({ resource: props.resource, tag: props.tag, period: String(period.value) }),
       onData: (d) => {
         if (d && d.resource === props.resource && d.tag === props.tag && d.period === String(period.value)) {
+          loading.value = false
           applyRows(d.stats)
         }
       },
     })
     // Opened while the socket is down: the subscribe never left the browser,
-    // so show the empty state rather than an blank chart that looks like data.
-    if (!live.connected()) noData.value = true
+    // so show the empty state rather than a blank chart that looks like data.
+    loading.value = live.connected()
+    if (!loading.value) noData.value = true
   } else {
     live?.stop()
     live = null
+    loading.value = false
   }
 })
-// Re-subscribing with the new period makes the server answer immediately. If it
-// could not be sent, the axis and tooltips have already switched format, so the
-// old buckets would render under the new period's labels — show nothing instead.
+// Clear unconditionally: the axis and tooltips switch format the moment period
+// changes, so the old buckets would render under the new period's labels.
+// resubscribe() only reports that the frame was sent — the server may still
+// withhold the immediate answer (its per-topic query throttle), in which case
+// the next push is a stats flush away. Wait for a push whose echoed key matches
+// rather than leaving stale data on screen for up to that long.
 const onPeriodChange = () => {
-  if (live && !live.resubscribe()) {
-    up.value = []
-    down.value = []
-    times.value = []
-    noData.value = true
-  }
+  up.value = []
+  down.value = []
+  times.value = []
+  const sent = live?.resubscribe() ?? false
+  loading.value = sent
+  noData.value = !sent
 }
 onBeforeUnmount(() => { live?.stop(); live = null })
 </script>
