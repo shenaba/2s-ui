@@ -82,7 +82,14 @@ const Data = defineStore('Data', {
       }
     },
     setNewData(data: any) {
-      this.lastLoad = Math.floor((new Date()).getTime()/1000)
+      // Prefer the server's own stamp: lastLoad is sent back as `lu` and
+      // compared against the server's change timestamp, so deriving it from the
+      // browser clock made a fast clock miss changes (and, with no poll left,
+      // never recover) and a slow one refetch the whole config on every
+      // reconnect. The fallback only covers a backend older than this field.
+      this.lastLoad = Number.isFinite(data.lu) && data.lu > 0
+        ? data.lu
+        : Math.floor((new Date()).getTime()/1000)
       if (data.subURI) this.subURI = data.subURI
       if (data.os) this.os = data.os
       if (data.enableTraffic) this.enableTraffic = data.enableTraffic

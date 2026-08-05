@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"runtime"
+	"time"
 )
 
 // PanelDataService assembles the api/load payloads. It exists so the HTTP
@@ -60,6 +61,13 @@ func (s *PanelDataService) LivePayload() (map[string]interface{}, error) {
 // FullPayload is LivePayload plus the whole panel config — api/load's response
 // when the lu gate opens. hostname feeds the subscription-URI fallback.
 func (s *PanelDataService) FullPayload(hostname string) (map[string]interface{}, error) {
+	// The client's next lu, stamped BEFORE the reads below: a change committing
+	// during the build is then strictly newer than the stamp, so the next gate
+	// still reports it. It has to come from here because lu is compared against
+	// the server's own change timestamp — a client deriving it from its own
+	// clock either misses changes (clock ahead) or refetches the whole config on
+	// every reconnect (clock behind).
+	stamp := time.Now().Unix()
 	data, err := s.OnlinesPayload()
 	if err != nil {
 		return nil, err
@@ -115,6 +123,7 @@ func (s *PanelDataService) FullPayload(hostname string) (map[string]interface{},
 	data["subURI"] = subURI
 	data["enableTraffic"] = trafficAge > 0
 	data["os"] = runtime.GOOS
+	data["lu"] = stamp
 	s.attachNodesStatus(data)
 	return data, nil
 }
