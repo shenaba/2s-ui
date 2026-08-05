@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/shenaba/2s-ui/config"
@@ -16,7 +17,12 @@ import (
 )
 
 var (
-	LastUpdate          int64
+	// Written by gin handlers (Save), the DepleteJob and NodesJob cron
+	// goroutines, and read by every api/load handler plus the websocket hub's
+	// read pump — a plain int64 here is a data race the detector flags.
+	// Unexported so the atomic cannot be bypassed; nothing outside this package
+	// touched it.
+	lastUpdate          atomic.Int64
 	corePtr             *core.Core
 	startCoreMu         sync.Mutex
 	startCoreInProgress bool
@@ -301,7 +307,7 @@ func SetLastUpdate(dt int64) {
 
 // MarkLastUpdate advances the change timestamp without waking the hub.
 func MarkLastUpdate(dt int64) {
-	LastUpdate = dt
+	lastUpdate.Store(dt)
 }
 
 func (s *ConfigService) CheckChanges(lu string) (bool, error) {
@@ -312,16 +318,21 @@ func (s *ConfigService) CheckChanges(lu string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if LastUpdate == 0 {
+	// One load, then decide: reading the var twice let the gate branch on one
+	// value and answer with another.
+	cur := lastUpdate.Load()
+	if cur == 0 {
 		db := database.GetDB()
 		var count int64
 		err := db.Model(model.Changes{}).Where("date_time > ?", intLu).Count(&count).Error
 		if err == nil {
-			LastUpdate = time.Now().Unix()
+			// Cache warm-up after a restart, not a change — deliberately not
+			// SetLastUpdate, which would wake the hub for news that isn't news.
+			lastUpdate.Store(time.Now().Unix())
 		}
 		return count > 0, err
 	}
-	return LastUpdate > intLu, nil
+	return cur > intLu, nil
 }
 
 func (s *ConfigService) GetChanges(actor string, chngKey string, count string) []model.Changes {
