@@ -2,7 +2,6 @@ package sub
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/shenaba/2s-ui/logger"
@@ -74,19 +73,9 @@ func (s *LinkService) GetExternalOutbounds(linkJson *json.RawMessage) ([]map[str
 		}
 	}
 
-	// Make tags unique; sing-box and clash reject duplicate tags/names.
-	seen := make(map[string]int)
-	for i, tag := range tags {
-		if n := seen[tag]; n > 0 {
-			newTag := fmt.Sprintf("%s-%d", tag, n)
-			seen[tag] = n + 1
-			tags[i] = newTag
-			outbounds[i]["tag"] = newTag
-		} else {
-			seen[tag] = 1
-		}
-	}
-
+	// Tag uniqueness is settled by uniqueOutboundTags once every source has been
+	// merged: deduping only within the links here left collisions against the
+	// inbound-derived tags unnoticed.
 	return outbounds, tags
 }
 

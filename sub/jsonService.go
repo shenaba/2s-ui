@@ -64,6 +64,7 @@ func (j *JsonService) GetJson(subId string, format string) (*string, []string, e
 	extOutbounds, extTags := j.LinkService.GetExternalOutbounds(&client.Links)
 	*outbounds = append(*outbounds, extOutbounds...)
 	*outTags = append(*outTags, extTags...)
+	uniqueOutboundTags(*outbounds, *outTags, defaultOutboundTags...)
 
 	j.addDefaultOutbounds(outbounds, outTags)
 
@@ -99,7 +100,13 @@ func (j *JsonService) getData(subId string) (*model.Client, []*model.Inbound, er
 		return nil, nil, err
 	}
 	var inbounds []*model.Inbound
-	err = db.Model(model.Inbound{}).Preload("Tls").Where("id in ?", clientInbounds).Find(&inbounds).Error
+	// node_id IS NULL: a replica's route already reaches the subscription as the
+	// "[node] " external link refreshNodeLinks folds into client.Links. Building
+	// an outbound from the replica row too emits the same tag twice, which
+	// sing-box and mihomo both reject outright — and that second copy is the
+	// broken one, since adoption clears tls_id and getOutbounds then drops flow.
+	// service/client.go applies the same filter for the plain link subscription.
+	err = db.Model(model.Inbound{}).Preload("Tls").Where("id in ? and node_id IS NULL", clientInbounds).Find(&inbounds).Error
 	if err != nil {
 		return nil, nil, err
 	}
@@ -232,7 +239,66 @@ func (j *JsonService) getOutbounds(clientConfig json.RawMessage, inbounds []*mod
 	return &outbounds, &outTags, nil
 }
 
+// defaultOutboundTags are the tags addDefaultOutbounds injects. They are taken
+// before any route is named, so uniqueOutboundTags has to reserve them.
+var defaultOutboundTags = []string{"proxy", "auto", "direct"}
+
+// uniqueOutboundTags renames duplicate tags in place, across every source that
+// feeds the outbound list. A collision has to degrade to a renamed route: both
+// sing-box and mihomo reject the *whole* config on a duplicate tag, so leaving
+// one in place costs the user the entire subscription, not one route.
+//
+// reserved holds names the caller injects after this runs — a route colliding
+// with one of those is just as fatal as two routes colliding with each other.
+//
+// Must run before the tags are used to build the selector/urltest groups, or
+// those groups reference names no outbound carries.
+func uniqueOutboundTags(outbounds []map[string]interface{}, tags []string, reserved ...string) {
+	seen := make(map[string]struct{}, len(tags)+len(reserved))
+	for _, tag := range reserved {
+		seen[tag] = struct{}{}
+	}
+	for i, base := range tags {
+		tag := base
+		// Loop rather than a per-base counter: the generated "tag-2" may itself
+		// collide with a tag that was already there.
+		for n := 2; ; n++ {
+			if _, dup := seen[tag]; !dup {
+				break
+			}
+			tag = fmt.Sprintf("%s-%d", base, n)
+		}
+		seen[tag] = struct{}{}
+		tags[i] = tag
+		if i < len(outbounds) {
+			outbounds[i]["tag"] = tag
+		}
+	}
+}
+
 func (j *JsonService) addDefaultOutbounds(outbounds *[]map[string]interface{}, outTags *[]string) {
+	direct := map[string]interface{}{
+		"type": "direct",
+		"tag":  "direct",
+	}
+
+	// No routes at all — e.g. the client only references node replicas and
+	// reconciliation has not yet written their "[node] " links. urltest would
+	// have nothing to probe, and a nil outTags even marshals to `null`, which
+	// makes sing-box reject the whole config. Ship a selector over direct so the
+	// profile still imports.
+	if len(*outTags) == 0 {
+		*outbounds = append([]map[string]interface{}{
+			{
+				"outbounds": []string{"direct"},
+				"tag":       "proxy",
+				"type":      "selector",
+			},
+			direct,
+		}, *outbounds...)
+		return
+	}
+
 	outbound := []map[string]interface{}{
 		{
 			"outbounds": append([]string{"auto", "direct"}, *outTags...),
@@ -242,15 +308,13 @@ func (j *JsonService) addDefaultOutbounds(outbounds *[]map[string]interface{}, o
 		{
 			"tag":       "auto",
 			"type":      "urltest",
-			"outbounds": outTags,
+			// Deref: a *[]string would marshal to null when the slice is nil.
+			"outbounds": *outTags,
 			"url":       "http://www.gstatic.com/generate_204",
 			"interval":  "10m",
 			"tolerance": 50,
 		},
-		{
-			"type": "direct",
-			"tag":  "direct",
-		},
+		direct,
 	}
 	*outbounds = append(outbound, *outbounds...)
 }

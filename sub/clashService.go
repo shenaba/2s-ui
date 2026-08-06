@@ -77,6 +77,7 @@ func (s *ClashService) GetClash(subId string) (*string, []string, error) {
 	extOutbounds, extTags := s.LinkService.GetExternalOutbounds(&client.Links)
 	*outbounds = append(*outbounds, extOutbounds...)
 	*outTags = append(*outTags, extTags...)
+	uniqueOutboundTags(*outbounds, *outTags)
 
 	basicConfig, err := s.getClashConfig()
 	if err != nil || len(basicConfig) == 0 {
