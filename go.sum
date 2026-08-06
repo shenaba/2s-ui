@@ -301,12 +301,12 @@ github.com/sagernet/quic-go v0.59.0-sing-box-mod.4 h1:6qvrUW79S+CrPwWz6cMePXohgj
 github.com/sagernet/quic-go v0.59.0-sing-box-mod.4/go.mod h1:OqILvS182CyOol5zNNo6bguvOGgXzV459+chpRaUC+4=
 github.com/sagernet/sing v0.8.12-0.20260726145744-ef2df370afca h1:Wq3Kj8gOv/ZYPM/GYTjv7Pr9u/76HIDZCbd0pdPkIbc=
 github.com/sagernet/sing v0.8.12-0.20260726145744-ef2df370afca/go.mod h1:olXxWQNqRW/l2Q6JI3b2Qmz8iQnIFlOeeH8bx6JhgUA=
-github.com/sagernet/sing-box v1.13.15 h1:spmm9MFOxZxDB5SvjTbVzg+VQzUurqxFftBqAu4rcus=
-github.com/sagernet/sing-box v1.13.15/go.mod h1:p2wzntka61gK3+qQ8NKJL9svmlhDkihT1agWlmSgmTY=
+github.com/sagernet/sing-box v1.13.16 h1:s71wBy9hU9+H1Mk8ZtcS+0SEsjhUWkNQiXLZ9Skq08Y=
+github.com/sagernet/sing-box v1.13.16/go.mod h1:goKMrv+A5udmWiaiX2DNrdjfaZnSrN2Dev5/M7R/Gj0=
 github.com/sagernet/sing-mux v0.3.5 h1:RHnhVEc+SFqkrK4xMygYjDwwLhzp2Bj3lztSukONfhI=
 github.com/sagernet/sing-mux v0.3.5/go.mod h1:QvlKMyNBNrQoyX4x+gq028uPbLM2XeRpWtDsWBJbFSk=
-github.com/sagernet/sing-quic v0.6.4-0.20260727025224-43cdc830d7cf h1:ujYGwqkfs6WUXocCmeEwwMvrT9OrG+wvxrDeiMnWDk8=
-github.com/sagernet/sing-quic v0.6.4-0.20260727025224-43cdc830d7cf/go.mod h1:K5bWvITOm4vE10fwLfrWpw27bCoVJ+tfQ79tOWg+Ko8=
+github.com/sagernet/sing-quic v0.6.4-0.20260803041914-d83826c306d7 h1:D46kmyvKMNVFvL3KXdq3T4vy8r29xCMmSqNuQHJBybE=
+github.com/sagernet/sing-quic v0.6.4-0.20260803041914-d83826c306d7/go.mod h1:K5bWvITOm4vE10fwLfrWpw27bCoVJ+tfQ79tOWg+Ko8=
 github.com/sagernet/sing-shadowsocks v0.2.8 h1:PURj5PRoAkqeHh2ZW205RWzN9E9RtKCVCzByXruQWfE=
 github.com/sagernet/sing-shadowsocks v0.2.8/go.mod h1:lo7TWEMDcN5/h5B8S0ew+r78ZODn6SwVaFhvB6H+PTI=
 github.com/sagernet/sing-shadowsocks2 v0.2.1 h1:dWV9OXCeFPuYGHb6IRqlSptVnSzOelnqqs2gQ2/Qioo=
@@ -319,8 +319,8 @@ github.com/sagernet/sing-vmess v0.2.8 h1:xd5nnDOMlC76RgrLksS4jlk3eMt3c3CvQY3NsjW
 github.com/sagernet/sing-vmess v0.2.8/go.mod h1:P11scgTxMxVVQ8dlM27yNm3Cro40mD0+gHbnqrNGDuY=
 github.com/sagernet/smux v1.5.50-sing-box-mod.1 h1:XkJcivBC9V4wBjiGXIXZ229aZCU1hzcbp6kSkkyQ478=
 github.com/sagernet/smux v1.5.50-sing-box-mod.1/go.mod h1:NjhsCEWedJm7eFLyhuBgIEzwfhRmytrUoiLluxs5Sk8=
-github.com/sagernet/tailscale v1.92.4-sing-box-1.13-mod.7 h1:8zc1Aph1+ElqF9/7aSPkO0o4vTd+AfQC+CO324mLWGg=
-github.com/sagernet/tailscale v1.92.4-sing-box-1.13-mod.7/go.mod h1:m87GAn4UcesHQF3leaPFEINZETO5za1LGn1GJdNDgNc=
+github.com/sagernet/tailscale v1.92.4-sing-box-1.13-mod.8 h1:vchb9moOQIxPVOLpTUo2iyZ2E2oUaBpvAh3bBPcEqIM=
+github.com/sagernet/tailscale v1.92.4-sing-box-1.13-mod.8/go.mod h1:m87GAn4UcesHQF3leaPFEINZETO5za1LGn1GJdNDgNc=
 github.com/sagernet/wireguard-go v0.0.2-beta.1.0.20260224074747-506b7631853c h1:f9cXNB+IOOPnR8DOLMTpr42jf7naxh5Un5Y09BBf5Cg=
 github.com/sagernet/wireguard-go v0.0.2-beta.1.0.20260224074747-506b7631853c/go.mod h1:WUxgxUDZoCF2sxVmW+STSxatP02Qn3FcafTiI2BLtE0=
 github.com/sagernet/ws v0.0.0-20231204124109-acfe8907c854 h1:6uUiZcDRnZSAegryaUGwPC/Fj13JSHwiTftrXhMmYOc=
