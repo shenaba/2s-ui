@@ -154,6 +154,7 @@ export default {
     resetTraffic: "بازنشانی ترافیک",
     updatePanel: "به‌روزرسانی پنل",
     reset: "بازنشانی",
+    copyAll: "کپی همه",
     adopt: "پذیرش",
   },
   login: {

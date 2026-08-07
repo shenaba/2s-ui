@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"strconv"
 	"sync"
 	"time"
 
@@ -42,14 +43,35 @@ func (a *APIv2Handler) initRouter(g *gin.RouterGroup) {
 }
 
 func (a *APIv2Handler) postHandler(c *gin.Context) {
-	username := a.findUsername(c)
+	// Set by checkToken. A second findUsername could disagree with the one
+	// that passed auth (ReloadTokens swap or an expiry tick in between) and
+	// attribute the write to an empty actor.
+	username := c.GetString("username")
 	action := c.Param("postAction")
 
 	switch action {
 	case "save":
-		// fanout=false: a client pushed here by a master must not be bounced
-		// back out to this panel's own nodes (mutual-master ping-pong).
-		a.ApiService.Save(c, username, false)
+		// sync=true asks for the immediate node fanout the web UI always gets.
+		// It controls latency only — without it a change still reaches nodes
+		// via the hourly ReconcileAllOnline safety net. Loop safety for pushed
+		// changes lives in expectedClients' node_id scoping, not in this flag.
+		// Malformed values are rejected: silently degrading to "no fanout"
+		// would report success while nodes stay stale for up to an hour.
+		fanout := false
+		if v := c.Request.FormValue("sync"); v != "" {
+			parsed, err := strconv.ParseBool(v)
+			if err != nil {
+				jsonMsg(c, "sync", err)
+				return
+			}
+			fanout = parsed
+		}
+		hostname, err := a.canonicalHost(c)
+		if err != nil {
+			jsonMsg(c, "", err)
+			return
+		}
+		a.ApiService.Save(c, username, fanout, hostname)
 	case "restartApp":
 		a.ApiService.RestartApp(c)
 	case "restartSb":
@@ -132,6 +154,7 @@ func (a *APIv2Handler) findUsername(c *gin.Context) string {
 func (a *APIv2Handler) checkToken(c *gin.Context) {
 	username := a.findUsername(c)
 	if username != "" {
+		c.Set("username", username)
 		c.Next()
 		return
 	}

@@ -279,6 +279,11 @@ its own panel, so existing panels can be adopted as they are. Inbounds adopted
 from a node become read-only replicas on the master — edit them on the node they
 belong to.
 
+For API automation: `POST <panel path>apiv2/save` (the panel path is `/app/` by
+default, so `/app/apiv2/save`) triggers the web UI's immediate node fanout only
+when the request carries `sync=true`; without it, client/inbound changes still
+converge through the hourly reconcile safety net.
+
 ## Environment Variables
 
 <details>

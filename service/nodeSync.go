@@ -50,6 +50,22 @@ var (
 	dirtyGen uint64
 )
 
+// nodeLinkPrefix is the single definition of the remark convention marking a
+// client link as owned by a node: refreshNodeLinks stamps it, client saves use
+// it to tell system links from user links, node renames rewrite it and inbound
+// deletes strip it. Keep every one of those going through here.
+func nodeLinkPrefix(nodeName string) string { return "[" + nodeName + "] " }
+
+// isNodeOwnedRemark reports whether a remark was emitted for any known node.
+func isNodeOwnedRemark(remark string, nodeNames []string) bool {
+	for _, n := range nodeNames {
+		if strings.HasPrefix(remark, nodeLinkPrefix(n)) {
+			return true
+		}
+	}
+	return false
+}
+
 // refreshLinksMu serializes the read-modify-write of client.Links across nodes.
 // ReconcileDirtyOnline fans out one goroutine per dirty node and any client/inbound
 // save marks every node dirty, so two nodes' refreshNodeLinks can hit the SAME
@@ -77,7 +93,7 @@ func (s *NodeSyncService) nodePost(n *model.Node, client *http.Client, action st
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, common.NewErrorf("HTTP %d from node panel", resp.StatusCode)
+		return nil, httpStatusError(resp.StatusCode)
 	}
 	var msg struct {
 		Success bool            `json:"success"`
@@ -97,6 +113,10 @@ func (s *NodeSyncService) nodePost(n *model.Node, client *http.Client, action st
 }
 
 // pushClient runs one clients save (new|edit|del) against a node.
+// The form carries no "sync" field, so the receiving panel does not immediately
+// fan the change out to its own nodes — there is nothing to fan out (see
+// ApiService.Save for why a pushed client can never enter an outgoing set), and
+// paying for a reconcile sweep per pushed client would be pure waste.
 func (s *NodeSyncService) pushClient(n *model.Node, client *http.Client, act string, payload interface{}) (json.RawMessage, error) {
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -507,7 +527,9 @@ func (s *NodeSyncService) expectedClients(nodeId uint, tagToId map[string]uint) 
 }
 
 func (s *NodeSyncService) actualClusterClients(node *model.Node, client *http.Client) (map[string]nodeClientState, error) {
-	obj, err := s.nodeGet(node, client, "clients", nil)
+	// full=1 asks the node to include config, which clientDiffers needs; without
+	// it every client would read as changed and be re-pushed every round.
+	obj, err := s.nodeGet(node, client, "clients", url.Values{"full": {"1"}})
 	if err != nil {
 		return nil, err
 	}
@@ -556,7 +578,15 @@ func clientDiffers(want map[string]interface{}, cur nodeClientState) bool {
 	if asInt64(want["expiry"]) != cur.Expiry {
 		return true
 	}
-	if !jsonEqual(want["config"], cur.Config) {
+	// Compare config only when both sides actually carry one. jsonEqual fails on
+	// a nil operand, so an absent config would report EVERY client as changed on
+	// EVERY round — which is exactly what an older node yields, since its clients
+	// projection has no config column, and what a client saved without a config
+	// yields on either end. The cost of a false "differs" is a re-push per client
+	// per round, each writing a credential-bearing changes row that nothing
+	// prunes, so treat absence as "cannot compare", not as "differs".
+	wantConfig, _ := want["config"].(json.RawMessage)
+	if len(wantConfig) > 0 && len(cur.Config) > 0 && !jsonEqual(wantConfig, cur.Config) {
 		return true
 	}
 	if !jsonEqual(want["inbounds"], cur.Inbounds) {
@@ -678,7 +708,7 @@ func (s *NodeSyncService) refreshNodeLinks(node *model.Node) {
 		return
 	}
 
-	prefix := "[" + node.Name + "] "
+	prefix := nodeLinkPrefix(node.Name)
 	touched := false
 
 	for i := range clients {
@@ -706,7 +736,11 @@ func (s *NodeSyncService) refreshNodeLinks(node *model.Node) {
 		hadPrefix := false
 		kept := make([]map[string]string, 0, len(existing))
 		for _, l := range existing {
-			if strings.HasPrefix(l["remark"], prefix) {
+			// Only our own external entries: a LOCAL inbound whose tag happens to
+			// start with this node's prefix generates a link with the same remark,
+			// and stripping it here would drop it from the subscription until an
+			// unrelated client save regenerated it.
+			if l["type"] != "local" && strings.HasPrefix(l["remark"], prefix) {
 				hadPrefix = true
 				continue
 			}
@@ -751,7 +785,9 @@ func (s *NodeSyncService) refreshNodeLinks(node *model.Node) {
 
 func (s *NodeSyncService) MarkAllDirty() {
 	bumpDirtyGen()
-	if err := database.GetDB().Model(model.Node{}).Where("enable = ?", true).Update("dirty", true).Error; err != nil {
+	// dirty = false predicate: this runs on the request path of every fanout
+	// save, so skip rewriting rows that are already flagged.
+	if err := database.GetDB().Model(model.Node{}).Where("enable = ? AND dirty = ?", true, false).Update("dirty", true).Error; err != nil {
 		logger.Warning("nodes: mark all dirty: ", err)
 	}
 }
@@ -760,7 +796,9 @@ func (s *NodeSyncService) MarkAllDirty() {
 // Called by the heartbeat so offline-period edits converge once a node returns.
 func (s *NodeSyncService) ReconcileDirtyOnline() {
 	var nodes []model.Node
-	if err := database.GetDB().Model(model.Node{}).Where("enable = ? AND dirty = ?", true, true).Find(&nodes).Error; err != nil {
+	// Select("id"): only the id is used, and a full Find would hydrate every
+	// node's Baselines blob and Token on each trigger.
+	if err := database.GetDB().Model(model.Node{}).Select("id").Where("enable = ? AND dirty = ?", true, true).Find(&nodes).Error; err != nil {
 		return
 	}
 	statuses := s.GetStatuses()
@@ -782,7 +820,7 @@ func (s *NodeSyncService) ReconcileDirtyOnline() {
 // the hourly safety net that repairs silent node-side drift.
 func (s *NodeSyncService) ReconcileAllOnline() {
 	var nodes []model.Node
-	if err := database.GetDB().Model(model.Node{}).Where("enable = ?", true).Find(&nodes).Error; err != nil {
+	if err := database.GetDB().Model(model.Node{}).Select("id").Where("enable = ?", true).Find(&nodes).Error; err != nil {
 		return
 	}
 	statuses := s.GetStatuses()

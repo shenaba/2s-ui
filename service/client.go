@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -24,6 +25,10 @@ func (s *ClientService) Get(id string) (*[]model.Client, error) {
 	return s.getById(id)
 }
 
+// getById returns the whole row on purpose — do NOT narrow it to
+// clientListColumns. The drawer edits from this shape, and the counters it
+// omits have no omitempty, so a projection here would send zeros the client
+// would then echo back as an intentional-looking value.
 func (s *ClientService) getById(id string) (*[]model.Client, error) {
 	db := database.GetDB()
 	var client []model.Client
@@ -39,7 +44,28 @@ func (s *ClientService) GetAll() (*[]model.Client, error) {
 	db := database.GetDB()
 	var clients []model.Client
 	err := db.Model(model.Client{}).
-		Select("`id`, `enable`, `name`, `desc`, `group`, `remark`, `inbounds`, `up`, `down`, `volume`, `expiry`, `created_at`, `online_at`").
+		Select(clientListColumns).
+		Scan(&clients).Error
+	if err != nil {
+		return nil, err
+	}
+	return &clients, nil
+}
+
+// clientListColumns deliberately omits config and links: both are large and
+// config carries every protocol's credentials. This projection feeds the client
+// list, the websocket full payload and every save response, so anything added
+// here is paid on all three. Consumers needing the full row fetch it by id.
+const clientListColumns = "`id`, `enable`, `name`, `desc`, `group`, `remark`, `inbounds`, `up`, `down`, `volume`, `expiry`, `created_at`, `online_at`"
+
+// GetAllWithConfig adds config for the cluster reconcile diff only: clientDiffers
+// compares it, and an absent key reads as "always different", which would re-push
+// every client every round. Reached solely by the node-facing apiv2 clients read.
+func (s *ClientService) GetAllWithConfig() (*[]model.Client, error) {
+	db := database.GetDB()
+	var clients []model.Client
+	err := db.Model(model.Client{}).
+		Select(clientListColumns + ", `config`").
 		Scan(&clients).Error
 	if err != nil {
 		return nil, err
@@ -71,8 +97,9 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 			if err != nil {
 				return nil, err
 			}
-			// Preserve managed timestamps (immutable createdAt, stats-managed onlineAt)
-			s.preserveTimestamps(tx, &client)
+			if err = s.preserveServerManagedFields(tx, &client, payloadFields(data)); err != nil {
+				return nil, err
+			}
 		} else {
 			client.CreatedAt = time.Now().Unix()
 			err = json.Unmarshal(client.Inbounds, &inboundIds)
@@ -124,7 +151,11 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 			if err = setConfigIdentity(client); err != nil {
 				return nil, err
 			}
-			s.preserveTimestamps(tx, client)
+			// nil: the bulk payload is the list projection, so none of the
+			// counters it carries are authoritative — take them all from the row.
+			if err = s.preserveServerManagedFields(tx, client, nil); err != nil {
+				return nil, err
+			}
 			if len(changedInboundIds) > 0 {
 				inboundIds = common.UnionUintArray(inboundIds, changedInboundIds)
 			}
@@ -188,14 +219,54 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 	return inboundIds, nil
 }
 
-func (s *ClientService) preserveTimestamps(tx *gorm.DB, client *model.Client) {
+// preserveServerManagedFields restores columns the server owns from the stored
+// row. createdAt/onlineAt always; the traffic counters only when the request did
+// not carry them, which is what separates the two kinds of caller: a master's
+// node push omits them (they would unmarshal as zero and wipe the node's
+// totals), while the SPA sends them — and its per-client "Reset" button works by
+// sending zeroed ones, so overwriting those would silently undo the reset.
+// payloadHas nil means "carried nothing", i.e. preserve every counter.
+func (s *ClientService) preserveServerManagedFields(tx *gorm.DB, client *model.Client, payloadHas map[string]bool) error {
 	var existing model.Client
-	if err := tx.Model(model.Client{}).Select("created_at", "online_at").
-		Where("id = ?", client.Id).First(&existing).Error; err != nil {
-		return
+	err := tx.Model(model.Client{}).Select("created_at", "online_at", "up", "down", "total_up", "total_down").
+		Where("id = ?", client.Id).First(&existing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		// Not just "no such row": failing open here would write the payload's
+		// zeroed counters and destroy the node's traffic history.
+		return err
 	}
 	client.CreatedAt = existing.CreatedAt
 	client.OnlineAt = existing.OnlineAt
+	if !payloadHas["up"] {
+		client.Up = existing.Up
+	}
+	if !payloadHas["down"] {
+		client.Down = existing.Down
+	}
+	if !payloadHas["totalUp"] {
+		client.TotalUp = existing.TotalUp
+	}
+	if !payloadHas["totalDown"] {
+		client.TotalDown = existing.TotalDown
+	}
+	return nil
+}
+
+// payloadFields reports which keys the request object actually carried, so an
+// omitted server-managed value is preserved rather than written as zero.
+func payloadFields(data json.RawMessage) map[string]bool {
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(data, &raw) != nil {
+		return nil
+	}
+	fields := make(map[string]bool, len(raw))
+	for k := range raw {
+		fields[k] = true
+	}
+	return fields
 }
 
 func (s *ClientService) updateLinksWithFixedInbounds(tx *gorm.DB, clients []*model.Client, hostname string) error {
@@ -226,6 +297,32 @@ func (s *ClientService) updateLinksWithFixedInbounds(tx *gorm.DB, clients []*mod
 		inboundById[inbounds[i].Id] = &inbounds[i]
 	}
 
+	// Node links are system-owned (refreshNodeLinks rewrites them), so for an
+	// existing client they come from the stored row, not the request payload: a
+	// tab loaded before the last reconcile would otherwise strip them all, and
+	// nothing repairs that until the next reconcile touches this node.
+	var nodeNames []string
+	if err := tx.Model(model.Node{}).Pluck("name", &nodeNames).Error; err != nil {
+		return err
+	}
+
+	// Replica inbounds the payload still references, by tag. A node link is
+	// re-attached only while its inbound is still bound to the client:
+	// otherwise revoking access would leave a working link in the subscription
+	// until refreshNodeLinks next runs, which needs that node to be online — so
+	// revoking a user from an offline node would not take effect at all.
+	replicaTagById := map[uint]string{}
+	if len(allIds) > 0 {
+		var replicas []model.Inbound
+		if err := tx.Model(model.Inbound{}).Select("id", "tag").
+			Where("id in ? and node_id IS NOT NULL", allIds).Find(&replicas).Error; err != nil {
+			return err
+		}
+		for _, r := range replicas {
+			replicaTagById[r.Id] = r.Tag
+		}
+	}
+
 	for index, client := range clients {
 		var clientLinks []map[string]string
 		if err := json.Unmarshal(client.Links, &clientLinks); err != nil {
@@ -248,10 +345,56 @@ func (s *ClientService) updateLinksWithFixedInbounds(tx *gorm.DB, clients []*mod
 			}
 		}
 
-		// Add non local links
+		// A client being created has no stored row to re-attach from, so its
+		// payload links are kept verbatim — filtering them would drop a
+		// user-authored link whose remark merely looks node-owned.
+		reattach := client.Id != 0 && len(nodeNames) > 0
+
+		// Add non local links (node-owned ones re-attach from the DB below)
 		for _, clientLink := range clientLinks {
-			if clientLink["type"] != "local" {
-				newClientLinks = append(newClientLinks, clientLink)
+			if clientLink["type"] == "local" {
+				continue
+			}
+			if reattach && isNodeOwnedRemark(clientLink["remark"], nodeNames) {
+				continue
+			}
+			newClientLinks = append(newClientLinks, clientLink)
+		}
+		if reattach {
+			var stored model.Client
+			err := tx.Model(model.Client{}).Select("links").
+				Where("id = ?", client.Id).First(&stored).Error
+			switch {
+			case errors.Is(err, gorm.ErrRecordNotFound):
+				// Concurrently deleted; there is nothing to re-attach.
+			case err != nil:
+				// Failing open would persist the list with every node link
+				// stripped — the exact loss this re-attach exists to prevent.
+				return err
+			case len(stored.Links) > 0:
+				var storedLinks []map[string]string
+				if err := json.Unmarshal(stored.Links, &storedLinks); err != nil {
+					return err
+				}
+				keptTags := map[string]bool{}
+				for _, id := range clientInboundIds[index] {
+					if tag, ok := replicaTagById[id]; ok {
+						keptTags[tag] = true
+					}
+				}
+				for _, l := range storedLinks {
+					// type must be checked too: a local inbound tagged like a
+					// node prefix is regenerated above, and re-appending the
+					// stored copy would duplicate it once per save, forever.
+					if l["type"] == "local" || !isNodeOwnedRemark(l["remark"], nodeNames) {
+						continue
+					}
+					sep := strings.Index(l["remark"], "] ")
+					if sep < 0 || !keptTags[l["remark"][sep+2:]] {
+						continue // inbound no longer bound to this client
+					}
+					newClientLinks = append(newClientLinks, l)
+				}
 			}
 		}
 
@@ -341,13 +484,17 @@ func (s *ClientService) UpdateClientsOnInboundDelete(tx *gorm.DB, id uint, tag s
 		if err != nil {
 			return err
 		}
-		// Delete links
+		// Delete links. A node link for the same inbound carries the tag behind
+		// a "[<node>] " prefix, so an exact match alone would leave it behind
+		// for good: nothing else strips links for an inbound that is gone.
 		var clientLinks, newClientLinks []map[string]string
 		json.Unmarshal(client.Links, &clientLinks)
 		for _, clientLink := range clientLinks {
-			if clientLink["remark"] != tag {
-				newClientLinks = append(newClientLinks, clientLink)
+			remark := clientLink["remark"]
+			if remark == tag || (strings.HasPrefix(remark, "[") && strings.HasSuffix(remark, "] "+tag)) {
+				continue
 			}
+			newClientLinks = append(newClientLinks, clientLink)
 		}
 		client.Links, err = json.MarshalIndent(newClientLinks, "", "  ")
 		if err != nil {
@@ -631,8 +778,16 @@ func (s *ClientService) findInboundsChanges(tx *gorm.DB, client *model.Client, f
 		return nil, err
 	}
 	if fillOmitted {
+		// The bulk path submits the client list projection, which cannot carry
+		// these columns; the payload's zero values would silently wipe them —
+		// switching off periodic auto-reset and zeroing next_reset, so
+		// ResetClientsTraffic's "next_reset < now" scan never matches again.
 		client.Links = oldClient.Links
 		client.Config = oldClient.Config
+		client.AutoReset = oldClient.AutoReset
+		client.ResetDays = oldClient.ResetDays
+		client.NextReset = oldClient.NextReset
+		client.DelayStart = oldClient.DelayStart
 	}
 	err = json.Unmarshal(oldClient.Inbounds, &oldInboundIds)
 	if err != nil {

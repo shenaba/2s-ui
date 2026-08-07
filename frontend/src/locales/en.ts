@@ -156,6 +156,7 @@ export default {
     resetTraffic: "Reset traffic",
     updatePanel: "Update panel",
     reset: "Reset",
+    copyAll: "Copy all",
     adopt: "Adopt",
   },
   login: {

@@ -29,9 +29,17 @@ func getRemoteIp(c *gin.Context) string {
 }
 
 func getHostname(c *gin.Context) string {
-	host := c.Request.Host
+	return normalizeHost(c.Request.Host)
+}
+
+// normalizeHost strips the port and brackets a bare IPv6 literal, so the result
+// is usable as the server field of a generated link. Anything reaching link
+// generation must pass through here — a configured domain included, since the
+// settings form accepts whatever was pasted into it.
+func normalizeHost(host string) string {
+	host = strings.TrimSpace(host)
 	if strings.Contains(host, ":") {
-		host, _, _ = net.SplitHostPort(c.Request.Host)
+		host, _, _ = net.SplitHostPort(host)
 		if strings.Contains(host, ":") {
 			host = "[" + host + "]"
 		}

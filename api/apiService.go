@@ -75,9 +75,34 @@ func (a *ApiService) getData(c *gin.Context) (interface{}, error) {
 	}
 	var pd service.PanelDataService
 	if isUpdated {
-		return pd.FullPayload(getHostname(c))
+		// Read-only path: the host is rendered, not persisted, so a settings
+		// read failure degrades to the request Host rather than blanking the
+		// whole panel. The save path, where it would be written, still fails.
+		host, err := a.canonicalHost(c)
+		if err != nil {
+			logger.Warning("load: web domain unreadable, using request host: ", err)
+			host = getHostname(c)
+		}
+		return pd.FullPayload(host)
 	}
 	return pd.LivePayload()
+}
+
+// canonicalHost is the hostname baked into generated links and the advertised
+// subscription URI — values that outlive the request that produced them, so the
+// rule for picking it lives in one place. The configured web domain wins: it is
+// the spelling the operator chose, and it does not vary with how a caller
+// happened to reach the panel. A settings read failure is reported rather than
+// downgraded to the request Host, which is the value we must not persist.
+func (a *ApiService) canonicalHost(c *gin.Context) (string, error) {
+	webDomain, err := a.SettingService.GetWebDomain()
+	if err != nil {
+		return "", err
+	}
+	if host := normalizeHost(webDomain); host != "" {
+		return host, nil
+	}
+	return getHostname(c), nil
 }
 
 func (a *ApiService) LoadPartialData(c *gin.Context, objs []string) error {
@@ -117,7 +142,16 @@ func (a *ApiService) LoadPartialData(c *gin.Context, objs []string) error {
 			}
 			data[obj] = tlsConfigs
 		case "clients":
-			clients, err := a.ClientService.Get(id)
+			// full=1 is the cluster reconcile read: it needs config to diff
+			// against the master's copy. Everything else — the SPA list, the
+			// websocket payload, save responses — gets the lean projection.
+			var clients interface{}
+			var err error
+			if id == "" && c.Query("full") == "1" {
+				clients, err = a.ClientService.GetAllWithConfig()
+			} else {
+				clients, err = a.ClientService.Get(id)
+			}
 			if err != nil {
 				return err
 			}
@@ -276,12 +310,14 @@ func (a *ApiService) ChangePass(c *gin.Context) {
 	}
 }
 
-// Save handles POST api/save. fanout controls whether a successful client /
-// inbound change is propagated to managed nodes. v1 (the SPA) passes true; v2
-// passes false so a node that has this panel as a master does not bounce the
-// pushed change back out (ping-pong between mutual masters).
-func (a *ApiService) Save(c *gin.Context, loginUser string, fanout bool) {
-	hostname := getHostname(c)
+// Save handles POST api/save. fanout triggers an immediate node reconcile for
+// client/inbound changes (v1 always; v2 with sync=true). It affects latency
+// only — the hourly ReconcileAllOnline pushes state regardless — and is not
+// what prevents mutual-master ping-pong: a pushed client references the
+// receiving panel's own inbounds, so expectedClients' node_id scoping keeps it
+// out of every outgoing push. hostname feeds generated links; callers pick the
+// canonical value (v2 prefers the configured web domain over the request Host).
+func (a *ApiService) Save(c *gin.Context, loginUser string, fanout bool, hostname string) {
 	obj := c.Request.FormValue("object")
 	act := c.Request.FormValue("action")
 	data := c.Request.FormValue("data")
@@ -321,6 +357,11 @@ func (a *ApiService) ResetTraffic(c *gin.Context) {
 		jsonMsg(c, "resetTraffic", err)
 		return
 	}
+	// The reset re-enables depleted clients. DepleteJob fanned the disable out
+	// to nodes, so fan the re-enable out too — otherwise nodes keep rejecting
+	// paid-up users until the hourly safety net.
+	a.NodeSyncService.MarkAllDirty()
+	go a.NodeSyncService.ReconcileDirtyOnline()
 	err := a.ConfigService.RestartCore()
 	jsonMsg(c, "resetTraffic", err)
 }

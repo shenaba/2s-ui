@@ -5,6 +5,7 @@ backup/
 bin/
 db/
 sui
+2s-ui
 web/html
 main
 tmp
@@ -34,3 +35,4 @@ windows/sui-*.exe
 # Claude Code local docs and config — keep out of the public repo.
 .claude/
 CLAUDE.md
+.mcp.json

@@ -13,6 +13,7 @@ type ResetTrafficJob struct {
 	service.ClientService
 	service.ConfigService
 	service.SettingService
+	service.NodeSyncService
 	schedule cron.Schedule
 }
 
@@ -42,6 +43,10 @@ func (s *ResetTrafficJob) Run() {
 		logger.Warning("ResetTrafficJob: reset all clients failed: ", err)
 		return
 	}
+	// The reset re-enables depleted clients; fan it out like DepleteJob's
+	// disable so nodes stop rejecting them before the hourly safety net.
+	s.NodeSyncService.MarkAllDirty()
+	go s.NodeSyncService.ReconcileDirtyOnline()
 
 	// Advance to the next boundary. schedule.Next returns the nearest upcoming
 	// occurrence, so if several periods were missed (e.g. downtime) it snaps

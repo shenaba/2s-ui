@@ -154,6 +154,7 @@ export default {
     resetTraffic: "重置流量",
     updatePanel: "更新面板",
     reset: "重置",
+    copyAll: "複製全部",
     adopt: "採納",
   },
   login: {

@@ -82,6 +82,18 @@ func normalizeCertPin(pin string) string {
 	return pin
 }
 
+// httpStatusError turns a node's non-200 into something diagnosable. 403 is
+// almost always the node's own DomainValidator rejecting the Host we dialed:
+// the panel answers only to its configured web domain, so an address entered as
+// a bare IP is refused before the token is ever read — and the empty body gives
+// the operator nothing to go on.
+func httpStatusError(status int) error {
+	if status == http.StatusForbidden {
+		return common.NewError("HTTP 403 from node panel — if it has a web domain configured, its address here must use that domain, not an IP")
+	}
+	return common.NewErrorf("HTTP %d from node panel", status)
+}
+
 func nodeApiURL(n *model.Node, action string) string {
 	return strings.TrimRight(n.BaseUrl, "/") + normalizeWebPath(n.WebPath) + "apiv2/" + action
 }
@@ -151,7 +163,7 @@ func (s *NodeService) nodeGet(n *model.Node, client *http.Client, action string,
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, common.NewErrorf("HTTP %d from node panel", resp.StatusCode)
+		return nil, httpStatusError(resp.StatusCode)
 	}
 	var msg struct {
 		Success bool            `json:"success"`
@@ -407,6 +419,15 @@ func (s *NodeService) Save(tx *gorm.DB, act string, data json.RawMessage) error 
 		if node.Token == "" {
 			return common.NewError("node API token is required")
 		}
+		// The name is the aggregated-link marker (see nodeLinkPrefix), so a
+		// bracket in it would make one node's prefix match another's links — the
+		// two would then strip and re-add each other's every reconcile. Only
+		// enforced on the name actually being introduced: a node created before
+		// this rule must stay editable (token, baseUrl, enable) without being
+		// forced through a rename it did not ask for.
+		if (act == "new" || oldName != node.Name) && strings.ContainsAny(node.Name, "[]") {
+			return common.NewError("node name cannot contain [ or ]")
+		}
 		err = tx.Save(&node).Error
 		if err != nil {
 			return err
@@ -455,8 +476,8 @@ func (s *NodeService) Save(tx *gorm.DB, act string, data json.RawMessage) error 
 // "[new] " across every client, so renaming a node doesn't orphan the external
 // links refreshNodeLinks emits under the node name. Runs in the node-save tx.
 func renameNodeLinkPrefix(tx *gorm.DB, oldName, newName string) error {
-	oldPrefix := "[" + oldName + "] "
-	newPrefix := "[" + newName + "] "
+	oldPrefix := nodeLinkPrefix(oldName)
+	newPrefix := nodeLinkPrefix(newName)
 	var clients []model.Client
 	if err := tx.Model(model.Client{}).Find(&clients).Error; err != nil {
 		return err

@@ -162,6 +162,15 @@
 
       <!-- ===================== Links ===================== -->
       <div v-else-if="tab === 'links'">
+        <!-- One copy for the whole set: proxy clients import a newline-separated
+             list, so copying row by row is the wrong unit of work. -->
+        <div v-if="allImportableLinks.length > 0" style="display: flex; align-items: center; margin-bottom: 10px;">
+          <SectionLabel>{{ $t('client.links') }}</SectionLabel>
+          <div style="flex: 1;" />
+          <Btn variant="subtle" sm @click="copyToClipboard(allImportableLinks.join('\n'))">
+            <Ico name="copy" :size="14" /> {{ $t('actions.copyAll') }}
+          </Btn>
+        </div>
         <template v-if="localLinks.length > 0">
           <div style="display: flex; flex-direction: column; gap: 7px; margin-bottom: 16px;">
             <div
@@ -172,6 +181,26 @@
               @click="copyToClipboard(lnk.uri)"
             >
               <span class="mono" style="color: var(--text-3); flex: none;">{{ i + 1 }}</span>
+              <span class="mono link-uri" dir="ltr">{{ lnk.uri }}</span>
+              <Ico name="copy" :size="13" style="color: var(--text-3); flex: none;" />
+            </div>
+          </div>
+          <hr class="form-divider" />
+        </template>
+
+        <!-- Node links are maintained by cluster reconciliation; shown read-only
+             because the server re-derives them and would revert any edit here. -->
+        <template v-if="nodeLinks.length > 0">
+          <SectionLabel style="margin-bottom: 10px;">{{ $t('pages.nodes') }}</SectionLabel>
+          <div style="display: flex; flex-direction: column; gap: 7px; margin-bottom: 16px;">
+            <div
+              v-for="(lnk, i) in nodeLinks"
+              :key="'node' + i"
+              class="link-row"
+              :title="$t('copyToClipboard')"
+              @click="copyToClipboard(lnk.uri)"
+            >
+              <span class="mono" style="color: var(--text-3); flex: none;">{{ lnk.remark }}</span>
               <span class="mono link-uri" dir="ltr">{{ lnk.uri }}</span>
               <Ico name="copy" :size="13" style="color: var(--text-3); flex: none;" />
             </div>
@@ -254,8 +283,22 @@ const loading = ref(false)
 const client = ref<Client>(createClient())
 const clientConfig = ref<any>({})
 const extLinks = ref<Link[]>([])
+const nodeLinks = ref<Link[]>([])
 const subLinks = ref<Link[]>([])
 const localLinks = computed(() => client.value.links?.filter((l) => l.type == 'local') ?? [])
+// Everything a proxy client can import as a node, in the order shown. External
+// subscriptions are left out: they are URLs to subscribe to, not node URIs.
+const allImportableLinks = computed(() => [
+  ...localLinks.value.map((l) => l.uri),
+  ...nodeLinks.value.map((l) => l.uri),
+  ...extLinks.value.map((l) => l.uri).filter((u) => u != ''),
+])
+// Node links are external links the server owns: reconciliation rewrites them
+// from each node's snapshot, and a save re-reads them from the row rather than
+// the payload. Editing one here would be reverted without a word, so they are
+// listed read-only alongside the local links instead of in the editable list.
+const isNodeOwned = (remark?: string) =>
+  !!remark && Data().nodes.some((n: any) => remark.startsWith(`[${n.name}] `))
 
 const tabs = computed((): [string, string][] => [
   ['general', t('ui.general')],
@@ -379,16 +422,23 @@ const percentColor = computed(() => {
   if (client.value.up + client.value.down >= client.value.volume) return 'var(--rose)'
   return percent.value > 90 ? 'var(--amber)' : 'var(--brand)'
 })
+// The server treats the traffic counters as its own and only accepts the ones a
+// request actually carries, so sending them is how a reset is expressed. This
+// flag is that intent: without it a drawer left open would save counters read
+// minutes ago and roll back everything the stats job recorded meanwhile.
+const didReset = ref(false)
 const resetUsage = () => {
   client.value.totalUp = (client.value.totalUp ?? 0) + client.value.up
   client.value.totalDown = (client.value.totalDown ?? 0) + client.value.down
   client.value.up = 0
   client.value.down = 0
+  didReset.value = true
 }
 
 // ---------- lifecycle / save (payload identical to legacy modals/Client.vue) ----------
 const updateData = async (id: number) => {
   tab.value = 'general'
+  didReset.value = false
   if (id > 0) {
     loading.value = true
     const newData = await Data().loadClients(id)
@@ -403,7 +453,9 @@ const updateData = async (id: number) => {
     clientConfig.value = randomConfigs('client')
   }
   // links are kept untouched and merged back into the payload on save
-  extLinks.value = client.value.links?.filter((l) => l.type == 'external') ?? []
+  extLinks.value =
+    client.value.links?.filter((l) => l.type == 'external' && !isNodeOwned(l.remark)) ?? []
+  nodeLinks.value = client.value.links?.filter((l) => l.type == 'external' && isNodeOwned(l.remark)) ?? []
   subLinks.value = client.value.links?.filter((l) => l.type == 'sub') ?? []
 }
 
@@ -422,7 +474,14 @@ const saveChanges = async () => {
     ...extLinks.value.filter((l) => l.uri != ''),
     ...subLinks.value.filter((l) => l.uri != ''),
   ]
-  const success = await Data().save('clients', props.id == 0 ? 'new' : 'edit', client.value)
+  const payload: any = { ...client.value }
+  if (!didReset.value) {
+    delete payload.up
+    delete payload.down
+    delete payload.totalUp
+    delete payload.totalDown
+  }
+  const success = await Data().save('clients', props.id == 0 ? 'new' : 'edit', payload)
   if (success) emit('close')
   loading.value = false
 }
@@ -433,6 +492,29 @@ watch(() => props.visible, (v) => {
 </script>
 
 <style scoped>
+/* Both read-only link lists (local and node) already used these class names;
+   they had no rule, so the rows rendered as one run-on line of text. */
+.link-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  cursor: pointer;
+}
+.link-row:hover {
+  background: var(--surface-3);
+}
+/* No truncation: these URIs get selected and pasted into proxy clients, so the
+   whole string has to stay visible and selectable. */
+.link-uri {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  word-break: break-all;
+}
 .access-head {
   display: flex;
   align-items: center;

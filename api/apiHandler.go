@@ -41,7 +41,12 @@ func (a *APIHandler) postHandler(c *gin.Context) {
 	case "changePass":
 		a.ApiService.ChangePass(c)
 	case "save":
-		a.ApiService.Save(c, loginUser, true)
+		hostname, err := a.ApiService.canonicalHost(c)
+		if err != nil {
+			jsonMsg(c, "", err)
+			return
+		}
+		a.ApiService.Save(c, loginUser, true, hostname)
 	case "adoptInbounds":
 		a.ApiService.AdoptInbounds(c, loginUser)
 	case "reconcileNode":

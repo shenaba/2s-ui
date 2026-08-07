@@ -155,6 +155,7 @@ export default {
     resetTraffic: "Сброс трафика",
     updatePanel: "Обновление панели",
     reset: "Сбросить",
+    copyAll: "Копировать все",
     adopt: "Принять",
   },
   login: {

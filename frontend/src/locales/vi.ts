@@ -154,6 +154,7 @@ export default {
     resetTraffic: "Đặt lại lưu lượng",
     updatePanel: "Cập nhật ứng dụng",
     reset: "Đặt lại",
+    copyAll: "Sao chép tất cả",
     adopt: "Nhận",
   },
   login: {

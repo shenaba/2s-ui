@@ -76,6 +76,13 @@ func (s *Server) initRouter() (*gin.Engine, error) {
 	}
 
 	if webDomain != "" {
+		// Pins every route, apiv2 included. Exempting apiv2 for masters dialing
+		// a node by IP was considered and rejected: TLS gets there first (the
+		// master sends no SNI, so an HTTPS node with a domain rejects the
+		// handshake outright), which leaves only the plain-HTTP-with-a-domain
+		// case — while the carve-out would cost an unpinned Host on every apiv2
+		// route. A node with a web domain must be dialed by that domain; when
+		// it is not, nodeGet/nodePost say so.
 		engine.Use(middleware.DomainValidator(webDomain))
 	}
 

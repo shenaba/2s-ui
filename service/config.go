@@ -267,7 +267,11 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 			data = redactNodeToken(data)
 		}
 	default:
-		return nil, common.NewError("unknown object: ", obj)
+		// Assign the named err: the deferred closure keys off it, and a fresh
+		// return value would leave it nil — committing the (empty) txn, waking
+		// the hub, and even starting a stopped core for a failed request.
+		err = common.NewError("unknown object: ", obj)
+		return nil, err
 	}
 	if err != nil {
 		return nil, err
