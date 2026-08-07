@@ -9,6 +9,8 @@ import (
 
 	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/database/model"
+
+	"gopkg.in/yaml.v3"
 )
 
 // setupSubDB gives each test its own sqlite file. The connection has to be
@@ -212,6 +214,71 @@ func TestGetJson_NoRoutesStillImports(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// Clash twin of TestGetJson_NoRoutesStillImports: a url-test group whose
+// proxies list is empty fails mihomo's config parse just as an empty urltest
+// fails sing-box's, so the default groups have to degrade — no Auto, and the
+// Proxy selector falling back to the built-in DIRECT.
+func TestGetClash_NoRoutesStillImports(t *testing.T) {
+	setupSubDB(t)
+	db := database.GetDB()
+
+	nodeId := uint(1)
+	replica := &model.Inbound{
+		Type: "vless", Tag: "vless-node", NodeId: &nodeId,
+		Addrs:   json.RawMessage(`[]`),
+		OutJson: json.RawMessage(replicaOutJson),
+		Options: json.RawMessage(`{}`),
+	}
+	if err := db.Create(replica).Error; err != nil {
+		t.Fatalf("seed replica: %v", err)
+	}
+	client := &model.Client{
+		Enable: true, Name: "subclashempty",
+		Config:   json.RawMessage(clientVlessConfig),
+		Inbounds: json.RawMessage(fmt.Sprintf(`[%d]`, replica.Id)),
+		Links:    json.RawMessage(`[]`), // reconcile has not run
+	}
+	if err := db.Create(client).Error; err != nil {
+		t.Fatalf("seed client: %v", err)
+	}
+
+	raw, _, err := (&ClashService{}).GetClash("subclashempty")
+	if err != nil {
+		t.Fatalf("GetClash: %v", err)
+	}
+
+	var cfg map[string]interface{}
+	if err := yaml.Unmarshal([]byte(*raw), &cfg); err != nil {
+		t.Fatalf("unmarshal clash yaml: %v", err)
+	}
+	groups, _ := cfg["proxy-groups"].([]interface{})
+	if len(groups) == 0 {
+		t.Fatalf("default groups must still be injected:\n%s", *raw)
+	}
+	var proxyGroup map[string]interface{}
+	for _, g := range groups {
+		gm, _ := g.(map[string]interface{})
+		if gm == nil {
+			continue
+		}
+		if gm["name"] == "Auto" {
+			t.Fatalf("Auto must not be emitted with no routes to probe:\n%s", *raw)
+		}
+		if proxies, _ := gm["proxies"].([]interface{}); len(proxies) == 0 {
+			t.Fatalf("group %v has an empty proxies list, which mihomo rejects:\n%s", gm["name"], *raw)
+		}
+		if gm["name"] == "Proxy" {
+			proxyGroup = gm
+		}
+	}
+	if proxyGroup == nil {
+		t.Fatalf("Proxy group missing:\n%s", *raw)
+	}
+	if proxies, _ := proxyGroup["proxies"].([]interface{}); len(proxies) != 1 || proxies[0] != "DIRECT" {
+		t.Fatalf("Proxy must fall back to the built-in DIRECT alone, got %v", proxies)
 	}
 }
 
