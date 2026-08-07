@@ -157,8 +157,8 @@ When adding new features, place code in the appropriate layer (handler → servi
 
 ### Current State
 
-- The project does not yet have a formal test suite (no `*_test.go` files in the repo).
-- CI currently focuses on **builds** (e.g. `release.yml`) rather than automated tests.
+- Unit tests live next to the code they cover (`*_test.go`, standard `testing` package).
+- Every PR runs `go vet`, `go build`, and `go test ./...` (the `backend` job in `.github/workflows/ci.yml`).
 
 ### What You Can Do Now
 
@@ -168,9 +168,15 @@ When adding new features, place code in the appropriate layer (handler → servi
    go build -ldflags "-w -s" -tags "with_quic,with_grpc,with_utls,with_acme,with_gvisor,with_tailscale" -o sui main.go
    ```
 
-2. **Manual testing**: Run with `./runSUI.sh`, test the changed area (panel, API, subscription, etc.).
+2. **Run the tests**: Same command CI uses — the tags and `-checklinkname=0` are both required for the test binaries to link:
 
-3. **Future tests**: Contributions that add **unit tests** (e.g. for `util/`, `service/`, or API handlers) or **integration tests** are very welcome. Prefer the standard library `testing` package and table-driven tests where appropriate.
+   ```bash
+   go test -tags "with_quic,with_grpc,with_utls,with_acme,with_gvisor,badlinkname,tfogo_checklinkname0,with_tailscale" -ldflags="-checklinkname=0" ./...
+   ```
+
+3. **Manual testing**: Run with `./runSUI.sh`, test the changed area (panel, API, subscription, etc.).
+
+4. **New tests**: Contributions that add **unit tests** (e.g. for `util/`, `service/`, or API handlers) or **integration tests** are very welcome. Prefer the standard library `testing` package and table-driven tests where appropriate.
 
 ### Running the Linter (optional)
 

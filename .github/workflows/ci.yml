@@ -7,9 +7,9 @@ name: CI
 # trigger at all, so a Dockerfile change stays ungated until a release.)
 #
 # Both jobs run on every PR rather than behind path filters. A Go-only PR pays a
-# vite build and an npm-only PR pays a Go build, which is a minute each and buys
-# the simpler thing: no filter to drift out of sync, and no skipped job to confuse
-# a required status check.
+# vite build and an npm-only PR pays a Go build plus tests, which is a few
+# minutes each and buys the simpler thing: no filter to drift out of sync, and no
+# skipped job to confuse a required status check.
 on:
   pull_request:
   push:
@@ -33,7 +33,7 @@ jobs:
     env:
       # Same tags release.yml uses for its non-naive platforms. The naive tags are
       # left out on purpose: they need the Chromium/cronet toolchain, which costs
-      # minutes to fetch and adds nothing to a compile gate.
+      # minutes to fetch and adds nothing to this gate.
       BUILD_TAGS: with_quic,with_grpc,with_utls,with_acme,with_gvisor,badlinkname,tfogo_checklinkname0,with_tailscale
     steps:
       # The frontend is not needed to compile the backend, so this job never
@@ -64,6 +64,13 @@ jobs:
       # "invalid reference to crypto/tls.(*Conn).handlePostHandshakeMessage".
       - name: Build
         run: go build -ldflags="-w -s -checklinkname=0" -tags "$BUILD_TAGS" -o /dev/null .
+
+      # Test binaries link the same sing-box internals as the panel, so they
+      # need the same tags and -checklinkname=0 as the build above. Tests that
+      # hit sqlite go through cgo; ubuntu-latest ships gcc, so nothing extra
+      # to install.
+      - name: Test
+        run: go test -tags "$BUILD_TAGS" -ldflags="-checklinkname=0" ./...
 
   # Lived in the frontend repo's own ci.yml until that repo was inlined here.
   # It has to stay a gate: nothing else builds the frontend before a release, so
