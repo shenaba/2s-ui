@@ -10,8 +10,10 @@ func TestNaiveLinkSchemesFollowNetwork(t *testing.T) {
 		network string
 		want    []string
 	}{
-		// A listener bound to one network can only be reached over the matching
-		// scheme, so offering the other one would hand out a dead link.
+		// The plain naive+ scheme has to match the listener's network, or the
+		// link is dead. The legacy http2:// form goes out either way, for
+		// clients that parse nothing else -- on a udp-only inbound that one is
+		// dead too, and kept anyway rather than diverging from upstream.
 		{"tcp", []string{"http2://", "naive+https://"}},
 		{"udp", []string{"http2://", "naive+quic://"}},
 
@@ -64,5 +66,30 @@ func TestNaiveLinkEscapesUserinfo(t *testing.T) {
 	const want = "naive+https://a%20b:p%40ss%2Fword@example.com:443"
 	if len(links) != 2 || !strings.HasPrefix(links[1], want) {
 		t.Errorf("got %v, want a link starting with %q", links, want)
+	}
+}
+
+func TestNaiveLinkRemarksDistinguishTransport(t *testing.T) {
+	links := naiveLink(
+		map[string]interface{}{"username": "u", "password": "p"},
+		map[string]interface{}{},
+		[]map[string]interface{}{{
+			"server":      "example.com",
+			"server_port": float64(443),
+			"remark":      "naive-in",
+		}},
+	)
+
+	// Three links for one address, so the plain ones say which transport they
+	// are. The legacy link keeps the bare remark: renaming it would read as a
+	// different node to a client that already has it.
+	want := []string{"#naive-in", "#naive-in-h2", "#naive-in-h3"}
+	if len(links) != len(want) {
+		t.Fatalf("got %d links %v, want %d", len(links), links, len(want))
+	}
+	for i, fragment := range want {
+		if !strings.HasSuffix(links[i], fragment) {
+			t.Errorf("link %d = %q, want suffix %q", i, links[i], fragment)
+		}
 	}
 }

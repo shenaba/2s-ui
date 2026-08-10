@@ -264,8 +264,16 @@ func naiveLink(
 		// a '+', which reads back as a literal '+' here.
 		userInfo := url.UserPassword(username, password).String()
 		for _, scheme := range schemes {
+			// Every link for one address would otherwise carry the same remark and
+			// reach the client as identically named nodes. Only the new ones get a
+			// suffix; the legacy link keeps its bare remark so it stays the same
+			// node for clients that already have it.
+			suffix := "-h2"
+			if scheme == "naive+quic" {
+				suffix = "-h3"
+			}
 			plainUri := fmt.Sprintf("%s://%s@%s:%.0f", scheme, userInfo, addr["server"].(string), port)
-			links = append(links, addParams(plainUri, params, addr["remark"].(string)))
+			links = append(links, addParams(plainUri, params, addr["remark"].(string)+suffix))
 		}
 	}
 	return links
