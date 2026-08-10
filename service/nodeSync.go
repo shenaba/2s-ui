@@ -66,6 +66,20 @@ func isNodeOwnedRemark(remark string, nodeNames []string) bool {
 	return false
 }
 
+// isNodeLinkFor reports whether a remark is the node-owned link for this exact
+// tag. Matching the whole "[<node>] <tag>" rather than prefix-plus-suffix keeps
+// a user-authored external link that merely looks the part — remark "[backup]
+// vless-in" on an unrelated entry — out of the blast radius when that tag's
+// inbound is deleted.
+func isNodeLinkFor(remark, tag string, nodeNames []string) bool {
+	for _, n := range nodeNames {
+		if remark == nodeLinkPrefix(n)+tag {
+			return true
+		}
+	}
+	return false
+}
+
 // refreshLinksMu serializes the read-modify-write of client.Links across nodes.
 // ReconcileDirtyOnline fans out one goroutine per dirty node and any client/inbound
 // save marks every node dirty, so two nodes' refreshNodeLinks can hit the SAME

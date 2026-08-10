@@ -471,6 +471,12 @@ func (s *ClientService) UpdateClientsOnInboundDelete(tx *gorm.DB, id uint, tag s
 	if err != nil {
 		return err
 	}
+	// Needed to recognise this inbound's node-owned links below; hoisted out of
+	// the loop since it does not vary per client.
+	var nodeNames []string
+	if err = tx.Model(model.Node{}).Pluck("name", &nodeNames).Error; err != nil {
+		return err
+	}
 	for _, client := range clients {
 		// Delete inbounds
 		var clientInbounds, newClientInbounds []uint
@@ -491,7 +497,7 @@ func (s *ClientService) UpdateClientsOnInboundDelete(tx *gorm.DB, id uint, tag s
 		json.Unmarshal(client.Links, &clientLinks)
 		for _, clientLink := range clientLinks {
 			remark := clientLink["remark"]
-			if remark == tag || (strings.HasPrefix(remark, "[") && strings.HasSuffix(remark, "] "+tag)) {
+			if remark == tag || isNodeLinkFor(remark, tag, nodeNames) {
 				continue
 			}
 			newClientLinks = append(newClientLinks, clientLink)
