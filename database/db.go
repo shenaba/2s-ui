@@ -59,7 +59,17 @@ func OpenDB(dbPath string) error {
 	// _cache_size=-200 caps each connection's page cache at ~200 KiB
 	// (default is ~2 MiB), reducing memory amplification if a connection
 	// escapes the pool.
-	dsn := dbPath + sep + "_busy_timeout=10000&_journal_mode=WAL&_cache_size=-200"
+	//
+	// _txlock=immediate makes every transaction take the write lock up front.
+	// Without it a deferred transaction that reads and then writes — which is
+	// what every read-modify-write here is, client.Links being the hottest —
+	// gets SQLITE_BUSY when another connection committed in between, and
+	// _busy_timeout does NOT cover that case: the busy handler is not invoked
+	// for a stale-snapshot conflict, so the transaction just fails. Taking the
+	// lock at BEGIN turns that into an ordinary lock wait, which _busy_timeout
+	// does cover. Every transaction in this codebase writes, so nothing pays
+	// for a write lock it does not need.
+	dsn := dbPath + sep + "_busy_timeout=10000&_journal_mode=WAL&_cache_size=-200&_txlock=immediate"
 	db, err = gorm.Open(sqlite.Open(dsn), c)
 	if err != nil {
 		return err
