@@ -93,6 +93,7 @@ export interface Trojan extends InboundBasics {
   transport?: Transport
 }
 export interface Naive extends InboundBasics {
+  network?: "udp" | "tcp"
   tls: iTls,
   quic_congestion_control?: "" | "bbr" | "bbr2" | "cubic" | "reno"
 }
