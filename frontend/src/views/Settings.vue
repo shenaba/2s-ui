@@ -991,8 +991,8 @@ const geositeList = [
 ]
 
 const geoList = [
-  { title: "Site-Private", value: "geoip-private" },
-  { title: "IP-Private", value: "geosite-private" },
+  { title: "Site-Private", value: "geosite-private" },
+  { title: "IP-Private", value: "geoip-private" },
   { title: "Site-Ads", value: "geosite-ads" },
   { title: "🇮🇷 Site-Iran", value: "geosite-ir" },
   { title: "🇮🇷 IP-Iran", value: "geoip-ir" },
