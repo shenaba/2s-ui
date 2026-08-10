@@ -65,6 +65,67 @@ func TestSaveNameCheckExemptsClusterPush(t *testing.T) {
 	})
 }
 
+// editbulk validates only the names that actually change: the SPA submits the
+// list projection back unchanged, so the ordinary path must not trip the check,
+// while an apiv2 caller can rename through here.
+func TestSaveEditbulkRenames(t *testing.T) {
+	db := newTestDB(t)
+	var svc ClientService
+
+	seed := func(name string) uint {
+		c := model.Client{
+			Name: name, Group: "user",
+			Inbounds: json.RawMessage(`[]`), Links: json.RawMessage(`[]`), Config: json.RawMessage(`{}`),
+		}
+		if err := db.Create(&c).Error; err != nil {
+			t.Fatalf("seed %q: %v", name, err)
+		}
+		return c.Id
+	}
+	idA, idB := seed("a"), seed("b")
+
+	row := func(id uint, name string) map[string]any {
+		return map[string]any{
+			"id": id, "name": name, "group": "user",
+			"inbounds": []uint{}, "links": []map[string]string{}, "config": map[string]any{},
+		}
+	}
+	editbulk := func(rows ...map[string]any) error {
+		data, err := json.Marshal(rows)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		_, err = svc.Save(db, "editbulk", data, "example.com")
+		return err
+	}
+
+	t.Run("rename onto an existing name is rejected", func(t *testing.T) {
+		if err := editbulk(row(idA, "b")); err == nil {
+			t.Error("rename onto a name another row holds was accepted")
+		}
+	})
+	// Neither row is committed yet, so the table cannot show this collision.
+	t.Run("two rows renamed to the same new name are rejected", func(t *testing.T) {
+		if err := editbulk(row(idA, "same"), row(idB, "same")); err == nil {
+			t.Error("batch-internal duplicate was accepted")
+		}
+	})
+	t.Run("unchanged names pass", func(t *testing.T) {
+		if err := editbulk(row(idA, "a"), row(idB, "b")); err != nil {
+			t.Errorf("the SPA's ordinary submit was rejected: %v", err)
+		}
+	})
+
+	// Nothing above may have renamed anything.
+	var names []string
+	if err := db.Model(model.Client{}).Order("id").Pluck("name", &names).Error; err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if len(names) != 2 || names[0] != "a" || names[1] != "b" {
+		t.Errorf("names changed by a rejected batch: %v", names)
+	}
+}
+
 // payloadFields is what separates a master's node push (omits the counters, so
 // they must be preserved) from the SPA's per-client Reset (sends zeroed ones,
 // which must be written). Getting it wrong either wipes a node's traffic
