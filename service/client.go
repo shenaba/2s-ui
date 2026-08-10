@@ -83,6 +83,31 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 		if err != nil {
 			return nil, err
 		}
+		if act == "edit" {
+			// Only a name actually changing is validated, so a duplicate that
+			// predates this check stays editable on its other fields — same
+			// stance as the node-name bracket rule.
+			var oldName string
+			if err = tx.Model(model.Client{}).Select("name").
+				Where("id = ?", client.Id).Scan(&oldName).Error; err != nil {
+				return nil, err
+			}
+			if oldName != client.Name {
+				if err = s.ensureNameAvailable(tx, client.Name, client.Id); err != nil {
+					return nil, err
+				}
+			}
+		} else if client.Group != clusterGroup {
+			// A cluster push is exempt: runReconcile aborts the WHOLE round on a
+			// failed push, so one name a node happens to use locally would stop
+			// that node syncing entirely — a worse failure than the duplicate
+			// this check exists to prevent. A same-group duplicate cannot reach
+			// here anyway: actualClusterClients would have found it and the
+			// master would be pushing an edit instead of a new.
+			if err = s.ensureNameAvailable(tx, client.Name, 0); err != nil {
+				return nil, err
+			}
+		}
 		if err = setConfigIdentity(&client); err != nil {
 			return nil, err
 		}
@@ -117,6 +142,26 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 			return nil, err
 		}
 		now := time.Now().Unix()
+		// Name check for the whole batch in one query rather than per client —
+		// this path imports hundreds at a time. `seen` covers duplicates within
+		// the batch, which the table cannot show: none of them are committed yet.
+		names := make([]string, 0, len(clients))
+		seen := make(map[string]bool, len(clients))
+		for _, client := range clients {
+			if seen[client.Name] {
+				return nil, common.NewErrorf("duplicate client name in this batch: %q", client.Name)
+			}
+			seen[client.Name] = true
+			names = append(names, client.Name)
+		}
+		var taken []string
+		if err = tx.Model(model.Client{}).Where("name in ?", names).
+			Pluck("name", &taken).Error; err != nil {
+			return nil, err
+		}
+		if len(taken) > 0 {
+			return nil, common.NewErrorf("client name %q already exists", taken[0])
+		}
 		for _, client := range clients {
 			if err = setConfigIdentity(client); err != nil {
 				return nil, err
@@ -141,6 +186,45 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 		err = json.Unmarshal(data, &clients)
 		if err != nil {
 			return nil, err
+		}
+		// Renames are validated as a batch — one query for the stored names,
+		// then a conflict check only for the ones actually changing. The SPA
+		// never renames through this path (it submits the list projection
+		// unchanged), so the common case costs a single extra query.
+		ids := make([]uint, 0, len(clients))
+		for _, client := range clients {
+			if client.Id != 0 {
+				ids = append(ids, client.Id)
+			}
+		}
+		oldNameById := make(map[uint]string, len(ids))
+		if len(ids) > 0 {
+			var stored []struct {
+				Id   uint
+				Name string
+			}
+			if err = tx.Model(model.Client{}).Select("id", "name").
+				Where("id in ?", ids).Scan(&stored).Error; err != nil {
+				return nil, err
+			}
+			for _, row := range stored {
+				oldNameById[row.Id] = row.Name
+			}
+		}
+		renamedTo := make(map[string]bool)
+		for _, client := range clients {
+			if oldNameById[client.Id] == client.Name {
+				continue
+			}
+			// Two rows renamed to the same new name would both pass the DB
+			// check — neither is committed yet.
+			if renamedTo[client.Name] {
+				return nil, common.NewErrorf("duplicate client name in this batch: %q", client.Name)
+			}
+			renamedTo[client.Name] = true
+			if err = s.ensureNameAvailable(tx, client.Name, client.Id); err != nil {
+				return nil, err
+			}
 		}
 		for _, client := range clients {
 			changedInboundIds, err := s.findInboundsChanges(tx, client, true)
@@ -216,6 +300,29 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 	}
 
 	return inboundIds, nil
+}
+
+// ensureNameAvailable rejects a duplicate client name. The name is the cluster's
+// identity key — expectedClients and actualClusterClients both map by it — so two
+// clients sharing one means only ever syncing whichever the map iteration kept,
+// silently and forever. There is no unique index to lean on (the column predates
+// the cluster feature and existing installs may already hold duplicates), and the
+// only guard until now was the SPA's own check, which apiv2 callers bypass. Same
+// loud-failure stance as the adoption tag-collision check. excludeId skips the row
+// being edited; pass 0 for a create.
+func (s *ClientService) ensureNameAvailable(tx *gorm.DB, name string, excludeId uint) error {
+	q := tx.Model(model.Client{}).Where("name = ?", name)
+	if excludeId != 0 {
+		q = q.Where("id <> ?", excludeId)
+	}
+	var count int64
+	if err := q.Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return common.NewErrorf("client name %q already exists", name)
+	}
+	return nil
 }
 
 // preserveServerManagedFields restores columns the server owns from the stored
