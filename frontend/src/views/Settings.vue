@@ -1235,8 +1235,15 @@ const updateRuleSets = () => {
   const tags = <string[]>[]
   if ((dns.value?.rules?.length ?? 0) > 0) dns.value.rules.forEach((r: any) => { if (r.rule_set) tags.push(...r.rule_set) })
   if ((rules.value?.length ?? 0) > 0) rules.value.forEach((r: any) => { if (r.rule_set) tags.push(...r.rule_set) })
-  if (tags.length > 0) {
-    subJsonExt.value.rule_set = geo.filter((g: any) => tags.includes(g.tag))
+  // The list is rebuilt from the selectors, so anything the operator added by
+  // hand in the JSON editor has to be carried over or a single chip click
+  // silently drops it.
+  const custom = (subJsonExt.value?.rule_set ?? []).filter((rs: any) => !geo.some((g: any) => g.tag == rs.tag))
+  if (tags.length > 0 || custom.length > 0) {
+    subJsonExt.value.rule_set = [
+      ...geo.filter((g: any) => tags.includes(g.tag)),
+      ...custom,
+    ]
   } else {
     delete subJsonExt.value.rule_set
   }
