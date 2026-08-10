@@ -59,21 +59,6 @@
 
 ## Install & Upgrade to Latest Version
 
-### From the panel (upgrades only)
-
-Your browser checks GitHub for new releases on every page load and flags one on
-the version pill in the sidebar — that check is client-side, so the panel host
-itself does not need to reach GitHub for the chip to appear. Installing is
-server-side: on Linux — bare metal under systemd, or Docker — one click has the
-panel download the release, verify it against the published `SHA256SUMS`,
-smoke-test the new binary, then replace it in place and restart. No SSH, no
-install script.
-
-> On Windows a running `.exe` cannot replace itself, so the pill only links to
-> the release page. In Docker the new binary lives in the container's writable
-> layer: it survives `docker restart`, but recreating the container reverts to
-> the image's version — pull a new image to make it stick.
-
 ### Linux/macOS
 ```sh
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
@@ -95,6 +80,19 @@ SUI_LANG=zhcn bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/ma
 2. Extract the ZIP file
 3. Run `install-windows.bat` as Administrator
 4. Follow the installation wizard
+
+### Upgrading from the panel
+
+Once installed, new releases are flagged on the version pill in the sidebar —
+the check is client-side, so the panel host itself does not need to reach
+GitHub. On Linux (systemd or Docker) one click upgrades in place: the panel
+downloads the release, verifies it against the published `SHA256SUMS`,
+smoke-tests the new binary, then replaces it and restarts. No SSH.
+
+> A running `.exe` cannot replace itself, so on Windows the pill only links to
+> the release page. In Docker the new binary lives in the container's writable
+> layer: it survives `docker restart`, but recreating the container reverts to
+> the image's version — pull a new image to make it stick.
 
 ## Install legacy Version
 

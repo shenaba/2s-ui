@@ -59,17 +59,6 @@
 
 ## 安装或升级到最新版本
 
-### 在面板内更新（仅限升级）
-
-每次加载页面时，**浏览器**会检查 GitHub 上的新版本，并在侧边栏的版本标签上提示 ——
-这一步在客户端完成，所以面板所在的服务器不用能访问 GitHub 也会显示提示。安装则在服务端：
-在 Linux 上（裸机需 systemd，Docker 也可以）点一下，面板就会下载新版本，用官方发布的
-`SHA256SUMS` 校验，先试跑一次新二进制，再原地替换并重启。不用 SSH，也不用跑安装脚本。
-
-> Windows 上运行中的 `.exe` 无法自我替换，版本标签只会跳转到 release 页面。
-> Docker 里新二进制写在容器可写层：`docker restart` 后仍在，但重建容器会退回镜像
-> 自带的版本——想长期生效请拉取新镜像。
-
 ### Linux/macOS
 ```sh
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
@@ -88,6 +77,16 @@ SUI_LANG=zhcn bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/ma
 2. 解压 ZIP 文件
 3. 以管理员身份运行 `install-windows.bat`
 4. 按安装向导操作
+
+### 在面板内升级
+
+装好之后，有新版本会在侧边栏的版本标签上提示 —— 检查在浏览器端完成，所以面板所在的服务器
+访问不了 GitHub 也会提示。Linux 上（systemd 或 Docker）点一下即可原地升级：面板会下载新
+版本，用官方发布的 `SHA256SUMS` 校验，先试跑一次新二进制，再替换并重启。不用 SSH。
+
+> Windows 上运行中的 `.exe` 无法自我替换，版本标签只会跳转到 release 页面。
+> Docker 里新二进制写在容器可写层：`docker restart` 后仍在，但重建容器会退回镜像
+> 自带的版本——想长期生效请拉取新镜像。
 
 ## 安装历史版本
 

@@ -59,20 +59,6 @@
 
 ## Cài đặt và nâng cấp lên phiên bản mới nhất
 
-### Ngay trong bảng điều khiển (chỉ để nâng cấp)
-
-Mỗi lần tải trang, **trình duyệt** kiểm tra bản phát hành mới trên GitHub và báo lên
-nhãn phiên bản ở thanh bên — bước này chạy ở phía client, nên máy chủ đặt bảng điều
-khiển không cần truy cập được GitHub thì thông báo vẫn hiện. Việc cài đặt thì ở phía
-máy chủ: trên Linux (máy chủ thường cần systemd, hoặc Docker) chỉ một cú nhấp là bảng
-điều khiển tải bản phát hành về, đối chiếu với `SHA256SUMS` đã công bố, chạy thử binary
-mới rồi thay thế tại chỗ và khởi động lại. Không cần SSH, không cần script cài đặt.
-
-> Trên Windows, một `.exe` đang chạy không thể tự thay thế chính nó, nên nhãn
-> phiên bản chỉ dẫn tới trang release. Trong Docker, binary mới nằm ở lớp ghi được
-> của container: nó sống sót qua `docker restart`, nhưng tạo lại container sẽ quay
-> về phiên bản của image — hãy pull image mới để giữ lâu dài.
-
 ### Linux/macOS
 ```sh
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
@@ -93,6 +79,19 @@ SUI_LANG=vi bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main
 2. Giải nén tệp ZIP
 3. Chạy `install-windows.bat` với quyền Administrator
 4. Làm theo trình hướng dẫn cài đặt
+
+### Nâng cấp ngay trong bảng điều khiển
+
+Sau khi cài đặt, bản phát hành mới sẽ được báo lên nhãn phiên bản ở thanh bên —
+việc kiểm tra do trình duyệt thực hiện, nên máy chủ đặt bảng điều khiển không cần
+truy cập được GitHub. Trên Linux (systemd hoặc Docker), chỉ một cú nhấp là nâng
+cấp tại chỗ: bảng điều khiển tải bản phát hành về, đối chiếu với `SHA256SUMS` đã
+công bố, chạy thử binary mới rồi thay thế và khởi động lại. Không cần SSH.
+
+> Trên Windows, một `.exe` đang chạy không thể tự thay thế chính nó, nên nhãn
+> phiên bản chỉ dẫn tới trang release. Trong Docker, binary mới nằm ở lớp ghi được
+> của container: nó sống sót qua `docker restart`, nhưng tạo lại container sẽ quay
+> về phiên bản của image — hãy pull image mới để giữ lâu dài.
 
 ## Cài đặt phiên bản cũ
 
