@@ -1240,10 +1240,15 @@ const updateRuleSets = () => {
   // silently drops it. That editor takes any JSON, so the stored value is not
   // necessarily an array.
   const existing = subJsonExt.value?.rule_set
-  const custom = Array.isArray(existing) ? existing.filter((rs: any) => !geo.some((g: any) => g.tag == rs.tag)) : []
+  const list: any[] = Array.isArray(existing) ? existing : []
+  const byTag = new Map(list.map((rs: any) => [rs.tag, rs]))
+  const custom = list.filter((rs: any) => !geo.some((g: any) => g.tag == rs.tag))
   if (tags.length > 0 || custom.length > 0) {
     subJsonExt.value.rule_set = [
-      ...geo.filter((g: any) => tags.includes(g.tag)),
+      // A catalog entry the operator already edited wins over the catalog --
+      // swapping the jsDelivr URL for a mirror has to survive a chip click.
+      // The trade-off is that later catalog fixes no longer reach them.
+      ...geo.filter((g: any) => tags.includes(g.tag)).map((g: any) => byTag.get(g.tag) ?? g),
       ...custom,
     ]
   } else {
