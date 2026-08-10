@@ -1237,8 +1237,10 @@ const updateRuleSets = () => {
   if ((rules.value?.length ?? 0) > 0) rules.value.forEach((r: any) => { if (r.rule_set) tags.push(...r.rule_set) })
   // The list is rebuilt from the selectors, so anything the operator added by
   // hand in the JSON editor has to be carried over or a single chip click
-  // silently drops it.
-  const custom = (subJsonExt.value?.rule_set ?? []).filter((rs: any) => !geo.some((g: any) => g.tag == rs.tag))
+  // silently drops it. That editor takes any JSON, so the stored value is not
+  // necessarily an array.
+  const existing = subJsonExt.value?.rule_set
+  const custom = Array.isArray(existing) ? existing.filter((rs: any) => !geo.some((g: any) => g.tag == rs.tag)) : []
   if (tags.length > 0 || custom.length > 0) {
     subJsonExt.value.rule_set = [
       ...geo.filter((g: any) => tags.includes(g.tag)),
