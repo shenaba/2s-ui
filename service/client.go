@@ -3,7 +3,6 @@ package service
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"strings"
 	"time"
 
@@ -230,12 +229,12 @@ func (s *ClientService) preserveServerManagedFields(tx *gorm.DB, client *model.C
 	var existing model.Client
 	err := tx.Model(model.Client{}).Select("created_at", "online_at", "up", "down", "total_up", "total_down").
 		Where("id = ?", client.Id).First(&existing).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil
-	}
 	if err != nil {
-		// Not just "no such row": failing open here would write the payload's
-		// zeroed counters and destroy the node's traffic history.
+		// ErrRecordNotFound included, deliberately: failing open here would write
+		// the payload's zeroed counters and destroy the node's traffic history,
+		// and an edit whose row vanished has nothing to preserve onto anyway.
+		// Both callers load the row via findInboundsChanges first, so in practice
+		// this only fires on a concurrent delete.
 		return err
 	}
 	client.CreatedAt = existing.CreatedAt
@@ -323,6 +322,34 @@ func (s *ClientService) updateLinksWithFixedInbounds(tx *gorm.DB, clients []*mod
 		}
 	}
 
+	// Stored links for the existing clients, in one query rather than one per
+	// client — editbulk submits the whole selection through here. An id missing
+	// from the map is a row that vanished concurrently: nothing to re-attach.
+	storedLinksById := map[uint]json.RawMessage{}
+	if len(nodeNames) > 0 {
+		var ids []uint
+		for _, client := range clients {
+			if client.Id != 0 {
+				ids = append(ids, client.Id)
+			}
+		}
+		if len(ids) > 0 {
+			var rows []struct {
+				Id    uint
+				Links json.RawMessage
+			}
+			if err := tx.Model(model.Client{}).Select("id", "links").
+				Where("id in ?", ids).Scan(&rows).Error; err != nil {
+				// Failing open would persist the list with every node link
+				// stripped — the exact loss this re-attach exists to prevent.
+				return err
+			}
+			for _, r := range rows {
+				storedLinksById[r.Id] = r.Links
+			}
+		}
+	}
+
 	for index, client := range clients {
 		var clientLinks []map[string]string
 		if err := json.Unmarshal(client.Links, &clientLinks); err != nil {
@@ -360,41 +387,29 @@ func (s *ClientService) updateLinksWithFixedInbounds(tx *gorm.DB, clients []*mod
 			}
 			newClientLinks = append(newClientLinks, clientLink)
 		}
-		if reattach {
-			var stored model.Client
-			err := tx.Model(model.Client{}).Select("links").
-				Where("id = ?", client.Id).First(&stored).Error
-			switch {
-			case errors.Is(err, gorm.ErrRecordNotFound):
-				// Concurrently deleted; there is nothing to re-attach.
-			case err != nil:
-				// Failing open would persist the list with every node link
-				// stripped — the exact loss this re-attach exists to prevent.
+		if stored := storedLinksById[client.Id]; reattach && len(stored) > 0 {
+			var storedLinks []map[string]string
+			if err := json.Unmarshal(stored, &storedLinks); err != nil {
 				return err
-			case len(stored.Links) > 0:
-				var storedLinks []map[string]string
-				if err := json.Unmarshal(stored.Links, &storedLinks); err != nil {
-					return err
+			}
+			keptTags := map[string]bool{}
+			for _, id := range clientInboundIds[index] {
+				if tag, ok := replicaTagById[id]; ok {
+					keptTags[tag] = true
 				}
-				keptTags := map[string]bool{}
-				for _, id := range clientInboundIds[index] {
-					if tag, ok := replicaTagById[id]; ok {
-						keptTags[tag] = true
-					}
+			}
+			for _, l := range storedLinks {
+				// type must be checked too: a local inbound tagged like a
+				// node prefix is regenerated above, and re-appending the
+				// stored copy would duplicate it once per save, forever.
+				if l["type"] == "local" || !isNodeOwnedRemark(l["remark"], nodeNames) {
+					continue
 				}
-				for _, l := range storedLinks {
-					// type must be checked too: a local inbound tagged like a
-					// node prefix is regenerated above, and re-appending the
-					// stored copy would duplicate it once per save, forever.
-					if l["type"] == "local" || !isNodeOwnedRemark(l["remark"], nodeNames) {
-						continue
-					}
-					sep := strings.Index(l["remark"], "] ")
-					if sep < 0 || !keptTags[l["remark"][sep+2:]] {
-						continue // inbound no longer bound to this client
-					}
-					newClientLinks = append(newClientLinks, l)
+				sep := strings.Index(l["remark"], "] ")
+				if sep < 0 || !keptTags[l["remark"][sep+2:]] {
+					continue // inbound no longer bound to this client
 				}
+				newClientLinks = append(newClientLinks, l)
 			}
 		}
 

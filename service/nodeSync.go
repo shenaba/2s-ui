@@ -599,6 +599,13 @@ func clientDiffers(want map[string]interface{}, cur nodeClientState) bool {
 	// yields on either end. The cost of a false "differs" is a re-push per client
 	// per round, each writing a credential-bearing changes row that nothing
 	// prunes, so treat absence as "cannot compare", not as "differs".
+	//
+	// The price of that choice: a node-side config that was CLEARED (someone
+	// edited an @cluster client in the node's own UI) reads as "cannot compare"
+	// too, so the safety net will not repair it — this diff self-heals a changed
+	// config, not a deleted one. Comparing whenever either side has a config
+	// would cover it, at the cost of re-pushing every client every round against
+	// any node too old to return the column.
 	wantConfig, _ := want["config"].(json.RawMessage)
 	if len(wantConfig) > 0 && len(cur.Config) > 0 && !jsonEqual(wantConfig, cur.Config) {
 		return true
