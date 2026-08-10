@@ -376,8 +376,16 @@ const toggleEnable = async (c: any) => {
   try {
     const full = await Data().loadClients(c.id)
     if (full?.id) {
-      full.enable = !c.enable
-      await Data().save('clients', 'edit', full)
+      // The counters are server-owned and only the ones a request carries are
+      // taken as authoritative, so sending the values read a moment ago would
+      // roll back whatever the stats job recorded in between. Same rule as the
+      // drawer, which sends them only when Reset was actually clicked.
+      const payload: any = { ...full, enable: !c.enable }
+      delete payload.up
+      delete payload.down
+      delete payload.totalUp
+      delete payload.totalDown
+      await Data().save('clients', 'edit', payload)
     }
   } finally {
     toggling.value = { ...toggling.value, [c.id]: false }
