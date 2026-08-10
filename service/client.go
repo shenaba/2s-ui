@@ -555,14 +555,17 @@ func (s *ClientService) UpdateLinksByInboundChange(tx *gorm.DB, inbounds *[]mode
 }
 
 // DepleteClients disables clients over quota or past expiry and returns both
-// the affected local inbound ids (to hot-restart) and the disabled client names
-// (so the caller can fan the disable out to nodes). With cluster totals folded
-// into up/down, the quota check is already a whole-cluster judgement.
+// the affected local inbound ids (to hot-restart) and the names whose enable
+// state changed, so the caller can fan those out to nodes. That second list
+// covers BOTH directions: the depletion disable below and the periodic reset's
+// re-enable inside ResetClients — a round that only re-enables still has to
+// reach the nodes, or they keep rejecting a paid-up user. With cluster totals
+// folded into up/down, the quota check is already a whole-cluster judgement.
 func (s *ClientService) DepleteClients() ([]uint, []string, error) {
 	var err error
 	var clients []model.Client
 	var changes []model.Changes
-	var users []string
+	var enableChanged []string
 	var inboundIds []uint
 
 	dt := time.Now().Unix()
@@ -583,7 +586,7 @@ func (s *ClientService) DepleteClients() ([]uint, []string, error) {
 	}()
 
 	// Reset clients
-	inboundIds, err = s.ResetClients(tx, dt)
+	inboundIds, enableChanged, err = s.ResetClients(tx, dt)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -596,7 +599,7 @@ func (s *ClientService) DepleteClients() ([]uint, []string, error) {
 
 	for _, client := range clients {
 		logger.Debug("Client ", client.Name, " is going to be disabled")
-		users = append(users, client.Name)
+		enableChanged = append(enableChanged, client.Name)
 		var userInbounds []uint
 		json.Unmarshal(client.Inbounds, &userInbounds)
 		// Find changed inbounds
@@ -623,19 +626,24 @@ func (s *ClientService) DepleteClients() ([]uint, []string, error) {
 		MarkLastUpdate(dt)
 	}
 
-	return inboundIds, users, nil
+	return inboundIds, enableChanged, nil
 }
 
-func (s *ClientService) ResetClients(tx *gorm.DB, dt int64) ([]uint, error) {
+// ResetClients applies the per-client periodic reset. It returns the affected
+// local inbound ids (to hot-restart) and the names it re-enabled, which the
+// caller has to fan out to nodes for the same reason DepleteJob fans out a
+// disable: the node keeps rejecting a paid-up user until it hears otherwise.
+func (s *ClientService) ResetClients(tx *gorm.DB, dt int64) ([]uint, []string, error) {
 	var err error
 	var resetClients, allClients []*model.Client
 	var changes []model.Changes
 	var inboundIds []uint
+	var reenabled []string
 	// Set delay start without periodic reset
 	err = tx.Model(model.Client{}).
 		Where("enable = true AND delay_start = true AND auto_reset = false AND (Up + Down) > 0").Find(&resetClients).Error
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, client := range resetClients {
 		client.Expiry = dt + (int64(client.ResetDays) * 86400)
@@ -654,7 +662,7 @@ func (s *ClientService) ResetClients(tx *gorm.DB, dt int64) ([]uint, error) {
 	err = tx.Model(model.Client{}).
 		Where("enable = true AND delay_start = true AND auto_reset = true AND (Up + Down) > 0").Find(&resetClients).Error
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, client := range resetClients {
 		client.NextReset = dt + (int64(client.ResetDays) * 86400)
@@ -673,7 +681,7 @@ func (s *ClientService) ResetClients(tx *gorm.DB, dt int64) ([]uint, error) {
 	err = tx.Model(model.Client{}).
 		Where("delay_start = false AND auto_reset = true AND next_reset < ?", dt).Find(&resetClients).Error
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, client := range resetClients {
 		client.NextReset = dt + (int64(client.ResetDays) * 86400)
@@ -683,6 +691,7 @@ func (s *ClientService) ResetClients(tx *gorm.DB, dt int64) ([]uint, error) {
 		client.Down = 0
 		if !client.Enable {
 			client.Enable = true
+			reenabled = append(reenabled, client.Name)
 			var clientInboundIds []uint
 			json.Unmarshal(client.Inbounds, &clientInboundIds)
 			inboundIds = common.UnionUintArray(inboundIds, clientInboundIds)
@@ -694,7 +703,7 @@ func (s *ClientService) ResetClients(tx *gorm.DB, dt int64) ([]uint, error) {
 	if len(allClients) > 0 {
 		err = tx.Save(allClients).Error
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -702,11 +711,11 @@ func (s *ClientService) ResetClients(tx *gorm.DB, dt int64) ([]uint, error) {
 	if len(changes) > 0 {
 		err = tx.Model(model.Changes{}).Create(&changes).Error
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		MarkLastUpdate(dt)
 	}
-	return inboundIds, nil
+	return inboundIds, reenabled, nil
 }
 
 // ResetAllClientsTraffic zeroes up/down for every client (accumulating into the

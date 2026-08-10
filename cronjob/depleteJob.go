@@ -17,7 +17,7 @@ func NewDepleteJob() *DepleteJob {
 }
 
 func (s *DepleteJob) Run() {
-	inboundIds, disabled, err := s.ClientService.DepleteClients()
+	inboundIds, enableChanged, err := s.ClientService.DepleteClients()
 	if err != nil {
 		logger.Warning("Disable depleted users failed: ", err)
 		return
@@ -30,9 +30,12 @@ func (s *DepleteJob) Run() {
 			logger.Error("unable to update inbound users: ", err)
 		}
 	}
-	// Fan the disable out to nodes: reconcile sees enable=false in the expected
-	// set and pushes an edit; the node then hot-restarts and drops connections.
-	if len(disabled) > 0 {
+	// Fan the new enable state out to nodes: reconcile sees it in the expected
+	// set and pushes an edit; the node then hot-restarts and drops (or readmits)
+	// connections. Both directions have to go — a round that only re-enabled
+	// auto-reset clients still leaves the nodes rejecting paid-up users until
+	// the hourly safety net.
+	if len(enableChanged) > 0 {
 		s.NodeSyncService.MarkAllDirty()
 		go s.NodeSyncService.ReconcileDirtyOnline()
 	}
