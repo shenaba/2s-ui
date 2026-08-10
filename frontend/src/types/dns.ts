@@ -55,8 +55,11 @@ const defaultValues: Record<DnsType, DnsServer> = {
 export function createDnsServer<T extends DnsServer>(type: string, json?: Partial<T>): DnsServer {
   // Deep copy: a shallow spread hands every new server the very same nested
   // objects (tls, headers, path), so filling in one form rewrites the defaults
-  // the next one starts from.
-  const defaultObject: DnsServer = { ...JSON.parse(JSON.stringify(defaultValues[type] ?? {})), ...(json || {}) }
+  // the next one starts from. The clone is annotated because spreading
+  // JSON.parse's `any` would make the literal `any` too and stop TypeScript
+  // from checking it.
+  const base: DnsServer = JSON.parse(JSON.stringify(defaultValues[type] ?? {}))
+  const defaultObject: DnsServer = { ...base, ...(json || {}) }
   return defaultObject
 }
 

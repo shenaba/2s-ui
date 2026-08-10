@@ -243,7 +243,10 @@ const defaultValues: Record<InType, Inbound> = {
 export function createInbound<T extends Inbound>(type: InType,json?: Partial<T>): Inbound {
   // Deep copy: a shallow spread hands every new inbound the very same nested
   // objects (handshake, transport, padding_scheme), so filling in one form
-  // rewrites the defaults the next one starts from.
-  const defaultObject: Inbound = { ...JSON.parse(JSON.stringify(defaultValues[type] ?? {})), ...(json ?? {}) }
+  // rewrites the defaults the next one starts from. The clone is annotated
+  // because spreading JSON.parse's `any` would make the literal `any` too and
+  // stop TypeScript from checking it.
+  const base: Inbound = JSON.parse(JSON.stringify(defaultValues[type] ?? {}))
+  const defaultObject: Inbound = { ...base, ...(json ?? {}) }
   return defaultObject
 }

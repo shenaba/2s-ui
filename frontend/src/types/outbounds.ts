@@ -269,7 +269,10 @@ const defaultValues: Record<OutType, Outbound> = {
 export function createOutbound<T extends Outbound>(type: string,json?: Partial<T>): Outbound {
   // Deep copy: a shallow spread hands every new outbound the very same nested
   // objects (tls, multiplex, transport, torrc), so filling in one form rewrites
-  // the defaults the next one starts from.
-  const defaultObject: Outbound = { ...JSON.parse(JSON.stringify(defaultValues[type] ?? {})), ...(json || {}) }
+  // the defaults the next one starts from. The clone is annotated because
+  // spreading JSON.parse's `any` would make the literal `any` too and stop
+  // TypeScript from checking it.
+  const base: Outbound = JSON.parse(JSON.stringify(defaultValues[type] ?? {}))
+  const defaultObject: Outbound = { ...base, ...(json || {}) }
   return defaultObject
 }
