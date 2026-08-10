@@ -72,6 +72,9 @@ const defaultValues: Record<SrvType, Srv> = {
 }
 
 export function createSrv<T extends Srv>(type: string, json?: Partial<T>): Srv {
-  const defaultObject: Srv = { ...defaultValues[type], ...(json || {}) }
+  // Deep copy: a shallow spread hands every new service the very same nested
+  // servers and users containers, so filling in one form rewrites the defaults
+  // the next one starts from.
+  const defaultObject: Srv = { ...JSON.parse(JSON.stringify(defaultValues[type] ?? {})), ...(json || {}) }
   return defaultObject
 }

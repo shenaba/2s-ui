@@ -53,7 +53,10 @@ const defaultValues: Record<DnsType, DnsServer> = {
   resolved: { type: 'resolved' },
 }
 export function createDnsServer<T extends DnsServer>(type: string, json?: Partial<T>): DnsServer {
-  const defaultObject: DnsServer = { ...defaultValues[type], ...(json || {}) }
+  // Deep copy: a shallow spread hands every new server the very same nested
+  // objects (tls, headers, path), so filling in one form rewrites the defaults
+  // the next one starts from.
+  const defaultObject: DnsServer = { ...JSON.parse(JSON.stringify(defaultValues[type] ?? {})), ...(json || {}) }
   return defaultObject
 }
 
