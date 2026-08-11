@@ -13,6 +13,51 @@
 
 **如果你觉得这个项目有帮助，可以给一个** :star2:
 
+## 功能
+
+- **多协议**入站、出站与 Endpoints，并提供高级流量路由界面（PROXY Protocol、External、
+  Transparent Proxy、SSL Certificate 和 Port）
+- **一个客户端可跨多个入站**，支持流量限制、到期时间，并可直接在列表中启用或禁用
+- **用户热更新** —— 增删改客户端时原地更新入站的用户表，不再重建监听器，其余用户不会掉线
+- **订阅服务** —— 支持 `link` / `json` / `clash` 格式并附带用量信息，也可并入外部链接
+- **多节点集群** —— 监控其他 2S-UI 面板、跨节点共享用户，并把各节点线路合并进同一条
+  订阅（[详见下文](#多节点集群)）
+- **HTTPS 自动化** —— 自动签发并续期 Let's Encrypt 证书，还能自动生成 nginx 反向代理
+  （[详见下文](#域名与证书)）
+- **面板内一键更新** —— 基于校验和验证的 GitHub Release
+- 展示在线客户端、入站/出站流量统计和系统状态监控
+- 深色/浅色主题、六种语言，以及 [HTTP API](https://github.com/shenaba/2s-ui/wiki/API-Documentation)
+
+<details>
+  <summary>支持的协议</summary>
+
+- 通用协议：Mixed, SOCKS, HTTP/HTTPS, Direct, Tun, Redirect, TProxy
+- V2Ray 系列：VLESS, VMess, Trojan, Shadowsocks（支持 `plugin` / `plugin_opts`）
+- 其他协议：ShadowTLS, Hysteria, Hysteria2, Naive¹, TUIC, AnyTLS
+- 仅出站：Tor, SSH, Selector, URLTest
+- Endpoints：WireGuard、WARP、Tailscale——可单个测延迟，也可一键测全部
+- 支持 XTLS 协议，出站表单支持 Hysteria 端口跳跃
+
+<sup>1</sup> Naive 依赖 cronet 工具链，并非所有平台都能编译：官方 Linux 发布版只在
+amd64、arm64、armv7 和 386 上带这个协议。在 armv6、armv5、s390x 上使用 Naive 出站会提示
+该二进制未编译此协议。
+
+用户热更新覆盖 VLESS、VMess、Trojan、Shadowsocks、AnyTLS、Hysteria、Hysteria2 和
+TUIC —— 这对 QUIC 系协议尤其重要，重建监听器会断掉它们的全部会话。其他入站类型仍是重启。
+
+</details>
+
+<details>
+  <summary>语言</summary>
+
+English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) · Russian
+
+</details>
+
+!["Main"](frontend/media/main.png)
+
+更多截图：[frontend/screenshots.md](frontend/screenshots.md)
+
 ## 安装
 
 ### Linux/macOS
@@ -144,51 +189,6 @@ rm /usr/bin/s-ui
 | Linux | amd64, arm64, armv7, armv6, armv5, 386, s390x | 支持 |
 | Windows | amd64, 386, arm64 | 支持 |
 | macOS | amd64, arm64 | 实验性 |
-
-## 功能
-
-- **多协议**入站、出站与 Endpoints，并提供高级流量路由界面（PROXY Protocol、External、
-  Transparent Proxy、SSL Certificate 和 Port）
-- **一个客户端可跨多个入站**，支持流量限制、到期时间，并可直接在列表中启用或禁用
-- **用户热更新** —— 增删改客户端时原地更新入站的用户表，不再重建监听器，其余用户不会掉线
-- **订阅服务** —— 支持 `link` / `json` / `clash` 格式并附带用量信息，也可并入外部链接
-- **多节点集群** —— 监控其他 2S-UI 面板、跨节点共享用户，并把各节点线路合并进同一条
-  订阅（[详见下文](#多节点集群)）
-- **HTTPS 自动化** —— 自动签发并续期 Let's Encrypt 证书，还能自动生成 nginx 反向代理
-  （[详见下文](#域名与证书)）
-- **面板内一键更新** —— 基于校验和验证的 GitHub Release
-- 展示在线客户端、入站/出站流量统计和系统状态监控
-- 深色/浅色主题、六种语言，以及 [HTTP API](https://github.com/shenaba/2s-ui/wiki/API-Documentation)
-
-<details>
-  <summary>支持的协议</summary>
-
-- 通用协议：Mixed, SOCKS, HTTP/HTTPS, Direct, Tun, Redirect, TProxy
-- V2Ray 系列：VLESS, VMess, Trojan, Shadowsocks（支持 `plugin` / `plugin_opts`）
-- 其他协议：ShadowTLS, Hysteria, Hysteria2, Naive¹, TUIC, AnyTLS
-- 仅出站：Tor, SSH, Selector, URLTest
-- Endpoints：WireGuard、WARP、Tailscale——可单个测延迟，也可一键测全部
-- 支持 XTLS 协议，出站表单支持 Hysteria 端口跳跃
-
-<sup>1</sup> Naive 依赖 cronet 工具链，并非所有平台都能编译：官方 Linux 发布版只在
-amd64、arm64、armv7 和 386 上带这个协议。在 armv6、armv5、s390x 上使用 Naive 出站会提示
-该二进制未编译此协议。
-
-用户热更新覆盖 VLESS、VMess、Trojan、Shadowsocks、AnyTLS、Hysteria、Hysteria2 和
-TUIC —— 这对 QUIC 系协议尤其重要，重建监听器会断掉它们的全部会话。其他入站类型仍是重启。
-
-</details>
-
-<details>
-  <summary>语言</summary>
-
-English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) · Russian
-
-</details>
-
-!["Main"](frontend/media/main.png)
-
-更多截图：[frontend/screenshots.md](frontend/screenshots.md)
 
 ## 多节点集群
 

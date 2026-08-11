@@ -13,6 +13,56 @@
 
 **If you think this project is helpful to you, you may wish to give a**:star2:
 
+## Features
+
+- **Multi-protocol** inbounds, outbounds and endpoints, with an advanced routing
+  interface (PROXY Protocol, External and Transparent Proxy, SSL certificate, port)
+- **One client across many inbounds**, with a traffic cap, an expiry date, and an
+  enable/disable switch straight from the list
+- **Live user updates** — adding, editing or removing a client updates the
+  inbound's user table in place instead of rebuilding the listener, so everyone
+  else keeps their connections
+- **Subscription service** — `link` / `json` / `clash` formats plus usage info,
+  and external links can be folded in
+- **Multi-node cluster** — monitor other 2S-UI panels, share users across them,
+  and merge their servers into one subscription ([details](#multi-node-cluster))
+- **Automatic HTTPS** — Let's Encrypt certificates issued and renewed for you,
+  plus an automatic nginx reverse proxy ([details](#domains--certificates))
+- **In-panel self-update** over checksum-verified GitHub releases
+- Online clients, inbound/outbound traffic statistics and system status monitoring
+- Dark/light theme, six languages, and an [HTTP API](https://github.com/shenaba/2s-ui/wiki/API-Documentation)
+
+<details>
+  <summary>Supported protocols</summary>
+
+- General: Mixed, SOCKS, HTTP/HTTPS, Direct, Tun, Redirect, TProxy
+- V2Ray based: VLESS, VMess, Trojan, Shadowsocks (incl. `plugin` / `plugin_opts`)
+- Other protocols: ShadowTLS, Hysteria, Hysteria2, Naive¹, TUIC, AnyTLS
+- Outbound only: Tor, SSH, Selector, URLTest
+- Endpoints: WireGuard, WARP, Tailscale — with a latency test per endpoint or for all at once
+- XTLS is supported, and Hysteria port hopping is available on the outbound form
+
+<sup>1</sup> Naive needs the cronet toolchain, which does not build everywhere: official Linux
+releases ship it on amd64, arm64, armv7 and 386 only. On armv6, armv5 and s390x a Naive
+outbound reports that the binary was built without it.
+
+Live user updates cover VLESS, VMess, Trojan, Shadowsocks, AnyTLS, Hysteria,
+Hysteria2 and TUIC — which matters most on the QUIC-based protocols, where a
+restart drops every session. Other inbound types still restart.
+
+</details>
+
+<details>
+  <summary>Languages</summary>
+
+English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) · Russian
+
+</details>
+
+!["Main"](frontend/media/main.png)
+
+More screenshots: [frontend/screenshots.md](frontend/screenshots.md)
+
 ## Install
 
 ### Linux/macOS
@@ -148,56 +198,6 @@ rm /usr/bin/s-ui
 | Linux    | amd64, arm64, armv7, armv6, armv5, 386, s390x | ✅ Supported |
 | Windows  | amd64, 386, arm64 | ✅ Supported |
 | macOS    | amd64, arm64 | 🚧 Experimental |
-
-## Features
-
-- **Multi-protocol** inbounds, outbounds and endpoints, with an advanced routing
-  interface (PROXY Protocol, External and Transparent Proxy, SSL certificate, port)
-- **One client across many inbounds**, with a traffic cap, an expiry date, and an
-  enable/disable switch straight from the list
-- **Live user updates** — adding, editing or removing a client updates the
-  inbound's user table in place instead of rebuilding the listener, so everyone
-  else keeps their connections
-- **Subscription service** — `link` / `json` / `clash` formats plus usage info,
-  and external links can be folded in
-- **Multi-node cluster** — monitor other 2S-UI panels, share users across them,
-  and merge their servers into one subscription ([details](#multi-node-cluster))
-- **Automatic HTTPS** — Let's Encrypt certificates issued and renewed for you,
-  plus an automatic nginx reverse proxy ([details](#domains--certificates))
-- **In-panel self-update** over checksum-verified GitHub releases
-- Online clients, inbound/outbound traffic statistics and system status monitoring
-- Dark/light theme, six languages, and an [HTTP API](https://github.com/shenaba/2s-ui/wiki/API-Documentation)
-
-<details>
-  <summary>Supported protocols</summary>
-
-- General: Mixed, SOCKS, HTTP/HTTPS, Direct, Tun, Redirect, TProxy
-- V2Ray based: VLESS, VMess, Trojan, Shadowsocks (incl. `plugin` / `plugin_opts`)
-- Other protocols: ShadowTLS, Hysteria, Hysteria2, Naive¹, TUIC, AnyTLS
-- Outbound only: Tor, SSH, Selector, URLTest
-- Endpoints: WireGuard, WARP, Tailscale — with a latency test per endpoint or for all at once
-- XTLS is supported, and Hysteria port hopping is available on the outbound form
-
-<sup>1</sup> Naive needs the cronet toolchain, which does not build everywhere: official Linux
-releases ship it on amd64, arm64, armv7 and 386 only. On armv6, armv5 and s390x a Naive
-outbound reports that the binary was built without it.
-
-Live user updates cover VLESS, VMess, Trojan, Shadowsocks, AnyTLS, Hysteria,
-Hysteria2 and TUIC — which matters most on the QUIC-based protocols, where a
-restart drops every session. Other inbound types still restart.
-
-</details>
-
-<details>
-  <summary>Languages</summary>
-
-English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) · Russian
-
-</details>
-
-!["Main"](frontend/media/main.png)
-
-More screenshots: [frontend/screenshots.md](frontend/screenshots.md)
 
 ## Multi-Node Cluster
 
