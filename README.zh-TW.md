@@ -1,7 +1,9 @@
 # <img src="frontend/public/assets/favicon.svg" width="44" height="44" align="texttop" alt=""> 2S-UI
 [English](README.md) · [فارسی](README.fa.md) · [Tiếng Việt](README.vi.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [Русский](README.ru.md)
 
-**基於 SagerNet/Sing-Box 的多協定代理 Web 面板，支援訂閱分發、流量監控與自架部署。**
+2S-UI 是一個開源的 [Sing-Box](https://github.com/SagerNet/sing-box) 管理面板，面向自架代理服務的部署與維運。協定設定、路由規則、使用者與訂閱、流量統計集中於同一套介面，支援六種語言與深淺雙主題；面板與 sing-box 核心整合為單個執行檔，單機即可運行，多台亦可組成叢集統一管理。
+
+2S-UI 由 [s-ui](https://github.com/alireza0/s-ui) 分支而來，重寫了整套前端，並引入多節點叢集、ACME 憑證自動簽發與續期、面板內一鍵升級，以及不中斷連線的使用者熱更新。
 
 ![](https://img.shields.io/github/v/release/shenaba/2s-ui.svg)
 [![Docker Pulls](https://img.shields.io/docker/pulls/shenaba/2s-ui.svg)](https://hub.docker.com/r/shenaba/2s-ui)
@@ -15,21 +17,31 @@
 
 ## 功能
 
-- **多協定**入站、出站與 Endpoints，並提供進階流量路由介面（PROXY Protocol、External、
-  Transparent Proxy、SSL Certificate 與 Port）
-- **一個用戶端可跨多個入站**，支援流量限制、到期時間，並可直接在列表中啟用或停用
-- **使用者熱更新** —— 新增、修改或刪除用戶端時原地更新入站的使用者表，不再重建監聽器，
-  其餘使用者不會斷線
-- **訂閱服務** —— 支援 `link` / `json` / `clash` 格式並附帶用量資訊，也可併入外部連結
-- **多節點叢集** —— 監控其他 2S-UI 面板、跨節點共用使用者，並把各節點線路合併進同一條
-  訂閱（[詳見下文](#多節點叢集)）
-- **HTTPS 自動化** —— 自動簽發並續期 Let's Encrypt 憑證，還能自動產生 nginx 反向代理
-  （[詳見下文](#網域與憑證)）
-- **面板內一鍵更新** —— 以總和檢查碼驗證的 GitHub Release
-- 顯示線上用戶端、入站/出站流量統計與系統狀態監控
-- 深色/淺色佈景主題、六種語言，以及 [HTTP API](https://github.com/shenaba/2s-ui/wiki/API-Documentation)
+為 sing-box 套上一層 Web 面板：用表單取代 JSON，給每位使用者發一條訂閱連結，把流量看住。
+sing-box 內嵌在面板執行檔裡——只有一個行程要顧、一個檔案要部署。
 
-<details>
+- **多協定** —— 入站出站支援 VLESS、VMess、Trojan、Shadowsocks、Hysteria2、TUIC、
+  AnyTLS 等，另有 WireGuard / WARP / Tailscale 三類 Endpoint（[完整列表](#protocols)）
+- **TLS 集中管理** —— Reality、uTLS 指紋、XTLS；憑證註冊一次，之後依入站選用
+- **路由規則** —— 依網域、IP、連接埠、協定、行程、使用者或 rule-set 比對，可 and/or 組合。
+  DNS 有自己獨立的一套規則。
+- **多入站用戶端** —— 一個用戶端可掛在多個入站上，各帶流量上限與到期時間，超量或過期
+  自動停用
+- **配額自動化** —— 可以從首次使用才開始計時，也可以每 N 天自動重置，跑滿的用戶端到期
+  自動恢復
+- **使用者熱更新** —— 改用戶端時原地改寫入站的使用者表，不重建監聽器，其他人不會斷線
+- **訂閱連結** —— 支援 `link`、`json`、`clash` 三種格式，回傳用量與到期時間，可併入外部
+  連結
+- **多節點叢集** —— 監控其他 2S-UI 面板、跨節點共用使用者、各節點線路合併進同一條訂閱
+  （[詳見下文](#多節點叢集)）
+- **HTTPS 自動化** —— Let's Encrypt 自動簽發續期，並自動產生 nginx 反向代理
+  （[詳見下文](#網域與憑證)）
+- **一鍵更新** —— 面板內原地升級，帶總和檢查碼驗證
+- **即時儀表板** —— 系統資源、流量、協定佔比、網路吞吐、節點健康，每塊卡片都能單獨開關
+- **帳號與語言** —— 支援多個面板管理員、帶到期時間的
+  [API Token](https://github.com/shenaba/2s-ui/wiki/API-Documentation)、深色/淺色佈景主題、六種語言
+
+<details id="protocols">
   <summary>支援的協定</summary>
 
 - 通用協定：Mixed, SOCKS, HTTP/HTTPS, Direct, Tun, Redirect, TProxy
@@ -43,10 +55,6 @@
 amd64、arm64、armv7 與 386 上帶這個協定。在 armv6、armv5、s390x 上使用 Naive 出站會提示
 該執行檔未編譯此協定。
 
-使用者熱更新涵蓋 VLESS、VMess、Trojan、Shadowsocks、AnyTLS、Hysteria、Hysteria2 與
-TUIC —— 這對 QUIC 系協定尤其重要，重建監聽器會中斷它們的全部工作階段。其他入站類型
-仍是重新啟動。
-
 </details>
 
 <details>
@@ -56,9 +64,14 @@ English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) 
 
 </details>
 
+<details>
+  <summary>螢幕截圖</summary>
+
 !["Main"](frontend/media/main.png)
 
 更多螢幕截圖：[frontend/screenshots.md](frontend/screenshots.md)
+
+</details>
 
 ## 安裝
 
@@ -130,16 +143,6 @@ docker build -t 2s-ui .
 
 </details>
 
-### 升級
-
-有新版本會在側邊欄的版本標籤上提示 —— 檢查在用戶端完成，所以面板所在的伺服器連不上
-GitHub 也會提示。Linux 上（systemd 或 Docker）點一下即可原地升級：面板會下載新版本，
-用官方發佈的 `SHA256SUMS` 校驗，先試跑一次新的執行檔，再替換並重新啟動。不必 SSH。
-
-> Windows 上執行中的 `.exe` 無法自我替換，版本標籤只會連到 release 頁面。
-> Docker 裡新的執行檔寫在容器可寫層：`docker restart` 後仍在，但重建容器會退回映像
-> 檔自帶的版本——想長期生效請拉取新映像檔。
-
 <details>
   <summary>安裝歷史版本、手動安裝、解除安裝</summary>
 
@@ -183,6 +186,16 @@ rm /usr/bin/s-ui
 ```
 
 </details>
+
+### 升級
+
+有新版本會在側邊欄的版本標籤上提示 —— 檢查在用戶端完成，所以面板所在的伺服器連不上
+GitHub 也會提示。Linux 上（systemd 或 Docker）點一下即可原地升級：面板會下載新版本，
+用官方發佈的 `SHA256SUMS` 校驗，先試跑一次新的執行檔，再替換並重新啟動。不必 SSH。
+
+> Windows 上執行中的 `.exe` 無法自我替換，版本標籤只會連到 release 頁面。
+> Docker 裡新的執行檔寫在容器可寫層：`docker restart` 後仍在，但重建容器會退回映像
+> 檔自帶的版本——想長期生效請拉取新映像檔。
 
 ### 支援平台
 
@@ -283,31 +296,15 @@ certbot certonly --standalone --register-unsafely-without-email --non-interactiv
 <details>
   <summary>從原始碼建置並執行</summary>
 
-建置並執行完整專案：
-
 ```shell
 git clone https://github.com/shenaba/2s-ui
 cd 2s-ui
 ./runSUI.sh
 ```
 
-前端程式碼位於 [`frontend/`](frontend) 目錄，會被編譯進 Go 執行檔，所以手動建置後端前
-請先建置一次前端：
-
-```shell
-# 刪除舊的前端編譯檔案
-rm -fr web/html/*
-# 套用新的前端編譯檔案
-cp -R frontend/dist/ web/html/
-# 建置
-go build -o sui main.go
-```
-
-從儲存庫根目錄執行建置結果：
-
-```shell
-./sui
-```
+`build.sh` 會建置前端、把產物複製進 `web/html/` 供 `//go:embed` 使用，再帶上必要的
+build tags 建置執行檔；`runSUI.sh` 在此之上直接把它跑起來。手動建置同樣要帶上那些
+tags，詳見 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 </details>
 
@@ -326,9 +323,9 @@ go build -o sui main.go
 
 </details>
 
-## 致謝
+## 特別感謝
 
-2S-UI 基於 [alireza0/s-ui](https://github.com/alireza0/s-ui) 繼續維護，在保留原專案設計方向的基礎上，持續更新 sing-box 支援、多協定能力、部署指令稿與問題修復。感謝原作者及貢獻者的開源工作。
+- [@alireza0](https://github.com/alireza0)
 
 ## Stargazers over Time
 [![Star History Chart](https://api.star-history.com/svg?repos=shenaba/2s-ui&type=Date)](https://star-history.com/#shenaba/2s-ui&Date)

@@ -1,7 +1,9 @@
 # <img src="frontend/public/assets/favicon.svg" width="44" height="44" align="texttop" alt=""> 2S-UI
 [English](README.md) · [فارسی](README.fa.md) · [Tiếng Việt](README.vi.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [Русский](README.ru.md)
 
-**An actively maintained sing-box web panel for multi-protocol proxy management, subscription delivery, traffic monitoring, and self-hosted deployment.**
+2S-UI is an open-source management panel for [sing-box](https://github.com/SagerNet/sing-box), built for deploying and operating self-hosted proxy services. Protocol configuration, routing rules, users and subscriptions, and traffic statistics all live in one interface, in six languages and both themes; the panel and the sing-box core are compiled into a single binary that runs on one machine or across a cluster.
+
+2S-UI began as a fork of [s-ui](https://github.com/alireza0/s-ui). It rewrites the frontend in full and introduces multi-node clustering, automatic ACME certificate issuance and renewal, in-panel upgrades, and live user updates that leave established connections intact.
 
 ![](https://img.shields.io/github/v/release/shenaba/2s-ui.svg)
 [![Docker Pulls](https://img.shields.io/docker/pulls/shenaba/2s-ui.svg)](https://hub.docker.com/r/shenaba/2s-ui)
@@ -15,24 +17,37 @@
 
 ## Features
 
-- **Multi-protocol** inbounds, outbounds and endpoints, with an advanced routing
-  interface (PROXY Protocol, External and Transparent Proxy, SSL certificate, port)
-- **One client across many inbounds**, with a traffic cap, an expiry date, and an
-  enable/disable switch straight from the list
-- **Live user updates** — adding, editing or removing a client updates the
-  inbound's user table in place instead of rebuilding the listener, so everyone
-  else keeps their connections
-- **Subscription service** — `link` / `json` / `clash` formats plus usage info,
-  and external links can be folded in
-- **Multi-node cluster** — monitor other 2S-UI panels, share users across them,
-  and merge their servers into one subscription ([details](#multi-node-cluster))
-- **Automatic HTTPS** — Let's Encrypt certificates issued and renewed for you,
-  plus an automatic nginx reverse proxy ([details](#domains--certificates))
-- **In-panel self-update** over checksum-verified GitHub releases
-- Online clients, inbound/outbound traffic statistics and system status monitoring
-- Dark/light theme, six languages, and an [HTTP API](https://github.com/shenaba/2s-ui/wiki/API-Documentation)
+A web panel in front of sing-box: forms instead of JSON, a subscription link per
+user, traffic you can watch. sing-box is embedded in the panel binary — one
+process to supervise, one file to deploy.
 
-<details>
+- **Multi-protocol** — VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC,
+  AnyTLS and more, in and out, plus WireGuard/WARP/Tailscale endpoints
+  ([full list](#protocols))
+- **Central TLS** — Reality, uTLS fingerprints, XTLS; register a certificate
+  once, then pick it per inbound
+- **Routing rules** — match on domain, IP, port, protocol, process, user or
+  rule-set, combined with and/or. DNS gets its own rule list.
+- **Multi-inbound clients** — one client on many inbounds, each with a traffic
+  cap and expiry date; over either one it is disabled automatically
+- **Quota automation** — the clock can start on first use, and reset every N
+  days, bringing a depleted client back on its own
+- **Live user updates** — editing a client rewrites the inbound's user table in
+  place instead of rebuilding the listener, so nobody else drops
+- **Subscriptions** — `link`, `json` and `clash` formats, usage and expiry
+  reported back to the client app, external links folded in
+- **Multi-node cluster** — monitor other 2S-UI panels, share users across them,
+  merge their servers into one subscription ([details](#multi-node-cluster))
+- **Automatic HTTPS** — Let's Encrypt issuance and renewal, plus an automatic
+  nginx reverse proxy ([details](#domains--certificates))
+- **One-click updates** — upgrade in place from the panel, checksum-verified
+- **Live dashboard** — system resources, traffic, protocol mix, network
+  throughput, node health; every tile toggleable
+- **Access & locales** — several panel admins, expiring
+  [API tokens](https://github.com/shenaba/2s-ui/wiki/API-Documentation),
+  dark/light theme, six languages
+
+<details id="protocols">
   <summary>Supported protocols</summary>
 
 - General: Mixed, SOCKS, HTTP/HTTPS, Direct, Tun, Redirect, TProxy
@@ -46,10 +61,6 @@
 releases ship it on amd64, arm64, armv7 and 386 only. On armv6, armv5 and s390x a Naive
 outbound reports that the binary was built without it.
 
-Live user updates cover VLESS, VMess, Trojan, Shadowsocks, AnyTLS, Hysteria,
-Hysteria2 and TUIC — which matters most on the QUIC-based protocols, where a
-restart drops every session. Other inbound types still restart.
-
 </details>
 
 <details>
@@ -59,9 +70,14 @@ English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) 
 
 </details>
 
+<details>
+  <summary>Screenshots</summary>
+
 !["Main"](frontend/media/main.png)
 
 More screenshots: [frontend/screenshots.md](frontend/screenshots.md)
+
+</details>
 
 ## Install
 
@@ -134,19 +150,6 @@ docker build -t 2s-ui .
 
 </details>
 
-### Upgrading
-
-New releases are flagged on the version pill in the sidebar — the check is
-client-side, so the panel host itself does not need to reach GitHub. On Linux
-(systemd or Docker) one click upgrades in place: the panel downloads the
-release, verifies it against the published `SHA256SUMS`, smoke-tests the new
-binary, then replaces it and restarts. No SSH.
-
-> A running `.exe` cannot replace itself, so on Windows the pill only links to
-> the release page. In Docker the new binary lives in the container's writable
-> layer: it survives `docker restart`, but recreating the container reverts to
-> the image's version — pull a new image to make it stick.
-
 <details>
   <summary>A specific version, manual installation, uninstall</summary>
 
@@ -190,6 +193,19 @@ rm /usr/bin/s-ui
 ```
 
 </details>
+
+### Upgrading
+
+New releases are flagged on the version pill in the sidebar — the check is
+client-side, so the panel host itself does not need to reach GitHub. On Linux
+(systemd or Docker) one click upgrades in place: the panel downloads the
+release, verifies it against the published `SHA256SUMS`, smoke-tests the new
+binary, then replaces it and restarts. No SSH.
+
+> A running `.exe` cannot replace itself, so on Windows the pill only links to
+> the release page. In Docker the new binary lives in the container's writable
+> layer: it survives `docker restart`, but recreating the container reverts to
+> the image's version — pull a new image to make it stick.
 
 ### Supported platforms
 
@@ -307,31 +323,16 @@ conventions, testing, and the pull request process.
 <details>
   <summary>Building and running from source</summary>
 
-Build and run the whole project:
-
 ```shell
 git clone https://github.com/shenaba/2s-ui
 cd 2s-ui
 ./runSUI.sh
 ```
 
-The frontend code lives in the [`frontend/`](frontend) directory and compiles
-into the Go binary, so build it once before building the backend by hand:
-
-```shell
-# remove old frontend compiled files
-rm -fr web/html/*
-# apply new frontend compiled files
-cp -R frontend/dist/ web/html/
-# build
-go build -o sui main.go
-```
-
-To run the result from the root folder of the repository:
-
-```shell
-./sui
-```
+`build.sh` builds the frontend, copies it into `web/html/` for `//go:embed`,
+and builds the binary with the required build tags; `runSUI.sh` runs it on top
+of that. Building by hand needs those same tags — see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 </details>
 
@@ -351,9 +352,9 @@ subprocess-based layout; sing-box is embedded in the binary and there is no
 
 </details>
 
-## Credits
+## Special Thanks
 
-2S-UI is based on [alireza0/s-ui](https://github.com/alireza0/s-ui) and is maintained as a continued fork. It keeps the original panel direction while updating sing-box support, multi-protocol capabilities, deployment scripts, and ongoing fixes. Thanks to the original author and contributors.
+- [@alireza0](https://github.com/alireza0)
 
 ## Stargazers over Time
 [![Star History Chart](https://api.star-history.com/svg?repos=shenaba/2s-ui&type=Date)](https://star-history.com/#shenaba/2s-ui&Date)

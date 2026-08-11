@@ -1,8 +1,9 @@
 # <img src="frontend/public/assets/favicon.svg" width="44" height="44" align="texttop" alt=""> 2S-UI
-
 [English](README.md) · [فارسی](README.fa.md) · [Tiếng Việt](README.vi.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [Русский](README.ru.md)
 
-**یک پنل وب sing-box با نگهداری فعال برای مدیریت پراکسی چندپروتکلی، ارائه اشتراک، پایش ترافیک و استقرار خودمیزبان.**
+2S-UI یک پنل وب متن‌باز برای مدیریت [sing-box](https://github.com/SagerNet/sing-box) است که برای استقرار و نگهداری سرویس‌های پراکسی خودمیزبان ساخته شده است. پیکربندی پروتکل‌ها، قواعد مسیریابی، کاربران و اشتراک‌ها و آمار ترافیک همگی در یک رابط قرار دارند — با شش زبان و هر دو تم روشن و تیره؛ پنل و هسته sing-box در یک باینری واحد بسته‌بندی می‌شوند که هم برای یک سرور کافی است و هم می‌تواند به‌صورت کلاستر کار کند.
+
+2S-UI به‌عنوان fork پروژه [s-ui](https://github.com/alireza0/s-ui) آغاز شد: کل frontend از نو نوشته شده و روی آن کلاستر چندنودی، صدور و تمدید خودکار گواهی ACME، به‌روزرسانی از داخل پنل و به‌روزرسانی زنده کاربران — بدون قطع‌شدن اتصال‌های برقرار — افزوده شده است.
 
 ![](https://img.shields.io/github/v/release/shenaba/2s-ui.svg)
 [![Docker Pulls](https://img.shields.io/docker/pulls/shenaba/2s-ui.svg)](https://hub.docker.com/r/shenaba/2s-ui)
@@ -14,95 +15,145 @@
 
 **اگر فکر می‌کنید این پروژه برای شما مفید است، شاید بد نباشد یک ستاره بدهید**:star2:
 
-**مایل به مشارکت هستید؟** برای راه‌اندازی محیط توسعه، قراردادهای کدنویسی، تست و فرایند pull request به [CONTRIBUTING.md](CONTRIBUTING.md) مراجعه کنید.
+## امکانات
 
-2S-UI بر پایه [alireza0/s-ui](https://github.com/alireza0/s-ui) ساخته شده و به‌عنوان یک fork ادامه‌دار نگهداری می‌شود. این پروژه مسیر اصلی پنل را حفظ می‌کند و در همان حال پشتیبانی sing-box، قابلیت‌های چندپروتکلی، اسکریپت‌های استقرار و رفع اشکالات مستمر را به‌روزرسانی می‌کند. با تشکر از نویسنده اصلی و مشارکت‌کنندگان.
+- **چندپروتکلی** — VLESS، VMess، Trojan، Shadowsocks، Hysteria2، TUIC، AnyTLS و
+  بیشتر، هم در ورودی و هم در خروجی، به‌همراه endpointهای WireGuard/WARP/Tailscale
+  ([فهرست کامل](#protocols))
+- **TLS در یک جا** — Reality، اثرانگشت‌های uTLS و XTLS؛ گواهی یک‌بار ثبت می‌شود و
+  سپس برای هر inbound انتخاب می‌گردد
+- **قواعد مسیریابی در همان رابط** — تطبیق بر اساس دامنه، IP، پورت، پروتکل، پروسه،
+  کاربر یا rule-set، با ترکیب and/or. DNS هم فهرست قواعد مخصوص خودش را دارد.
+- **یک کلاینت روی چند inbound** به‌صورت هم‌زمان، هر کدام با سقف ترافیک و تاریخ
+  انقضای خود؛ با عبور از هرکدام، کلاینت به‌طور خودکار غیرفعال می‌شود
+- **خودکارسازی سهمیه** — شمارش می‌تواند از نخستین استفاده آغاز شود و هر N روز
+  بازنشانی گردد و کلاینتی را که سهمیه‌اش تمام شده خودبه‌خود برگرداند
+- **به‌روزرسانی زنده کاربران** — ویرایش یک کلاینت جدول کاربران inbound را در همان
+  محل بازنویسی می‌کند و listener را از نو نمی‌سازد، بنابراین بقیه قطع نمی‌شوند
+- **اشتراک‌ها** — قالب‌های `link`، `json` و `clash`، همراه با گزارش مصرف و انقضا به
+  اپلیکیشن کلاینت؛ لینک‌های خارجی هم در همان خروجی ادغام می‌شوند
+- **کلاستر چندنودی** — پایش سایر پنل‌های 2S-UI، اشتراک کاربران میان آن‌ها و ادغام
+  سرورهایشان در یک اشتراک واحد (در ادامه ببینید)
+- **HTTPS خودکار** — صدور و تمدید گواهی Let's Encrypt، به‌همراه ساخت خودکار
+  ریورس‌پراکسی nginx (در ادامه ببینید)
+- **به‌روزرسانی با یک کلیک** — ارتقا در همان محل از داخل پنل، با بررسی checksum
+- **داشبورد زنده** — منابع سیستم، ترافیک، سهم پروتکل‌ها، توان عبوری شبکه و وضعیت
+  نودها؛ هر کاشی را می‌توان جداگانه خاموش کرد
+- **دسترسی و زبان‌ها** — چند مدیر برای پنل،
+  [توکن‌های API](https://github.com/shenaba/2s-ui/wiki/API-Documentation) دارای
+  انقضا، تم تیره/روشن و شش زبان
 
-## مرور سریع
-| امکانات                                |      فعال؟          |
-| -------------------------------------- | :----------------: |
-| چندپروتکلی                             | :heavy_check_mark: |
-| چندزبانه                               | :heavy_check_mark: |
-| چند کلاینت/ورودی                       | :heavy_check_mark: |
-| رابط پیشرفته مسیریابی ترافیک           | :heavy_check_mark: |
-| وضعیت کلاینت و ترافیک و سیستم          | :heavy_check_mark: |
-| لینک اشتراک (link/json/clash + info)   | :heavy_check_mark: |
-| **کلاستر چندنودی (کاربران مشترک بین سرورها)** ✨ | :heavy_check_mark: |
-| **HTTPS خودکار (ACME / Let's Encrypt)** ✨ | :heavy_check_mark: |
-| **ساخت خودکار ریورس‌پراکسی nginx** ✨   | :heavy_check_mark: |
-| **به‌روزرسانی از داخل پنل** ✨          | :heavy_check_mark: |
-| تم تیره/روشن                           | :heavy_check_mark: |
-| رابط API                               | :heavy_check_mark: |
+<details id="protocols">
+  <summary>پروتکل‌های پشتیبانی‌شده</summary>
 
-## پلتفرم‌های پشتیبانی‌شده
-| پلتفرم | معماری | وضعیت |
-|----------|--------------|---------|
-| Linux    | amd64, arm64, armv7, armv6, armv5, 386, s390x | ✅ پشتیبانی‌شده |
-| Windows  | amd64, 386, arm64 | ✅ پشتیبانی‌شده |
-| macOS    | amd64, arm64 | 🚧 آزمایشی |
+- عمومی: Mixed, SOCKS, HTTP/HTTPS, Direct, Tun, Redirect, TProxy
+- مبتنی بر V2Ray: VLESS, VMess, Trojan, Shadowsocks (به‌همراه `plugin` / `plugin_opts`)
+- سایر پروتکل‌ها: ShadowTLS, Hysteria, Hysteria2, Naive¹, TUIC, AnyTLS
+- فقط outbound: Tor, SSH, Selector, URLTest
+- Endpointها: WireGuard، WARP، Tailscale — با تست تأخیر برای هر endpoint یا همه با هم
+- از XTLS پشتیبانی می‌شود و در فرم outbound قابلیت Hysteria port hopping وجود دارد
 
-## تصاویر
+<sup>1</sup> پروتکل Naive به زنجیره ابزار cronet نیاز دارد که همه‌جا ساخته نمی‌شود: نسخه‌های
+رسمی Linux فقط روی amd64، arm64، armv7 و 386 آن را دارند. روی armv6، armv5 و s390x یک
+outbound از نوع Naive اعلام می‌کند که باینری بدون آن ساخته شده است.
+
+</details>
+
+<details>
+  <summary>زبان‌ها</summary>
+
+انگلیسی · فارسی · ویتنامی · چینی (ساده‌شده) · چینی (سنتی) · روسی
+
+</details>
+
+<details>
+  <summary>تصاویر</summary>
 
 !["Main"](frontend/media/main.png)
 
-[سایر تصاویر رابط کاربری](frontend/screenshots.md)
+سایر تصاویر رابط کاربری: [frontend/screenshots.md](frontend/screenshots.md)
 
-## مستندات API
+</details>
 
-[ویکی مستندات API](https://github.com/shenaba/2s-ui/wiki/API-Documentation)
-
-## اطلاعات نصب پیش‌فرض
-- پورت پنل: 2095
-- مسیر پنل: /app/
-- پورت اشتراک: 2096
-- مسیر اشتراک: /sub/
-- نام کاربری/رمز عبور: admin
-
-## نصب و ارتقا به آخرین نسخه
+## نصب
 
 ### Linux/macOS
+
 ```sh
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
-هم systemd و هم OpenRC (آلپاین) پشتیبانی می‌شوند؛ اسکریپت نصب خودش مورد درست را انتخاب می‌کند.
+سپس `http://<سرور-شما>:2095/app/` را باز کنید و با `admin` / `admin` وارد شوید.
 
-اسکریپت نصب به همان شش زبان پنل صحبت می‌کند: `en`، `fa`، `ru`، `vi`، `zhcn`، `zhtw`. به‌طور پیش‌فرض از `$LANG` سیستم پیروی می‌کند، یا می‌توانید زبان را مشخص کنید تا منوی `s-ui` هم همان را به یاد بسپارد:
+| | پیش‌فرض |
+| --- | --- |
+| پنل | پورت `2095`، مسیر `/app/` |
+| اشتراک | پورت `2096`، مسیر `/sub/` |
+| نام کاربری / رمز عبور | `admin` / `admin` |
+
+هم systemd و هم OpenRC (آلپاین) پشتیبانی می‌شوند؛ اسکریپت نصب خودش مورد درست را انتخاب می‌کند. این اسکریپت به همان شش زبان پنل صحبت می‌کند: `en`، `fa`، `ru`، `vi`، `zhcn`، `zhtw`. به‌طور پیش‌فرض از `$LANG` سیستم پیروی می‌کند، یا می‌توانید زبان را مشخص کنید تا منوی `s-ui` هم همان را به یاد بسپارد:
 
 ```sh
 SUI_LANG=fa bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
 ### Windows
+
 1. آخرین نسخه ویندوز را از [GitHub Releases](https://github.com/shenaba/2s-ui/releases/latest) دانلود کنید
 2. فایل ZIP را استخراج کنید
 3. `install-windows.bat` را به‌عنوان Administrator اجرا کنید
 4. مراحل جادوگر نصب (wizard) را دنبال کنید
+5. به پنل از طریق http://localhost:2095/app دسترسی پیدا کنید
 
-### ارتقا از داخل پنل
+### Docker
 
-پس از نصب، نسخه‌های جدید روی نشان نسخه در نوار کناری اعلام می‌شود — این بررسی در مرورگر
-انجام می‌شود، بنابراین خودِ سرور پنل نیازی به دسترسی به GitHub ندارد. روی Linux (چه با
-systemd و چه Docker) با یک کلیک ارتقا در همان محل انجام می‌شود: پنل نسخه جدید را دانلود
-می‌کند، با `SHA256SUMS` منتشرشده تطبیق می‌دهد، باینری جدید را یک بار آزمایشی اجرا می‌کند،
-سپس آن را جایگزین کرده و راه‌اندازی مجدد می‌شود. بدون SSH.
+```shell
+mkdir 2s-ui && cd 2s-ui
+wget -q https://raw.githubusercontent.com/shenaba/2s-ui/main/docker-compose.yml
+docker compose up -d
+```
 
-> در Windows یک `.exe` در حال اجرا نمی‌تواند خودش را جایگزین کند، بنابراین نشان نسخه
-> فقط به صفحه انتشار لینک می‌دهد. در Docker باینری جدید در لایه قابل‌نوشتن کانتینر
-> قرار می‌گیرد: با `docker restart` باقی می‌ماند، اما ساخت دوباره کانتینر به نسخه ایمیج
-> برمی‌گردد — برای ماندگاری، ایمیج جدید را pull کنید.
+<details>
+  <summary>بدون compose، یا ساخت image اختصاصی خودتان</summary>
 
-## نصب نسخه قدیمی
+اگر هنوز Docker نصب نیست:
 
-**گام ۱:** برای نصب نسخه قدیمی موردنظرتان، نسخه را به انتهای دستور نصب اضافه کنید. برای مثال نسخه `v1.5.5`:
+```shell
+curl -fsSL https://get.docker.com | sh
+```
+
+استفاده مستقیم از `docker run`:
+
+```shell
+mkdir 2s-ui && cd 2s-ui
+docker run -itd \
+    -p 2095:2095 -p 2096:2096 -p 443:443 \
+    -v $PWD/db/:/app/db/ \
+    -v $PWD/cert/:/root/cert/ \
+    --name s-ui --restart=unless-stopped \
+    ghcr.io/shenaba/2s-ui:latest
+```
+
+ساخت image اختصاصی خودتان:
+
+```shell
+git clone https://github.com/shenaba/2s-ui
+docker build -t 2s-ui .
+```
+
+</details>
+
+<details>
+  <summary>نصب نسخه مشخص، نصب دستی، حذف</summary>
+
+**نصب یک نسخه مشخص.** نسخه را به انتهای دستور نصب اضافه کنید، برای مثال `v1.5.5`:
 
 ```sh
 VERSION=v1.5.5 && bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/$VERSION/install.sh) $VERSION
 ```
 
-## نصب دستی
+**نصب دستی — Linux/macOS**
 
-### Linux/macOS
 1. آخرین نسخه 2S-UI متناسب با سیستم‌عامل/معماری خود را از GitHub دریافت کنید: [https://github.com/shenaba/2s-ui/releases/latest](https://github.com/shenaba/2s-ui/releases/latest)
 2. **اختیاری** آخرین نسخه `s-ui.sh` را دریافت کنید [https://raw.githubusercontent.com/shenaba/2s-ui/main/s-ui.sh](https://raw.githubusercontent.com/shenaba/2s-ui/main/s-ui.sh)
 3. **اختیاری** `s-ui.sh` را در `/usr/bin/s-ui` کپی کنید و `chmod +x /usr/bin/s-ui` را اجرا کنید.
@@ -111,7 +162,8 @@ VERSION=v1.5.5 && bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-u
 6. اجرای خودکار را فعال کرده و سرویس 2S-UI را با `systemctl enable s-ui --now` راه‌اندازی کنید
 7. سرویس sing-box را با `systemctl enable sing-box --now` راه‌اندازی کنید
 
-### Windows
+**نصب دستی — Windows**
+
 1. آخرین نسخه ویندوز را از GitHub دریافت کنید: [https://github.com/shenaba/2s-ui/releases/latest](https://github.com/shenaba/2s-ui/releases/latest)
 2. بسته مناسب ویندوز را دانلود کنید (برای مثال `s-ui-windows-amd64.zip`)
 3. فایل ZIP را در دایرکتوری دلخواه استخراج کنید
@@ -119,7 +171,7 @@ VERSION=v1.5.5 && bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-u
 5. مراحل جادوگر نصب (wizard) را دنبال کنید
 6. به پنل از طریق http://localhost:2095/app دسترسی پیدا کنید
 
-## حذف 2S-UI
+**حذف**
 
 ```sh
 sudo -i
@@ -133,127 +185,28 @@ rm -fr /usr/local/s-ui
 rm /usr/bin/s-ui
 ```
 
-## نصب با استفاده از Docker
-
-<details>
-   <summary>برای جزئیات کلیک کنید</summary>
-
-### نحوه استفاده
-
-**گام ۱:** نصب Docker
-
-```shell
-curl -fsSL https://get.docker.com | sh
-```
-
-**گام ۲:** نصب 2S-UI
-
-> روش Docker compose
-
-```shell
-mkdir 2s-ui && cd 2s-ui
-wget -q https://raw.githubusercontent.com/shenaba/2s-ui/main/docker-compose.yml
-docker compose up -d
-```
-
-> استفاده از docker
-
-```shell
-mkdir 2s-ui && cd 2s-ui
-docker run -itd \
-    -p 2095:2095 -p 2096:2096 -p 443:443 \
-    -v $PWD/db/:/app/db/ \
-    -v $PWD/cert/:/root/cert/ \
-    --name s-ui --restart=unless-stopped \
-    ghcr.io/shenaba/2s-ui:latest
-```
-
-> ساخت image اختصاصی خودتان
-
-```shell
-git clone https://github.com/shenaba/2s-ui
-docker build -t 2s-ui .
-```
-
 </details>
 
-## اجرای دستی ( مشارکت )
+### ارتقا
 
-<details>
-   <summary>برای جزئیات کلیک کنید</summary>
+نسخه‌های جدید روی نشان نسخه در نوار کناری اعلام می‌شود — این بررسی در مرورگر
+انجام می‌شود، بنابراین خودِ سرور پنل نیازی به دسترسی به GitHub ندارد. روی Linux (چه با
+systemd و چه Docker) با یک کلیک ارتقا در همان محل انجام می‌شود: پنل نسخه جدید را دانلود
+می‌کند، با `SHA256SUMS` منتشرشده تطبیق می‌دهد، باینری جدید را یک بار آزمایشی اجرا می‌کند،
+سپس آن را جایگزین کرده و راه‌اندازی مجدد می‌شود. بدون SSH.
 
-### ساخت و اجرای کل پروژه
-```shell
-./runSUI.sh
-```
+> در Windows یک `.exe` در حال اجرا نمی‌تواند خودش را جایگزین کند، بنابراین نشان نسخه
+> فقط به صفحه انتشار لینک می‌دهد. در Docker باینری جدید در لایه قابل‌نوشتن کانتینر
+> قرار می‌گیرد: با `docker restart` باقی می‌ماند، اما ساخت دوباره کانتینر به نسخه ایمیج
+> برمی‌گردد — برای ماندگاری، ایمیج جدید را pull کنید.
 
-### کلون کردن مخزن
-```shell
-# clone repository
-git clone https://github.com/shenaba/2s-ui
-```
+### پلتفرم‌های پشتیبانی‌شده
 
-
-### - Frontend
-
-کد frontend در پوشه [`frontend/`](frontend) همین مخزن قرار دارد.
-
-### - Backend
-> لطفاً ابتدا یک‌بار frontend را بسازید!
-
-برای ساخت backend:
-```shell
-# remove old frontend compiled files
-rm -fr web/html/*
-# apply new frontend compiled files
-cp -R frontend/dist/ web/html/
-# build
-go build -o sui main.go
-```
-
-برای اجرای backend (از پوشه ریشه مخزن):
-```shell
-./sui
-```
-
-</details>
-
-## زبان‌ها
-
-- انگلیسی
-- فارسی
-- ویتنامی
-- چینی (ساده‌شده)
-- چینی (سنتی)
-- روسی
-
-## امکانات
-
-- پروتکل‌های پشتیبانی‌شده:
-  - عمومی: Mixed, SOCKS, HTTP/HTTPS, Direct, Tun, Redirect, TProxy
-  - مبتنی بر V2Ray: VLESS, VMess, Trojan, Shadowsocks (به‌همراه `plugin` / `plugin_opts`)
-  - سایر پروتکل‌ها: ShadowTLS, Hysteria, Hysteria2, Naive¹, TUIC, AnyTLS
-  - فقط outbound: Tor, SSH, Selector, URLTest
-  - Endpointها: WireGuard، WARP، Tailscale — با تست تأخیر برای هر endpoint یا همه با هم
-
-  <sup>1</sup> پروتکل Naive به زنجیره ابزار cronet نیاز دارد که همه‌جا ساخته نمی‌شود: نسخه‌های
-  رسمی Linux فقط روی amd64، arm64، armv7 و 386 آن را دارند. روی armv6، armv5 و s390x یک
-  outbound از نوع Naive اعلام می‌کند که باینری بدون آن ساخته شده است.
-
-- پشتیبانی از پروتکل‌های XTLS
-- رابطی پیشرفته برای مسیریابی ترافیک، شامل PROXY Protocol، پراکسی External و Transparent، گواهی SSL و پورت
-- رابطی پیشرفته برای پیکربندی inbound و outbound
-- سقف ترافیک و تاریخ انقضای کلاینت‌ها؛ فعال یا غیرفعال کردن کلاینت مستقیماً از فهرست
-- **به‌روزرسانی زنده کاربران** — روی VLESS، VMess، Trojan، Shadowsocks، AnyTLS، Hysteria، Hysteria2 و TUIC، افزودن، ویرایش یا حذف یک کلاینت جدول کاربران inbound را در همان محل به‌روزرسانی می‌کند و listener را از نو نمی‌سازد؛ بنابراین بقیه کاربران اتصال خود را از دست نمی‌دهند — که مخصوصاً روی پروتکل‌های مبتنی بر QUIC اهمیت دارد، چون ساخت دوباره listener همه نشست‌های آن‌ها را قطع می‌کند. سایر انواع inbound همچنان راه‌اندازی مجدد می‌شوند
-- Hysteria port hopping در فرم outbound
-- نمایش کلاینت‌های آنلاین، inboundها و outboundها همراه با آمار ترافیک، و پایش وضعیت سیستم
-- سرویس اشتراک با قابلیت افزودن لینک‌ها و اشتراک‌های خارجی
-- **کلاستر چندنودی** — پایش سایر پنل‌های 2S-UI، اشتراک کاربران میان آن‌ها و ادغام سرورهایشان در یک اشتراک واحد (در ادامه ببینید)
-- HTTPS برای دسترسی امن به پنل وب و سرویس اشتراک (دامنه شخصی + گواهی SSL)
-- **گواهی‌های SSL خودکار** — کافی است یک دامنه وارد کنید و 2S-UI به‌صورت خودکار یک گواهی رایگان Let's Encrypt را برای شما صادر و تمدید می‌کند (acme.sh را خودِ پنل نصب و اجرا می‌کند؛ نیازی به تنظیم زمان‌بندی نیست)
-- **ریورس‌پراکسی nginx خودکار** — وقتی پنل را پشت یک پراکسی قرار می‌دهید، 2S-UI خودش vhost را می‌نویسد و اعتبارسنجی می‌کند
-- **به‌روزرسانی از داخل پنل** از روی انتشارهای GitHub با بررسی checksum
-- تم تیره/روشن
+| پلتفرم | معماری | وضعیت |
+|----------|--------------|---------|
+| Linux    | amd64, arm64, armv7, armv6, armv5, 386, s390x | ✅ پشتیبانی‌شده |
+| Windows  | amd64, 386, arm64 | ✅ پشتیبانی‌شده |
+| macOS    | amd64, arm64 | 🚧 آزمایشی |
 
 ## کلاستر چندنودی
 
@@ -275,12 +228,105 @@ go build -o sui main.go
 گرفت. inboundهایی که از یک نود تحویل گرفته می‌شوند روی master فقط‌خواندنی هستند — آن‌ها را
 روی نود صاحبشان ویرایش کنید.
 
-## متغیرهای محیطی
+<details>
+  <summary>هدایت همگام‌سازی نودها از طریق API</summary>
+
+`POST <مسیر پنل>apiv2/save` (مسیر پنل به‌طور پیش‌فرض `/app/` است، یعنی
+`/app/apiv2/save`) تنها زمانی ارسال فوری به نودها را — همان کاری که رابط وب می‌کند —
+راه می‌اندازد که درخواست حاوی `sync=true` باشد؛ بدون آن، تغییرات کلاینت‌ها و inboundها
+همچنان از طریق تطبیق ساعتی به هم می‌رسند.
+
+</details>
+
+## دامنه‌ها و گواهی‌ها
+
+هر چیزی که به TLS مربوط است در زبانه **دامنه‌ها و گواهی‌ها** در تنظیمات پنل قرار دارد.
+پنل و سرویس اشتراک هر کدام دامنه خودشان را انتخاب می‌کنند و مسیر گواهی‌ها به‌دنبال دامنه
+انتخاب‌شده تعیین می‌شود — دیگر لازم نیست مسیر فایل‌ها را دستی جابه‌جا کنید.
+
+**🔐 گواهی‌های خودکار (ACME / Let's Encrypt) — توصیه‌شده.** دامنه را وارد کنید، ایمیل را
+بیفزایید و دکمه صدور را بزنید: 2S-UI یک گواهی رایگان Let's Encrypt می‌گیرد و به‌صورت
+خودکار تمدید می‌کند، و پس از آن پنل از طریق `https://<your-domain>:2095/app` در دسترس
+خواهد بود. نیازمند دسترس‌پذیری پورت TCP **۸۰** از اینترنت است (چالش HTTP-01). ACME فقط
+روی Linux کار می‌کند و در Windows پنهان است.
 
 <details>
-  <summary>برای جزئیات کلیک کنید</summary>
+  <summary>صدور گواهی چگونه انجام می‌شود، و نکته پورت ۸۰ در Docker</summary>
 
-### نحوه استفاده
+صدور گواهی از طریق **acme.sh** انجام می‌شود — پنل در نخستین استفاده، خودش acme.sh را نصب
+می‌کند (همراه با `socat` که برای اعتبارسنجی standalone لازم است) و تمدید خودکار را با
+cron job خودِ acme.sh فعال می‌کند، بنابراین لازم نیست شما هیچ زمان‌بندی‌ای تنظیم کنید.
+
+روش اعتبارسنجی به‌صورت پیش‌فرض **auto** است — اگر پورت ۸۰ آزاد باشد از standalone
+استفاده می‌کند، در غیر این صورت از nginx در حال اجرا کمک می‌گیرد و در صورت نیاز یک بلوک
+`server_name` حداقلی زیر `/etc/nginx/conf.d` می‌سازد. اگر ترجیح می‌دهید خودتان تصمیم
+بگیرید، می‌توانید صراحتاً **standalone** یا **nginx** را انتخاب کنید. هنگام تمدید، گواهی
+به‌صورت داغ بارگذاری می‌شود و نیازی به راه‌اندازی مجدد نیست.
+
+> برای انتشار پورت ۸۰ در Docker: در روش docker compose خط `80:80` را در
+> `docker-compose.yml` از حالت کامنت خارج کنید، یا در روش docker run گزینه `-p 80:80` را
+> اضافه کنید. گواهی‌ها در `/root/cert/<دامنه>/` با نام‌های `fullchain.pem` / `privkey.pem`
+> ذخیره می‌شوند و پس از راه‌اندازی مجدد باقی می‌مانند (والیومِ دستور Docker بالا همین مسیر
+> را بیرون نگاشت می‌کند). اگر دامنه/پورت نادرست پیکربندی شده باشد، 2S-UI به HTTP بازمی‌گردد.
+
+</details>
+
+<details>
+  <summary>استفاده از گواهی شخصی</summary>
+
+گواهی‌هایی که خودتان مدیریت می‌کنید — Cloudflare origin CA، یک CA سازمانی، یا خروجی
+certbot — در همان زبانه قابل ثبت هستند. 2S-UI بررسی می‌کند که فایل‌ها خوانده شوند، کلید با
+گواهی هم‌خوانی داشته باشد و گواهی واقعاً آن دامنه را پوشش دهد؛ پس از آن این دامنه هم مثل
+بقیه در زبانه‌های «رابط» و «اشتراک» قابل انتخاب می‌شود. گواهی‌های ثبت‌شده در پشتیبان‌گیری
+پایگاه داده هم گنجانده می‌شوند.
+
+اگر ترجیح می‌دهید گواهی را خودتان با Certbot صادر کنید:
+
+```bash
+snap install core; snap refresh core
+snap install --classic certbot
+ln -s /snap/bin/certbot /usr/bin/certbot
+
+certbot certonly --standalone --register-unsafely-without-email --non-interactive --agree-tos -d <Your Domain Name>
+```
+
+سپس `fullchain.pem` / `privkey.pem` حاصل را در زبانه **دامنه‌ها و گواهی‌ها** ثبت کنید.
+
+</details>
+
+<details>
+  <summary>پشت ریورس‌پراکسی</summary>
+
+کلید **TLS توسط ریورس‌پراکسی خاتمه می‌یابد** را روشن کنید تا 2S-UI خودش vhost را بنویسد:
+`/etc/nginx/conf.d/s-ui-proxy-<دامنه>.conf`، که به پنل اشاره می‌کند و هدرهای لازم را
+می‌فرستد، با `nginx -t` بررسی و سپس reload می‌شود، و اگر هر مرحله شکست بخورد همه‌چیز به
+حالت قبل برمی‌گردد و خطای خودِ nginx بازگردانده می‌شود. سرویس اشتراک هم می‌تواند پشت همان
+پراکسی قرار بگیرد.
+
+</details>
+
+## مشارکت
+
+برای راه‌اندازی محیط توسعه، قراردادهای کدنویسی، تست و فرایند pull request به
+[CONTRIBUTING.md](CONTRIBUTING.md) مراجعه کنید.
+
+<details>
+  <summary>ساخت و اجرا از روی سورس</summary>
+
+```shell
+git clone https://github.com/shenaba/2s-ui
+cd 2s-ui
+./runSUI.sh
+```
+
+`build.sh` فرانت‌اند را می‌سازد، آن را برای `//go:embed` در `web/html/` کپی می‌کند و
+باینری را با build tagهای لازم می‌سازد؛ `runSUI.sh` هم همان را اجرا می‌کند. ساخت دستی به
+همان tagها نیاز دارد — به [CONTRIBUTING.md](CONTRIBUTING.md) مراجعه کنید.
+
+</details>
+
+<details>
+  <summary>متغیرهای محیطی</summary>
 
 | متغیر          |                      نوع                       | پیش‌فرض        |
 | -------------- | :--------------------------------------------: | :------------ |
@@ -295,66 +341,9 @@ go build -o sui main.go
 
 </details>
 
-## دامنه‌ها و گواهی‌ها
+## تشکر ویژه
 
-هر چیزی که به TLS مربوط است در زبانه **دامنه‌ها و گواهی‌ها** در تنظیمات پنل قرار دارد.
-پنل و سرویس اشتراک هر کدام دامنه خودشان را انتخاب می‌کنند و مسیر گواهی‌ها به‌دنبال دامنه
-انتخاب‌شده تعیین می‌شود — دیگر لازم نیست مسیر فایل‌ها را دستی جابه‌جا کنید.
-
-### 🔐 گواهی‌های خودکار (ACME / Let's Encrypt) — توصیه‌شده
-
-دامنه را وارد کنید، ایمیل را بیفزایید و دکمه صدور را بزنید: 2S-UI یک گواهی رایگان
-Let's Encrypt می‌گیرد و به‌صورت خودکار تمدید می‌کند. صدور گواهی از طریق **acme.sh** انجام
-می‌شود — پنل در نخستین استفاده، خودش acme.sh را نصب می‌کند (همراه با `socat` که برای
-اعتبارسنجی standalone لازم است) و تمدید خودکار را با cron job خودِ acme.sh فعال می‌کند،
-بنابراین لازم نیست شما هیچ زمان‌بندی‌ای تنظیم کنید.
-پس از انجام این کار، پنل از طریق `https://<your-domain>:2095/app` در دسترس خواهد بود.
-
-روش اعتبارسنجی به‌صورت پیش‌فرض **auto** است — اگر پورت ۸۰ آزاد باشد از standalone
-استفاده می‌کند، در غیر این صورت از nginx در حال اجرا کمک می‌گیرد و در صورت نیاز یک بلوک
-`server_name` حداقلی زیر `/etc/nginx/conf.d` می‌سازد. اگر ترجیح می‌دهید خودتان تصمیم
-بگیرید، می‌توانید صراحتاً **standalone** یا **nginx** را انتخاب کنید. هنگام تمدید، گواهی
-به‌صورت داغ بارگذاری می‌شود و نیازی به راه‌اندازی مجدد نیست.
-
-> نیازمند دسترس‌پذیری پورت TCP **80** از اینترنت است (چالش HTTP-01). برای انتشار پورت ۸۰ در
-> Docker: در روش docker compose خط `80:80` را در `docker-compose.yml` از حالت کامنت خارج کنید،
-> یا در روش docker run گزینه `-p 80:80` را اضافه کنید. گواهی‌ها در `/root/cert/<دامنه>/` با
-> نام‌های `fullchain.pem` / `privkey.pem` ذخیره می‌شوند و پس از راه‌اندازی مجدد باقی می‌مانند
-> (والیومِ دستور Docker بالا همین مسیر را بیرون نگاشت می‌کند). اگر دامنه/پورت نادرست پیکربندی شده باشد، 2S-UI به HTTP بازمی‌گردد.
-> ACME فقط روی Linux کار می‌کند و در Windows پنهان است.
-
-### استفاده از گواهی شخصی
-
-گواهی‌هایی که خودتان مدیریت می‌کنید — Cloudflare origin CA، یک CA سازمانی، یا خروجی
-certbot — در همان زبانه قابل ثبت هستند. 2S-UI بررسی می‌کند که فایل‌ها خوانده شوند، کلید با
-گواهی هم‌خوانی داشته باشد و گواهی واقعاً آن دامنه را پوشش دهد؛ پس از آن این دامنه هم مثل
-بقیه در زبانه‌های «رابط» و «اشتراک» قابل انتخاب می‌شود. گواهی‌های ثبت‌شده در پشتیبان‌گیری
-پایگاه داده هم گنجانده می‌شوند.
-
-### پشت ریورس‌پراکسی
-
-کلید **TLS توسط ریورس‌پراکسی خاتمه می‌یابد** را روشن کنید تا 2S-UI خودش vhost را بنویسد:
-`/etc/nginx/conf.d/s-ui-proxy-<دامنه>.conf`، که به پنل اشاره می‌کند و هدرهای لازم را
-می‌فرستد، با `nginx -t` بررسی و سپس reload می‌شود، و اگر هر مرحله شکست بخورد همه‌چیز به
-حالت قبل برمی‌گردد و خطای خودِ nginx بازگردانده می‌شود. سرویس اشتراک هم می‌تواند پشت همان
-پراکسی قرار بگیرد.
-
-<details>
-  <summary>ترجیح می‌دهید گواهی‌ها را خودتان صادر کنید؟ (Certbot)</summary>
-
-### Certbot
-
-```bash
-snap install core; snap refresh core
-snap install --classic certbot
-ln -s /snap/bin/certbot /usr/bin/certbot
-
-certbot certonly --standalone --register-unsafely-without-email --non-interactive --agree-tos -d <Your Domain Name>
-```
-
-سپس `fullchain.pem` / `privkey.pem` حاصل را در زبانه **دامنه‌ها و گواهی‌ها** ثبت کنید.
-
-</details>
+- [@alireza0](https://github.com/alireza0)
 
 ## ستاره‌دهندگان در طول زمان
 [![Star History Chart](https://api.star-history.com/svg?repos=shenaba/2s-ui&type=Date)](https://star-history.com/#shenaba/2s-ui&Date)
