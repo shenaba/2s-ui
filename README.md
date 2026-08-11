@@ -1,7 +1,7 @@
 # <img src="frontend/public/assets/favicon.svg" width="44" height="44" align="texttop" alt=""> 2S-UI
 [English](README.md) · [فارسی](README.fa.md) · [Tiếng Việt](README.vi.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [Русский](README.ru.md)
 
-2S-UI is an open-source management panel for [sing-box](https://github.com/SagerNet/sing-box), built for deploying and operating self-hosted proxy services. Protocol configuration, routing rules, users and subscriptions, and traffic statistics all live in one interface, in six languages and both themes; the panel and the sing-box core are compiled into a single binary that runs on one machine or across a cluster.
+2S-UI is an open-source management panel for [sing-box](https://github.com/SagerNet/sing-box), built for deploying and operating self-hosted proxy services. Protocol configuration, routing rules, users and subscriptions, and traffic statistics all live in one interface, in six languages and both themes; it runs on a single machine or across a cluster.
 
 2S-UI began as a fork of [s-ui](https://github.com/alireza0/s-ui). It rewrites the frontend in full and introduces multi-node clustering, automatic ACME certificate issuance and renewal, in-panel upgrades, and live user updates that leave established connections intact.
 
@@ -16,10 +16,6 @@
 **If you think this project is helpful to you, you may wish to give a**:star2:
 
 ## Features
-
-A web panel in front of sing-box: forms instead of JSON, a subscription link per
-user, traffic you can watch. sing-box is embedded in the panel binary — one
-process to supervise, one file to deploy.
 
 - **Multi-protocol** — VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC,
   AnyTLS and more, in and out, plus WireGuard/WARP/Tailscale endpoints

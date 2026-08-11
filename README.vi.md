@@ -1,7 +1,7 @@
 # <img src="frontend/public/assets/favicon.svg" width="44" height="44" align="texttop" alt=""> 2S-UI
 [English](README.md) · [فارسی](README.fa.md) · [Tiếng Việt](README.vi.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [Русский](README.ru.md)
 
-2S-UI là bảng điều khiển web mã nguồn mở dành cho [sing-box](https://github.com/SagerNet/sing-box), hướng tới việc triển khai và vận hành dịch vụ proxy tự lưu trữ. Cấu hình giao thức, luật định tuyến, người dùng và subscription, thống kê lưu lượng đều nằm trong cùng một giao diện — sáu ngôn ngữ và hai chế độ sáng/tối; bảng điều khiển cùng lõi sing-box được gói thành một binary duy nhất, đủ cho một máy chủ đơn lẻ và cũng ghép được thành cụm.
+2S-UI là bảng điều khiển web mã nguồn mở dành cho [sing-box](https://github.com/SagerNet/sing-box), hướng tới việc triển khai và vận hành dịch vụ proxy tự lưu trữ. Cấu hình giao thức, luật định tuyến, người dùng và subscription, thống kê lưu lượng đều nằm trong cùng một giao diện — sáu ngôn ngữ và hai chế độ sáng/tối; chạy được trên một máy chủ đơn lẻ và cũng ghép được thành cụm.
 
 2S-UI khởi đầu là một bản fork của [s-ui](https://github.com/alireza0/s-ui): toàn bộ frontend được viết lại, và trên nền đó là cụm đa node, cấp phát cùng gia hạn chứng chỉ ACME tự động, tự cập nhật ngay trong bảng điều khiển, và cập nhật người dùng tại chỗ không làm rớt các kết nối đang mở.
 

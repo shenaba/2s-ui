@@ -1,7 +1,7 @@
 # <img src="frontend/public/assets/favicon.svg" width="44" height="44" align="texttop" alt=""> 2S-UI
 [English](README.md) · [فارسی](README.fa.md) · [Tiếng Việt](README.vi.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [Русский](README.ru.md)
 
-2S-UI 是一個開源的 [Sing-Box](https://github.com/SagerNet/sing-box) 管理面板，面向自架代理服務的部署與維運。協定設定、路由規則、使用者與訂閱、流量統計集中於同一套介面，支援六種語言與深淺雙主題；面板與 sing-box 核心整合為單個執行檔，單機即可運行，多台亦可組成叢集統一管理。
+2S-UI 是一個開源的 [Sing-Box](https://github.com/SagerNet/sing-box) 管理面板，面向自架代理服務的部署與維運。協定設定、路由規則、使用者與訂閱、流量統計集中於同一套介面，支援六種語言與深淺雙主題；單機即可運行，多台亦可組成叢集統一管理。
 
 2S-UI 由 [s-ui](https://github.com/alireza0/s-ui) 分支而來，重寫了整套前端，並引入多節點叢集、ACME 憑證自動簽發與續期、面板內一鍵升級，以及不中斷連線的使用者熱更新。
 
@@ -16,9 +16,6 @@
 **如果你覺得這個專案有幫助，可以給一個** :star2:
 
 ## 功能
-
-為 sing-box 套上一層 Web 面板：用表單取代 JSON，給每位使用者發一條訂閱連結，把流量看住。
-sing-box 內嵌在面板執行檔裡——只有一個行程要顧、一個檔案要部署。
 
 - **多協定** —— 入站出站支援 VLESS、VMess、Trojan、Shadowsocks、Hysteria2、TUIC、
   AnyTLS 等，另有 WireGuard / WARP / Tailscale 三類 Endpoint（[完整列表](#protocols)）
