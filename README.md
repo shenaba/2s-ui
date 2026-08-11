@@ -9,8 +9,6 @@
 [![Downloads](https://img.shields.io/github/downloads/shenaba/2s-ui/total.svg)](https://github.com/shenaba/2s-ui/releases)
 [![License](https://img.shields.io/badge/license-GPL%20V3-blue.svg?longCache=true)](https://www.gnu.org/licenses/gpl-3.0.en.html)
 
-!["Main"](frontend/media/main.png)
-
 > **Disclaimer:** This project is only for personal learning and communication, please do not use it for illegal purposes, please do not use it in a production environment
 
 **If you think this project is helpful to you, you may wish to give a**:star2:
@@ -196,6 +194,8 @@ restart drops every session. Other inbound types still restart.
 English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) · Russian
 
 </details>
+
+!["Main"](frontend/media/main.png)
 
 More screenshots: [frontend/screenshots.md](frontend/screenshots.md)
 

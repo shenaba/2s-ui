@@ -9,8 +9,6 @@
 [![Downloads](https://img.shields.io/github/downloads/shenaba/2s-ui/total.svg)](https://github.com/shenaba/2s-ui/releases)
 [![License](https://img.shields.io/badge/license-GPL%20V3-blue.svg?longCache=true)](https://www.gnu.org/licenses/gpl-3.0.en.html)
 
-!["Main"](frontend/media/main.png)
-
 > **免責聲明：** 本專案僅供個人學習與交流使用，請勿用於非法用途，請勿用於正式環境。
 
 **如果你覺得這個專案有幫助，可以給一個** :star2:
@@ -189,6 +187,8 @@ TUIC —— 這對 QUIC 系協定尤其重要，重建監聽器會中斷它們�
 English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) · Russian
 
 </details>
+
+!["Main"](frontend/media/main.png)
 
 更多螢幕截圖：[frontend/screenshots.md](frontend/screenshots.md)
 
