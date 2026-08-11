@@ -41,6 +41,12 @@ type Client struct {
 	CreatedAt int64 `json:"createdAt" form:"createdAt" gorm:"default:0;not null"`
 	OnlineAt  int64 `json:"onlineAt" form:"onlineAt" gorm:"default:0;not null"`
 
+	// Cap on concurrently connected source IPs; 0 = unlimited. Enforced by the
+	// panel's own periodic scan of the connection tracker, not by sing-box.
+	// Indexed because the scan runs every 10s asking for the rows above zero,
+	// which are the rare ones -- exactly the shape an index answers cheaply.
+	LimitIp int `json:"limitIp" form:"limitIp" gorm:"default:0;not null;index"`
+
 	// Delay start and periodic reset
 	DelayStart bool  `json:"delayStart" form:"delayStart" gorm:"default:false;not null"`
 	AutoReset  bool  `json:"autoReset" form:"autoReset" gorm:"default:false;not null"`

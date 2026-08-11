@@ -116,6 +116,8 @@ func (a *APIHandler) getHandler(c *gin.Context) {
 		a.ApiService.GetStatus(c)
 	case "onlines":
 		a.ApiService.GetOnlines(c)
+	case "onlineIps":
+		a.ApiService.GetOnlineIps(c)
 	case "logs":
 		a.ApiService.GetLogs(c)
 	case "changes":

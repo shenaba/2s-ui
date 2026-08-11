@@ -19,6 +19,7 @@ export interface Client {
   down: number
   desc: string
   group: string
+  limitIp?: number
   delayStart?: boolean
   autoReset?: boolean
   resetDays?: number
@@ -39,6 +40,7 @@ const defaultClient: Client = {
   down: 0,
   desc: "",
   group: "",
+  limitIp: 0,
   delayStart: false,
   autoReset: false,
   resetDays: 0,

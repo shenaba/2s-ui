@@ -115,9 +115,14 @@
           <SwitchLabel v-model="autoReset" :label="$t('client.autoReset')" />
         </div>
 
-        <Field v-if="client.autoReset || client.delayStart" :label="$t('client.resetDays')">
-          <input class="input mono" type="number" min="1" v-model.number="resetDays" />
-        </Field>
+        <div class="grid2" style="margin-bottom: 15px;">
+          <Field :label="$t('ui.ipLimit')" :hint="$t('ui.unlimitedHint')" :mb="0">
+            <input class="input mono" type="number" min="0" v-model.number="limitIp" />
+          </Field>
+          <Field v-if="client.autoReset || client.delayStart" :label="$t('client.resetDays')" :mb="0">
+            <input class="input mono" type="number" min="1" v-model.number="resetDays" />
+          </Field>
+        </div>
 
         <template v-if="!isNew && client.autoReset">
           <hr class="form-divider" />
@@ -376,6 +381,13 @@ const volumeGiB = computed({
   set: (v: number | string) => {
     const n = Number(v)
     client.value.volume = n > 0 ? n * (1024 ** 3) : 0
+  },
+})
+const limitIp = computed({
+  get: () => client.value.limitIp ?? 0,
+  set: (v: number | string | null) => {
+    const n = Math.floor(Number(v))
+    client.value.limitIp = n > 0 ? n : 0
   },
 })
 const delayStart = computed({

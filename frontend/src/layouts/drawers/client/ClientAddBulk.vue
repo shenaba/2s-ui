@@ -53,6 +53,10 @@
       </Field>
     </div>
 
+    <Field :label="$t('ui.ipLimit')" :hint="$t('ui.unlimitedHint')">
+      <input class="input mono" type="number" min="0" v-model.number="bulkData.limitIp" />
+    </Field>
+
     <div class="grid2" style="margin-bottom: 15px;">
       <SwitchLabel v-model="bulkData.delayStart" :label="$t('client.delayStart')" />
       <SwitchLabel v-model="bulkData.autoReset" :label="$t('client.autoReset')" />
@@ -130,6 +134,7 @@ const bulkData = ref({
   clientInbounds: [] as number[],
   expiry: 0,
   Volume: 0,
+  limitIp: 0,
   delayStart: false,
   autoReset: false,
   resetDays: 0,
@@ -179,6 +184,7 @@ const resetData = () => {
     clientInbounds: [],
     expiry: 0,
     Volume: 0,
+    limitIp: 0,
     delayStart: false,
     autoReset: false,
     resetDays: 0,
@@ -225,6 +231,7 @@ const saveChanges = async () => {
       inbounds: bulkData.value.clientInbounds.length > 0 ? bulkData.value.clientInbounds.sort() : [],
       links: [],
       volume: bulkData.value.Volume * (1024 ** 3),
+      limitIp: bulkData.value.limitIp > 0 ? Math.floor(bulkData.value.limitIp) : 0,
       expiry: (bulkData.value.delayStart && !bulkData.value.autoReset) ? 0 : bulkData.value.expiry,
       up: 0,
       down: 0,

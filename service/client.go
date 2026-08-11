@@ -55,7 +55,7 @@ func (s *ClientService) GetAll() (*[]model.Client, error) {
 // config carries every protocol's credentials. This projection feeds the client
 // list, the websocket full payload and every save response, so anything added
 // here is paid on all three. Consumers needing the full row fetch it by id.
-const clientListColumns = "`id`, `enable`, `name`, `desc`, `group`, `remark`, `inbounds`, `up`, `down`, `volume`, `expiry`, `created_at`, `online_at`"
+const clientListColumns = "`id`, `enable`, `name`, `desc`, `group`, `remark`, `inbounds`, `up`, `down`, `volume`, `expiry`, `created_at`, `online_at`, `limit_ip`"
 
 // GetAllWithConfig adds config for the cluster reconcile diff only: clientDiffers
 // compares it, and an absent key reads as "always different", which would re-push

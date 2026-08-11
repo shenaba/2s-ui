@@ -365,6 +365,10 @@ type nodeClientState struct {
 	Links    json.RawMessage `json:"links"`
 	Up       int64           `json:"up"`
 	Down     int64           `json:"down"`
+	// Pointer so "the node is too old to have the column" stays distinct from
+	// "the node really has no limit": read as 0, a limited client would differ
+	// on every round forever, re-pushed each time into an unpruned changes row.
+	LimitIp *int `json:"limitIp"`
 }
 
 // Reconcile makes a node's @cluster clients match the master's expectation:
@@ -535,6 +539,12 @@ func (s *NodeSyncService) expectedClients(nodeId uint, tagToId map[string]uint) 
 			"expiry": c.Expiry, // absolute; node self-expires consistently
 			"group":  clusterGroup,
 			"desc":   c.Desc,
+			// Copied verbatim, unlike volume. A quota is additive, so replicating
+			// 100 GB to three nodes would hand out 300 GB; an IP cap is not --
+			// "at most two devices" means two per node, and since nothing
+			// aggregates IPs across the cluster, replicating the number is both
+			// the correct reading and strictly stricter than a global count.
+			"limitIp": c.LimitIp,
 		}
 	}
 	return expected, nil
@@ -611,6 +621,12 @@ func clientDiffers(want map[string]interface{}, cur nodeClientState) bool {
 		return true
 	}
 	if !jsonEqual(want["inbounds"], cur.Inbounds) {
+		return true
+	}
+	// Same "absent means cannot compare" stance as config above: a node too old
+	// to report the column omits it, and treating that as 0 would re-push every
+	// limited client on every round.
+	if cur.LimitIp != nil && int(asInt64(want["limitIp"])) != *cur.LimitIp {
 		return true
 	}
 	return false

@@ -26,6 +26,9 @@ const Data = defineStore('Data', {
     tlsConfigs: <any[]>[],
     nodes: <any[]>[],
     nodesStatus: <Record<number, NodeStatus>>{},
+    // client name -> currently admitted source IP count. Only clients with a
+    // limit and at least one live IP appear; readers fall back to 0.
+    ipCounts: <Record<string, number>>{},
   }),
   getters: {
     // Detour and route targets, inbound side: every inbound plus the endpoints
@@ -49,6 +52,7 @@ const Data = defineStore('Data', {
     applyLive(obj: any) {
       if (obj.onlines) this.onlines = obj.onlines
       if (Object.hasOwn(obj, 'nodesStatus')) this.nodesStatus = obj.nodesStatus ?? {}
+      if (Object.hasOwn(obj, 'ipCounts')) this.ipCounts = obj.ipCounts ?? {}
       if (obj.lastLog) {
         push.error({
           title: i18n.global.t('error.core'),

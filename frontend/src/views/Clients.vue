@@ -26,6 +26,7 @@
     :tag="stats.tag"
     @close="stats.visible = false"
   />
+  <ClientIpsModal :visible="ips.visible" :name="ips.name" @close="ips.visible = false" />
 
   <!-- delete confirmation (single row or bulk) -->
   <DeleteConfirm :open="del.visible" :loading="deleting" @close="del.visible = false" @confirm="confirmDelete" />
@@ -113,8 +114,19 @@
                 </span>
               </td>
               <td>
-                <Chip v-if="isOnline(c.name)" color="emerald" dot>{{ $t('ui.online') }}</Chip>
-                <span v-else style="color: var(--text-3); font-size: 13px;">—</span>
+                <span style="display: inline-flex; gap: 5px; align-items: center;">
+                  <Chip v-if="isOnline(c.name)" color="emerald" dot>{{ $t('ui.online') }}</Chip>
+                  <span v-else style="color: var(--text-3); font-size: 13px;">—</span>
+                  <Chip
+                    v-if="c.limitIp > 0"
+                    :color="ipChipColor(c)"
+                    style="cursor: pointer;"
+                    :title="ipCountTitle"
+                    @click.stop="showIps(c.name)"
+                  >
+                    <span class="mono">{{ ipCount(c) }}/{{ c.limitIp }}</span>
+                  </Chip>
+                </span>
               </td>
               <td class="actions-td">
                 <div style="display: flex; gap: 2px; justify-content: flex-end; align-items: center;" @click.stop>
@@ -190,6 +202,17 @@
           <span class="v">
             <Chip v-if="isOnline(c.name)" color="emerald" dot>{{ $t('ui.online') }}</Chip>
             <template v-else>—</template>
+            <!-- Spaced with a logical margin rather than a flex gap: .v relies on
+                 text-overflow to clip a long status, which a flex container drops. -->
+            <Chip
+              v-if="c.limitIp > 0"
+              :color="ipChipColor(c)"
+              style="cursor: pointer; margin-inline-start: 5px;"
+              :title="ipCountTitle"
+              @click.stop="showIps(c.name)"
+            >
+              <span class="mono">{{ ipCount(c) }}/{{ c.limitIp }}</span>
+            </Chip>
           </span>
         </div>
         <div class="m-actions" @click.stop>
@@ -243,6 +266,7 @@ import ClientAddBulk from '@/layouts/drawers/client/ClientAddBulk.vue'
 import ClientEditBulk from '@/layouts/drawers/client/ClientEditBulk.vue'
 import QrModal from '@/layouts/drawers/QrModal.vue'
 import StatsModal from '@/layouts/drawers/StatsModal.vue'
+import ClientIpsModal from '@/layouts/drawers/ClientIpsModal.vue'
 
 const { t } = useI18n({ useScope: 'global' })
 const dataStore = Data()
@@ -418,6 +442,29 @@ const stats = ref({ visible: false, resource: 'user', tag: '' })
 const showStats = (tag: string) => {
   stats.value.tag = tag
   stats.value.visible = true
+}
+
+// ---------------- IP limit ----------------
+// Only clients holding at least one admitted IP are pushed, so an absent name
+// means zero rather than unknown.
+const ipCount = (c: any): number => dataStore.ipCounts?.[c.name] ?? 0
+// The number needs two caveats spelled out, because neither is guessable from
+// "1/2": idle sessions are excluded (so it can read lower than the popup's
+// list), and in a cluster it covers this panel only — each node enforces and
+// counts its own, and nothing aggregates them.
+const ipCountTitle = computed(() =>
+  (dataStore.nodes?.length ?? 0) > 0 ? t('ui.ipCountLocalHint') : t('ui.ipCountHint'),
+)
+const ipChipColor = (c: any): string => {
+  const n = ipCount(c)
+  if (n > c.limitIp) return 'rose'
+  if (n == c.limitIp) return 'amber'
+  return 'emerald'
+}
+const ips = ref({ visible: false, name: '' })
+const showIps = (name: string) => {
+  ips.value.name = name
+  ips.value.visible = true
 }
 
 // ---------------- delete (single + bulk, with confirm) ----------------

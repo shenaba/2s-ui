@@ -225,6 +225,14 @@ func (a *ApiService) GetOnlines(c *gin.Context) {
 	jsonObj(c, onlines, err)
 }
 
+// GetOnlineIps lists one client's live source IPs. Kept apart from GetOnlines
+// rather than added to it as a query parameter: that endpoint returns three tag
+// lists, and switching its shape on a parameter would break every caller that
+// does not pass one.
+func (a *ApiService) GetOnlineIps(c *gin.Context) {
+	jsonObj(c, gin.H{"ips": service.OnlineIPsOf(c.Query("name"))}, nil)
+}
+
 func (a *ApiService) GetLogs(c *gin.Context) {
 	count := c.Query("c")
 	level := c.Query("l")

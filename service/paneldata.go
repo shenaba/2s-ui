@@ -46,6 +46,10 @@ func (s *PanelDataService) OnlinesPayload() (map[string]interface{}, error) {
 		return nil, err
 	}
 	data["onlines"] = onlines
+	// Always sent, even empty. The frontend treats a missing key as "unchanged",
+	// so omitting it once nobody is over their limit would leave the last
+	// non-empty counts on screen forever.
+	data["ipCounts"] = GetIPCounts()
 	return data, nil
 }
 

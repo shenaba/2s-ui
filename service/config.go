@@ -53,8 +53,11 @@ type SingBoxConfig struct {
 	Experimental json.RawMessage   `json:"experimental"`
 }
 
-func NewConfigService(core *core.Core) *ConfigService {
-	corePtr = core
+func NewConfigService(c *core.Core) *ConfigService {
+	corePtr = c
+	// The gate is read per connection rather than captured by each tracker, so
+	// installing it here does not have to be ordered against the first StartCore.
+	core.SetConnGate(ipLimits.allow)
 	return &ConfigService{}
 }
 

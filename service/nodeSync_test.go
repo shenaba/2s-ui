@@ -2,7 +2,11 @@ package service
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"testing"
+
+	"github.com/shenaba/2s-ui/database"
+	"github.com/shenaba/2s-ui/database/model"
 )
 
 func TestIsNodeOwnedRemark(t *testing.T) {
@@ -54,6 +58,102 @@ func TestIsNodeLinkFor(t *testing.T) {
 				t.Errorf("isNodeLinkFor(%q, %q) = %v, want %v", tc.remark, tc.tag, got, tc.want)
 			}
 		})
+	}
+}
+
+// expectedClients is the single place that decides what a node receives, and
+// nothing else asserts on its output: a field dropped from that map would ship
+// silently, leaving the node to enforce a limit it was never told about. That
+// makes it worth pinning the payload here rather than only in a live cluster.
+func TestExpectedClientsCarriesLimitIp(t *testing.T) {
+	// expectedClients reads the package-level handle rather than taking one, so
+	// the DB has to be installed globally. Same-package tests run serially and
+	// nothing else here reads it, so this stays contained.
+	dir := t.TempDir()
+	if err := database.InitDB(filepath.Join(dir, "test.db")); err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	db := database.GetDB()
+	// Registered after TempDir's own cleanup, so LIFO runs it first: Windows
+	// refuses to delete the file while the pool still holds it open.
+	t.Cleanup(func() {
+		if sqlDB, err := db.DB(); err == nil {
+			sqlDB.Close()
+		}
+	})
+
+	const nodeId = uint(7)
+	node := nodeId
+	replica := model.Inbound{
+		Type: "vless", Tag: "vless-replica", NodeId: &node,
+		Addrs: json.RawMessage(`[]`), OutJson: json.RawMessage(`{}`), Options: json.RawMessage(`{}`),
+	}
+	if err := db.Create(&replica).Error; err != nil {
+		t.Fatalf("seed replica inbound: %v", err)
+	}
+	inbounds, err := json.Marshal([]uint{replica.Id})
+	if err != nil {
+		t.Fatalf("marshal inbounds: %v", err)
+	}
+	seed := model.Client{
+		Name: "capped", Enable: true, LimitIp: 3, Volume: 100 << 30, Expiry: 1786000000,
+		Inbounds: inbounds, Links: json.RawMessage(`[]`), Config: json.RawMessage(`{}`),
+	}
+	if err := db.Create(&seed).Error; err != nil {
+		t.Fatalf("seed client: %v", err)
+	}
+
+	var svc NodeSyncService
+	expected, err := svc.expectedClients(nodeId, map[string]uint{"vless-replica": 42})
+	if err != nil {
+		t.Fatalf("expectedClients: %v", err)
+	}
+	got, ok := expected["capped"]
+	if !ok {
+		t.Fatalf("client missing from the push payload: %v", expected)
+	}
+
+	if asInt64(got["limitIp"]) != 3 {
+		t.Errorf("limitIp = %v, want the master's 3 copied verbatim", got["limitIp"])
+	}
+	// The contrast that makes the above meaningful: a quota is additive across
+	// nodes so it is deliberately zeroed, an IP cap is not so it is replicated.
+	if asInt64(got["volume"]) != 0 {
+		t.Errorf("volume = %v, want 0 — quota stays the master's job", got["volume"])
+	}
+	if asInt64(got["expiry"]) != 1786000000 {
+		t.Errorf("expiry = %v, want it copied", got["expiry"])
+	}
+}
+
+// The node answers with a marshalled model.Client and the master reads it back
+// as a nodeClientState. The two json tags have to agree: a mismatch leaves
+// LimitIp nil forever, which clientDiffers reads as "cannot compare" — so the
+// limit would silently never sync, with nothing failing anywhere.
+func TestNodeClientStateReadsLimitIpBackFromAClient(t *testing.T) {
+	raw, err := json.Marshal(model.Client{Name: "x", LimitIp: 4})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var state nodeClientState
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if state.LimitIp == nil {
+		t.Fatalf("LimitIp came back nil from %s — the json tags disagree", raw)
+	}
+	if *state.LimitIp != 4 {
+		t.Errorf("LimitIp = %d, want 4", *state.LimitIp)
+	}
+
+	// A node too old to have the column omits the key entirely, which must stay
+	// distinguishable from a real zero.
+	var old nodeClientState
+	if err := json.Unmarshal([]byte(`{"name":"x"}`), &old); err != nil {
+		t.Fatalf("unmarshal legacy: %v", err)
+	}
+	if old.LimitIp != nil {
+		t.Errorf("LimitIp = %v for a payload without the key, want nil", *old.LimitIp)
 	}
 }
 
@@ -143,6 +243,26 @@ func TestClientDiffers(t *testing.T) {
 		c.Enable = false
 		if !clientDiffers(want(nil), c) {
 			t.Error("enable change missed when config was absent")
+		}
+	})
+
+	t.Run("limitIp change is detected", func(t *testing.T) {
+		two := 2
+		c := cur
+		c.LimitIp = &two
+		if !clientDiffers(want(map[string]interface{}{"limitIp": 3}), c) {
+			t.Error("changed IP limit not detected")
+		}
+		if clientDiffers(want(map[string]interface{}{"limitIp": 2}), c) {
+			t.Error("matching IP limit reported as differing")
+		}
+	})
+
+	// Same guard as config: a node predating the column omits it, and reading
+	// that as 0 would re-push every limited client on every round forever.
+	t.Run("absent node limitIp is not a difference", func(t *testing.T) {
+		if clientDiffers(want(map[string]interface{}{"limitIp": 2}), cur) {
+			t.Error("node without a limit_ip column reported as differing")
 		}
 	})
 }

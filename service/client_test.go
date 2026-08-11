@@ -126,6 +126,67 @@ func TestSaveEditbulkRenames(t *testing.T) {
 	}
 }
 
+// limit_ip rides in the client list projection, which is what editbulk submits
+// back. Two mistakes zero it here: leaving it out of clientListColumns (the SPA
+// never receives it, so the round-trip writes 0), or adding it to
+// findInboundsChanges' fillOmitted list (the old value would overwrite whatever
+// the request carried, making bulk edits of the limit impossible).
+func TestSaveEditbulkKeepsLimitIp(t *testing.T) {
+	db := newTestDB(t)
+	var svc ClientService
+
+	seeded := model.Client{
+		Name: "a", Group: "user", LimitIp: 3,
+		Inbounds: json.RawMessage(`[]`), Links: json.RawMessage(`[]`), Config: json.RawMessage(`{}`),
+	}
+	if err := db.Create(&seeded).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Exactly what the SPA sends back: the list projection, unchanged.
+	var projected []model.Client
+	if err := db.Model(model.Client{}).Select(clientListColumns).Scan(&projected).Error; err != nil {
+		t.Fatalf("read projection: %v", err)
+	}
+	if len(projected) != 1 || projected[0].LimitIp != 3 {
+		t.Fatalf("clientListColumns does not carry limit_ip: %+v", projected)
+	}
+
+	data, err := json.Marshal(projected)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, err := svc.Save(db, "editbulk", data, "example.com"); err != nil {
+		t.Fatalf("editbulk: %v", err)
+	}
+
+	var after model.Client
+	if err := db.Model(model.Client{}).Where("id = ?", seeded.Id).First(&after).Error; err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if after.LimitIp != 3 {
+		t.Errorf("LimitIp = %d after a bulk edit that did not touch it, want 3", after.LimitIp)
+	}
+
+	t.Run("a new value goes through", func(t *testing.T) {
+		projected[0].LimitIp = 5
+		data, err := json.Marshal(projected)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if _, err := svc.Save(db, "editbulk", data, "example.com"); err != nil {
+			t.Fatalf("editbulk: %v", err)
+		}
+		var after model.Client
+		if err := db.Model(model.Client{}).Where("id = ?", seeded.Id).First(&after).Error; err != nil {
+			t.Fatalf("read back: %v", err)
+		}
+		if after.LimitIp != 5 {
+			t.Errorf("LimitIp = %d, want the submitted 5", after.LimitIp)
+		}
+	})
+}
+
 // payloadFields is what separates a master's node push (omits the counters, so
 // they must be preserved) from the SPA's per-client Reset (sends zeroed ones,
 // which must be written). Getting it wrong either wipes a node's traffic
@@ -138,10 +199,13 @@ func TestPayloadFields(t *testing.T) {
 	}{
 		{
 			name: "node push omits the counters",
-			data: `{"name":"x","enable":true,"config":{},"inbounds":[1],"links":[],"volume":0,"expiry":0,"group":"@cluster","desc":""}`,
+			// Mirrors expectedClients' payload field for field; keep the two in
+			// step, since this doubles as the record of what a push carries.
+			data: `{"name":"x","enable":true,"config":{},"inbounds":[1],"links":[],"volume":0,"expiry":0,"group":"@cluster","desc":"","limitIp":0}`,
 			want: map[string]bool{
 				"name": true, "enable": true, "config": true, "inbounds": true,
-				"links": true, "volume": true, "expiry": true, "group": true, "desc": true,
+				"links": true, "volume": true, "expiry": true, "group": true,
+				"desc": true, "limitIp": true,
 			},
 		},
 		{

@@ -30,6 +30,8 @@ func (c *CronJob) Start(loc *time.Location, trafficAge int, statsBucketSeconds i
 	go func() {
 		// Start stats job
 		c.cron.AddJob("@every 10s", NewStatsJob(trafficAge > 0, statsBucketSeconds))
+		// Enforce per-client IP limits (no-op unless some client sets one)
+		c.cron.AddJob("@every 10s", NewIpLimitJob())
 		// Start expiry job
 		c.cron.AddJob("@every 1m", NewDepleteJob())
 		// Periodic global traffic reset, only when a valid cron spec is configured
