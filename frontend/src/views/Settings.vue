@@ -292,6 +292,13 @@ import ToggleRow from '@/components/ui/ToggleRow.vue'
 import DomainInput from '@/components/ui/DomainInput.vue'
 import CertsPanel from '@/components/settings/CertsPanel.vue'
 import { loadCerts, certsLoaded, findCert, daysLeft } from '@/plugins/certs'
+import {
+  proxyInputs, loopbackListens, normalizePath, panelIsTLS, buildURL, uriPathOf,
+} from '@/plugins/settingsPath'
+import {
+  levels, dnsTypes, defaultLog, defaultInb, defaultExp, defaultDns,
+  geositeList, geoList, geo, defaultConfig, clashLevels, rulesIP,
+} from '@/plugins/subExtDefaults'
 
 const tab = ref('interface')
 const loading = ref(false)
@@ -444,12 +451,6 @@ const setData = (data: any) => {
   oldSettings.value = { ...settings.value }
 }
 
-// nginx 那份 vhost 里写死了这些值,任何一个变了都得重新生成并重启对应的服务
-const proxyInputs = [
-  'webNginx', 'webDomain', 'webPort', 'webPath', 'webListen', 'webCertFile', 'webKeyFile',
-  'subNginx', 'subDomain', 'subPort', 'subPath', 'subListen', 'subCertFile', 'subKeyFile',
-]
-
 const save = async () => {
   const now = settings.value as Record<string, any>
   const before = oldSettings.value
@@ -580,16 +581,6 @@ const save = async () => {
   loading.value = false
 }
 
-// 路径规整成前后都带斜杠,与后端 normalizeProxyPath 一致——两边拼出的对外地址必须逐字
-// 相同,否则「这个 URI 是不是我们自动填的」判不出来,关掉反代时就清不掉那个死地址。
-const normalizePath = (p: string) => {
-  let s = (p ?? '').trim()
-  if (s === '') s = '/'
-  if (!s.startsWith('/')) s = '/' + s
-  if (!s.endsWith('/')) s += '/'
-  return s
-}
-
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 const restartApp = async () => {
@@ -601,35 +592,12 @@ const restartApp = async () => {
     // 没填则 replace("") 原地打转。
     let url = settings.value.webURI
     if (url === "") {
-      url = buildURL(settings.value.webDomain, settings.value.webPort.toString(), panelIsTLS(), settings.value.webPath)
+      url = buildURL(settings.value.webDomain, settings.value.webPort.toString(), panelIsTLS(settings.value), settings.value.webPath)
     }
     await sleep(3000)
     window.location.replace(url)
   }
   loading.value = false
-}
-
-// 面板重启后会在 http 还是 https 上。判定优先级必须跟 web.go 一致:webNginx 最先
-// 短路,面板只跑 HTTP、根本不看证书字段;否则有证书路径就是 HTTPS。
-// 跳转地址靠它拼,判错就把人送到一个打不开的地址上——而那时面板已经重启完了,
-// 没有第二次机会。
-const panelIsTLS = () =>
-  settings.value.webNginx !== "true" &&
-  (settings.value.webCertMode === "acme" || settings.value.webCertFile !== "" || settings.value.webKeyFile !== "")
-
-const buildURL = (host: string, port: string, isTLS: boolean, path: string) => {
-  if (!host || host.length == 0) host = window.location.hostname
-  if (!port || port.length == 0) port = window.location.port
-
-  const protocol = isTLS ? "https:" : "http:"
-
-  if (port === "" || (isTLS && port === "443") || (!isTLS && port === "80")) {
-    port = ""
-  } else {
-    port = `:${port}`
-  }
-
-  return `${protocol}//${host}${port}${path}settings`
 }
 
 // 高级选项:由反向代理终结 TLS(面板保持 HTTP)。沿用 webNginx 键,web.go 对它的语义不变
@@ -640,7 +608,6 @@ const webBehindProxy = computed({
 
 // 反代模式下面板跑明文 HTTP,监听地址若不是回环(webListen 为空即 0.0.0.0),
 // 明文端口会直接暴露公网、绕过代理的 TLS——仅在这种真有风险时才追加警告,避免常驻噪音
-const loopbackListens = ['127.0.0.1', 'localhost', '::1', '[::1]']
 const behindProxyDesc = computed(() => {
   const base = i18n.global.t('setting.behindProxyHint')
   if (!webBehindProxy.value || loopbackListens.includes(settings.value.webListen.trim())) return base
@@ -659,17 +626,6 @@ const subBehindProxyDesc = computed(() => {
   if (!subBehindProxy.value || loopbackListens.includes(settings.value.subListen.trim())) return base
   return base + ' ' + i18n.global.t('setting.behindProxyListenWarn')
 })
-
-// 取手填对外地址里的路径;不是可解析的绝对 URL 就返回空(那件事另有地方报)。
-const uriPathOf = (uri: string) => {
-  const v = (uri ?? '').trim()
-  if (!v) return ''
-  try {
-    return normalizePath(new URL(v).pathname)
-  } catch {
-    return ''
-  }
-}
 
 // Panel URI is not a route: the served path — and the generated nginx location — comes from Base
 // URI. The names hide that, so editing the URI to move the panel is a common, expensive mistake.
@@ -797,7 +753,7 @@ const saveAndRestart = async (isWeb: boolean) => {
   // 有证书;如今保存设置也走这条路,而域名换成一个没有证书的就会让面板退回 HTTP——
   // 写死 https 会把人跳到打不开的地址,且面板已经重启完,没有第二次机会。
   const target = isWeb
-    ? (settings.value.webURI || buildURL(settings.value.webDomain, settings.value.webPort.toString(), panelIsTLS(), settings.value.webPath))
+    ? (settings.value.webURI || buildURL(settings.value.webDomain, settings.value.webPort.toString(), panelIsTLS(settings.value), settings.value.webPath))
     : window.location.href
   await sleep(3000)
   await waitReachable(target)
@@ -882,191 +838,6 @@ const proxyBlocked = computed(() => {
  * =================================================================== */
 
 const subJsonExt = ref<any>({})
-
-const levels = ["trace", "debug", "info", "warn", "error", "fatal", "panic"]
-const dnsTypes = ['udp', 'tcp', 'local', 'tls', 'quic', 'h3']
-
-const defaultLog = {
-  "level": "info",
-  "timestamp": true
-}
-
-const defaultInb = [
-  {
-    "type": "tun",
-    "address": [
-      "172.19.0.1/30",
-      "fdfe:dcba:9876::1/126"
-    ],
-    "mtu": 9000,
-    "auto_route": true,
-    "strict_route": false,
-    "endpoint_independent_nat": false,
-    "stack": "mixed",
-    "exclude_package": <string[]>[],
-    "platform": {
-      "http_proxy": {
-        "enabled": true,
-        "server": "127.0.0.1",
-        "server_port": 2080
-      }
-    }
-  },
-  {
-    "type": "mixed",
-    "listen": "127.0.0.1",
-    "listen_port": 2080,
-    "users": []
-  }
-]
-
-const defaultExp = {
-  "clash_api": {
-    "external_controller": "127.0.0.1:9090",
-    "external_ui": "ui",
-    "secret": "",
-    "external_ui_download_url": "https://mirror.ghproxy.com/https://github.com/MetaCubeX/Yacd-meta/archive/gh-pages.zip",
-    "external_ui_download_detour": "direct",
-    "default_mode": "rule"
-  },
-  "cache_file": {
-    "enabled": true,
-    "store_fakeip": false
-  }
-}
-
-const defaultDns = {
-  "servers": [
-    {
-      "type": "tcp",
-      "tag": "proxy-dns",
-      "server": "8.8.8.8",
-      "server_port": 53,
-      "detour": "proxy",
-      "domain_resolver": "local-dns",
-    },
-    {
-      "tag": "direct-dns",
-      "type": "local",
-    },
-    {
-      "tag": "local-dns",
-      "type": "local",
-    }
-  ],
-  "rules": [
-    {
-      "clash_mode": "Global",
-      "source_ip_cidr": [
-        "172.19.0.0/30",
-        "fdfe:dcba:9876::1/126"
-      ],
-      "action": "route",
-      "server": "proxy-dns"
-    },
-    {
-      "clash_mode": "Direct",
-      "action": "route",
-      "server": "direct-dns"
-    },
-    {
-      "source_ip_cidr": [
-        "172.19.0.0/30",
-        "fdfe:dcba:9876::1/126"
-      ],
-      "action": "route",
-      "server": "proxy-dns"
-    },
-  ],
-  "final": "local-dns",
-  "strategy": "prefer_ipv4"
-}
-
-const geositeList = [
-  { title: "Private", value: "geosite-private" },
-  { title: "Ads", value: "geosite-ads" },
-  { title: "🇮🇷 Iran", value: "geosite-ir" },
-  { title: "🇨🇳 China", value: "geosite-cn" },
-  { title: "🇻🇳 Vietnam", value: "geosite-vn" },
-]
-
-const geoList = [
-  { title: "Site-Private", value: "geosite-private" },
-  { title: "IP-Private", value: "geoip-private" },
-  { title: "Site-Ads", value: "geosite-ads" },
-  { title: "🇮🇷 Site-Iran", value: "geosite-ir" },
-  { title: "🇮🇷 IP-Iran", value: "geoip-ir" },
-  { title: "🇨🇳 Site-China", value: "geosite-cn" },
-  { title: "🇨🇳 IP-China", value: "geoip-cn" },
-  { title: "🇻🇳 Site-Vietnam", value: "geosite-vn" },
-  { title: "🇻🇳 IP-Vietnam", value: "geoip-vn" },
-]
-
-const geo = [
-  {
-    tag: "geosite-ads",
-    type: "remote",
-    format: "binary",
-    url: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/category-ads-all.srs",
-    download_detour: "direct"
-  },
-  {
-    tag: "geosite-private",
-    type: "remote",
-    format: "binary",
-    url: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/private.srs",
-    download_detour: "direct"
-  },
-  {
-    tag: "geosite-ir",
-    type: "remote",
-    format: "binary",
-    url: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/category-ir.srs",
-    download_detour: "direct"
-  },
-  {
-    tag: "geosite-cn",
-    type: "remote",
-    format: "binary",
-    url: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs",
-    download_detour: "direct"
-  },
-  {
-    tag: "geosite-vn",
-    type: "remote",
-    format: "binary",
-    url: "https://github.com/Thaomtam/Geosite-vn/raw/rule-set/Geosite-vn.srs",
-    download_detour: "direct"
-  },
-  {
-    tag: "geoip-private",
-    type: "remote",
-    format: "binary",
-    url: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/private.srs",
-    download_detour: "direct"
-  },
-  {
-    tag: "geoip-ir",
-    type: "remote",
-    format: "binary",
-    url: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/ir.srs",
-    download_detour: "direct"
-  },
-  {
-    tag: "geoip-cn",
-    type: "remote",
-    format: "binary",
-    url: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/cn.srs",
-    download_detour: "direct"
-  },
-  {
-    tag: "geoip-vn",
-    type: "remote",
-    format: "binary",
-    url: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/vn.srs",
-    download_detour: "direct"
-  }
-]
 
 // 解析 settings.subJsonExt → 本地对象;并按旧实现把规范化后的 JSON 回写
 const loadSubJsonExt = () => {
@@ -1281,57 +1052,6 @@ const clashSprtAll = computed({
   get: () => { return settings.value.subClashSprtAll == "true" },
   set: (v: boolean) => { settings.value.subClashSprtAll = v ? "true" : "false" }
 })
-
-const defaultConfig: any = {
-  "mixed-port": 7890,
-  "allow-lan": false,
-  "mode": "rule",
-  "log-level": "info",
-  "external-controller": "127.0.0.1:9090",
-  "tun": {
-    "enable": true,
-    "stack": "system",
-    "auto-route": true,
-    "auto-detect-interface": true,
-    "dns-hijack": ["any:53"],
-  },
-  "dns": {
-    "enable": true,
-    "ipv6": false,
-    "enhanced-mode": "fake-ip",
-    "fake-ip-range": "198.18.0.1/16",
-    "default-nameserver": ["8.8.8.8", "1.1.1.1"],
-    "nameserver": [
-      "https://doh.pub/dns-query",
-      "https://1.0.0.1/dns-query"
-    ],
-    "fallback": ["tcp://9.9.9.9:53"],
-    "fake-ip-filter": ["*.lan", "localhost", "*.local"]
-  },
-  "rules": [
-    "GEOIP,Private,DIRECT",
-    "MATCH,Proxy"
-  ]
-}
-
-const clashLevels = ['debug', 'info', 'warning', 'error']
-
-const rulesIP = [
-  { title: 'Private-Direct', value: 'GEOIP,Private,DIRECT' },
-  { title: 'Private-Block', value: 'GEOIP,Private,REJECT' },
-  { title: 'LAN-Direct', value: 'GEOIP,LAN,DIRECT' },
-  { title: 'LAN-Block', value: 'GEOIP,LAN,REJECT' },
-  { title: 'Ads-Direct', value: 'GEOIP,Ads,DIRECT' },
-  { title: 'Ads-Block', value: 'GEOIP,Ads,REJECT' },
-  { title: '🇨🇳 China-Direct', value: 'GEOIP,CN,DIRECT' },
-  { title: '🇨🇳 China-Block', value: 'GEOIP,CN,REJECT' },
-  { title: '🇮🇷 Iran-Direct', value: 'GEOIP,CATEGORY-IR,DIRECT' },
-  { title: '🇮🇷 Iran-Block', value: 'GEOIP,CATEGORY-IR,REJECT' },
-  { title: '🇻🇳 Vietnam-Direct', value: 'GEOIP,CATEGORY-VN,DIRECT' },
-  { title: '🇻🇳 Vietnam-Block', value: 'GEOIP,CATEGORY-VN,REJECT' },
-  { title: '🇯🇵 Japan-Direct', value: 'GEOIP,JP,DIRECT' },
-  { title: '🇯🇵 Japan-Block', value: 'GEOIP,JP,REJECT' },
-]
 
 const metaJson = computed({
   get: (): any => {
