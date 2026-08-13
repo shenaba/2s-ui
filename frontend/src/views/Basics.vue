@@ -210,6 +210,7 @@ import Toggle from '@/components/ui/Toggle.vue'
 import SwitchLabel from '@/components/ui/SwitchLabel.vue'
 import ChipSelect from '@/components/ui/ChipSelect.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import { levels } from '@/plugins/subExtDefaults'
 
 const oldConfig = ref({})
 const loading = ref(false)
@@ -273,8 +274,6 @@ const toOptions = (tags: string[]) => (tags ?? []).map(t => ({ title: t, value: 
 const inboundOptions = computed(() => toOptions(inboundTags.value))
 const outboundOptions = computed(() => toOptions(outboundTags.value))
 const clientOptions = computed(() => toOptions(clientNames.value))
-
-const levels = ["trace", "debug", "info", "warn", "error", "fatal", "panic"]
 
 /* ---------------- log ---------------- */
 const logLevel = computed({

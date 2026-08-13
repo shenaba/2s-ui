@@ -21,7 +21,7 @@
       <!-- 证书页的每个操作都立即生效，没有待保存的表单，摆着保存/重启只会让人以为
            申请完证书还得再点一下 -->
       <div v-if="tab !== 'certs'" class="head-actions">
-        <Btn variant="primary" sm :loading="loading" :disabled="!stateChange || proxyBlocked" @click="save">
+        <Btn variant="primary" sm :loading="loading" :disabled="!loaded || !stateChange || proxyBlocked" @click="save">
           <Ico name="check" :size="15" /> {{ $t('actions.save') }}
         </Btn>
         <Pop :min-width="210">
@@ -151,7 +151,7 @@
           </Field>
         </div>
         <div class="grid2" style="margin-top: 14px;">
-          <Field :label="$t('setting.globalDns')" :mb="0">
+          <Field v-if="proxyDns" :label="$t('setting.globalDns')" :mb="0">
             <div style="display: flex; gap: 8px;">
               <Select style="flex: 1; min-width: 0;" :model-value="proxyDns.type" @change="setDnsType(proxyDns, $event)">
                 <option v-for="dt in dnsTypes" :key="dt" :value="dt">{{ dt }}</option>
@@ -162,7 +162,7 @@
               </template>
             </div>
           </Field>
-          <Field :label="$t('setting.directDns')" :mb="0">
+          <Field v-if="directDns" :label="$t('setting.directDns')" :mb="0">
             <div style="display: flex; gap: 8px;">
               <Select style="flex: 1; min-width: 0;" :model-value="directDns.type" @change="setDnsType(directDns, $event)">
                 <option v-for="dt in dnsTypes" :key="dt" :value="dt">{{ dt }}</option>
@@ -291,10 +291,12 @@ import SRow from '@/components/ui/SRow.vue'
 import ToggleRow from '@/components/ui/ToggleRow.vue'
 import DomainInput from '@/components/ui/DomainInput.vue'
 import CertsPanel from '@/components/settings/CertsPanel.vue'
-import { loadCerts, certsLoaded, findCert, daysLeft } from '@/plugins/certs'
+import { loadCerts, certsLoaded, findCert, certNote } from '@/plugins/certs'
 import {
   proxyInputs, loopbackListens, normalizePath, panelIsTLS, buildURL, uriPathOf,
+  autoURI, sleep, waitReachable,
 } from '@/plugins/settingsPath'
+import { asArray, isOnlySniff, collectRuleSetTags, mergeRuleSets } from '@/plugins/subExtRules'
 import {
   cloneDefault,
   levels, dnsTypes, defaultLog, defaultInb, defaultExp, defaultDns,
@@ -305,6 +307,10 @@ const tab = ref('interface')
 const loading = ref(false)
 // 保存时要跟当前值逐字段比对,判断反代配置需不需要重新生成(见 save)
 const oldSettings = ref<Record<string, any>>({})
+// 一次都没加载成功(瞬时 500 / nginx 502 就够)时,表单是下面那份硬编码默认值、oldSettings
+// 还是空的,stateChange 恒为真、保存按钮亮着,而页面看着像正常数据。点一下就把整表覆盖成
+// 默认值——证书路径清空(面板退回明文)、订阅模板清空,还顺带重启。所以没加载成功不许保存。
+const loaded = ref(false)
 const jsonEditor = ref(false)
 const clashEditor = ref(false)
 
@@ -450,6 +456,7 @@ const setData = (data: any) => {
   // 这里跟着换,面板下次重启读的才是证书页展示的那份文件
   syncCertsFromList()
   oldSettings.value = { ...settings.value }
+  loaded.value = true
 }
 
 const save = async () => {
@@ -462,8 +469,8 @@ const save = async () => {
 
   // Whether this save will actually rewrite the URIs. Must match the autofill condition below
   // word for word: a looser check would store a mismatch the autofill never gets to fix.
-  const webAuto = 'https://' + before.webDomain + normalizePath(before.webPath)
-  const subAuto = 'https://' + before.subDomain + normalizePath(before.subPath)
+  const webAuto = autoURI(before.webDomain, before.webPath)
+  const subAuto = autoURI(before.subDomain, before.subPath)
   const webWillAutofill = webOn && now.webDomain && (!now.webURI || now.webURI === webAuto)
   const subWillAutofill = subOn && now.subDomain && (!now.subURI || now.subURI === subAuto)
 
@@ -536,19 +543,17 @@ const save = async () => {
     }
   }
 
-  // 对外地址现在由 nginx 那份 vhost 决定,服务自己推断不出来(它只知道内网的 http://ip:端口)。
-  // 顺手填好,重启后的跳转就落在真正能打开的地址上;用户手填过就不动——但「我们自动填的」
-  // 要跟着域名/路径走:反代开着改域名时,旧地址的 vhost 恰恰在这次保存里被删掉,不跟的话
-  // 保存后的跳转和发给客户端的订阅链接就都指向一个已经没人服务的地址,还会一直存在库里。
-  // 关掉反代时反过来:若当前值正是我们填的那个,清空它,让跳转按服务自身的域名/端口重推。
-  // webAuto/subAuto 在函数开头已算好(那里要拿它把「会被自动改对的」排除在路径校验之外)。
+  // 反代开着时对外地址由 vhost 决定,服务自己推断不出来,所以顺手填好;用户手填过就不动。
+  // 「我们自动填的」要跟着域名/路径走:改域名时旧地址的 vhost 恰恰在这次保存里被删掉,不跟
+  // 的话跳转和订阅链接都指向一个没人服务的地址,还一直留在库里。关掉反代时反过来——当前值
+  // 正是我们填的那个就清空,让跳转按服务自身的域名/端口重推。webAuto/subAuto 在函数开头算好。
   if (webOn && now.webDomain && (!now.webURI || now.webURI === webAuto)) {
-    settings.value.webURI = 'https://' + now.webDomain + normalizePath(now.webPath)
+    settings.value.webURI = autoURI(now.webDomain, now.webPath)
   } else if (!webOn && webWasOn && now.webURI === webAuto) {
     settings.value.webURI = ''
   }
   if (subOn && now.subDomain && (!now.subURI || now.subURI === subAuto)) {
-    settings.value.subURI = 'https://' + now.subDomain + normalizePath(now.subPath)
+    settings.value.subURI = autoURI(now.subDomain, now.subPath)
   } else if (!subOn && subWasOn && now.subURI === subAuto) {
     settings.value.subURI = ''
   }
@@ -582,8 +587,6 @@ const save = async () => {
   loading.value = false
 }
 
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
-
 const restartApp = async () => {
   loading.value = true
   const msg = await HttpUtils.post('api/restartApp', {})
@@ -593,7 +596,7 @@ const restartApp = async () => {
     // 没填则 replace("") 原地打转。
     let url = settings.value.webURI
     if (url === "") {
-      url = buildURL(settings.value.webDomain, settings.value.webPort.toString(), panelIsTLS(settings.value), settings.value.webPath)
+      url = buildURL(settings.value.webDomain, settings.value.webPort.toString(), panelIsTLS(settings.value), normalizePath(settings.value.webPath))
     }
     await sleep(3000)
     window.location.replace(url)
@@ -632,6 +635,9 @@ const subBehindProxyDesc = computed(() => {
 // URI. The names hide that, so editing the URI to move the panel is a common, expensive mistake.
 const webUriPathMismatch = computed(() => {
   const p = uriPathOf(settings.value.webURI)
+  // 解析不出来(多半是漏了 https://)也要拦:那种值会被 location.replace 当相对地址拼,
+  // 重启后跳到一个死地址,而这里是唯一还能拦住它的地方。
+  if (p === null) return true
   return p !== '' && p !== normalizePath(settings.value.webPath)
 })
 
@@ -639,6 +645,7 @@ const webUriPathMismatch = computed(() => {
 // clients, so a mismatch never 404s — subscriptions just stop updating.
 const subUriPathMismatch = computed(() => {
   const p = uriPathOf(settings.value.subURI)
+  if (p === null) return true
   return p !== '' && p !== normalizePath(settings.value.subPath)
 })
 
@@ -689,27 +696,6 @@ const syncCertsFromList = () => {
 watch(() => settings.value.webDomain, () => { if (certsLoaded()) syncCert('web') })
 watch(() => settings.value.subDomain, () => { if (certsLoaded()) syncCert('sub') })
 
-type CertNote = { text: string; kind: 'ok' | 'warn' | 'mute'; offerIssue: boolean }
-
-// 域名框下面那行回执。反代开着却没证书是【保存必失败】的组合(生成不出 vhost),
-// 与其等后端报错不如当场说清楚。
-const certNote = (domain: string, behindProxy: boolean): CertNote | null => {
-  const d = (domain ?? '').trim()
-  if (!d) return null
-  // 清单拿不到时宁可闭嘴:此时说「还没有证书」是把一次查询故障当成事实陈述
-  if (!certsLoaded()) return null
-  const c = findCert(d)
-  if (!c) {
-    return behindProxy
-      ? { text: i18n.global.t('setting.certNoteMissingProxy'), kind: 'warn', offerIssue: true }
-      : { text: i18n.global.t('setting.certNoteMissing'), kind: 'mute', offerIssue: true }
-  }
-  if (!c.notAfter) return { text: i18n.global.t('setting.certNoteUnreadable'), kind: 'warn', offerIssue: false }
-  const days = daysLeft(c.notAfter)
-  if (days < 0) return { text: i18n.global.t('setting.certNoteExpired'), kind: 'warn', offerIssue: false }
-  return { text: i18n.global.t('setting.certNoteOk', { days }), kind: days <= 14 ? 'warn' : 'ok', offerIssue: false }
-}
-
 const webCertNote = computed(() => certNote(settings.value.webDomain, webBehindProxy.value))
 const subCertNote = computed(() => certNote(settings.value.subDomain, subBehindProxy.value))
 
@@ -753,32 +739,14 @@ const saveAndRestart = async (isWeb: boolean) => {
   // 协议同样要推,不能写死 https:这个函数早先只在「证书申请成功」后被调用,那时必然
   // 有证书;如今保存设置也走这条路,而域名换成一个没有证书的就会让面板退回 HTTP——
   // 写死 https 会把人跳到打不开的地址,且面板已经重启完,没有第二次机会。
+  // webPath 必须先规整:输入框是自由文本,填成 "panel" 会拼出 http://host:2095panelsettings
+  // ——端口都解析不了。后端读 GetWebPath 会补斜杠,面板其实好好地服务在 /panel/ 上。
   const target = isWeb
-    ? (settings.value.webURI || buildURL(settings.value.webDomain, settings.value.webPort.toString(), panelIsTLS(settings.value), settings.value.webPath))
+    ? (settings.value.webURI || buildURL(settings.value.webDomain, settings.value.webPort.toString(), panelIsTLS(settings.value), normalizePath(settings.value.webPath)))
     : window.location.href
   await sleep(3000)
   await waitReachable(target)
   window.location.replace(target)
-}
-
-// 用 no-cors 裸 fetch 探活目标地址:重启期间请求必然失败,走 HttpUtils 会刷错误 toast;
-// 跳 https 时与当前页跨协议,CORS 下也读不了响应——opaque 响应能 resolve 就说明面板已就绪。
-// 每次尝试单独限时:连接被静默丢包时(切 HTTPS 撞上防火墙规则变更就会这样),fetch 不会
-// 很快失败,而是一直挂到浏览器默认连接超时(可达 90s+),固定次数的循环便退化成数分钟的
-// 卡死。改用总预算封顶,单次超时由 AbortSignal 保证,整体最坏 probeBudget + probeTimeout。
-// 探活超时也照样跳转,由浏览器给出最终错误。
-const probeTimeout = 2000
-const probeBudget = 30000
-const waitReachable = async (url: string) => {
-  const deadline = Date.now() + probeBudget
-  while (Date.now() < deadline) {
-    try {
-      await fetch(url, { mode: 'no-cors', cache: 'no-store', signal: AbortSignal.timeout(probeTimeout) })
-      return
-    } catch {
-      await sleep(800)
-    }
-  }
 }
 
 // 证书统一走「手动文件 / acme.sh 申请」，不再提供面板内置自动 ACME 开关
@@ -874,9 +842,13 @@ const enableDns = computed({
       subJsonExt.value.rules.unshift({ protocol: "dns", action: "hijack-dns" })
     } else {
       delete subJsonExt.value.dns
-      const newRules = subJsonExt.value?.rules?.filter((r: any) => r.protocol != "dns") ?? []
-      if (newRules.length >= 0) subJsonExt.value.rules = newRules
-      if (rules.value?.length == 0) delete subJsonExt.value.rules
+      const newRules = rules.value?.filter((r: any) => r.protocol != "dns") ?? []
+      // 开的时候补的那条 sniff 要一起收回(理由见 isOnlySniff)
+      if (newRules.length == 0 || isOnlySniff(newRules)) delete subJsonExt.value.rules
+      else subJsonExt.value.rules = newRules
+      // dns 块连同它引用 rule_set 的规则一起没了,不重算就会留下没人引用的 rule_set 条目,
+      // 继续跟着每份订阅发出去。开的那条路径不需要:它加的规则不带 rule_set。
+      updateRuleSets()
     }
   }
 })
@@ -893,9 +865,16 @@ const enableExp = computed({
 
 const dns = computed((): any => subJsonExt.value?.dns ?? undefined)
 
-const proxyDns = computed((): any => dns.value?.servers?.findLast((d: any) => d.tag == "proxy-dns") ?? {})
+// asArray:编辑器收任意 JSON,servers / rules 不一定是数组(理由见 subExtRules)
+const dnsServers = computed((): any[] => asArray(dns.value?.servers))
 
-const directDns = computed((): any => dns.value?.servers?.findLast((d: any) => d.tag == "direct-dns") ?? {})
+const dnsRules = computed((): any[] => asArray(dns.value?.rules))
+
+// 找不到就返回 undefined 而不是 {}:返回临时对象的话,模板的 v-model 和 setDnsType 全写在
+// 一个下次求值就被丢掉的对象上——不报错、不入库,用户改完地址保存,什么都没发生。
+const proxyDns = computed((): any => dnsServers.value.findLast((d: any) => d.tag == "proxy-dns"))
+
+const directDns = computed((): any => dnsServers.value.findLast((d: any) => d.tag == "direct-dns"))
 
 // 平移旧 SimpleDNS:切到 local 时去掉 server / server_port
 const setDnsType = (server: any, t: string) => {
@@ -906,7 +885,7 @@ const setDnsType = (server: any, t: string) => {
   }
 }
 
-const dnsTags = computed((): string[] => dns.value?.servers?.map((d: any) => d.tag) ?? [])
+const dnsTags = computed((): string[] => dnsServers.value.map((d: any) => d.tag))
 
 const defaultResolver = computed({
   get: (): string => subJsonExt.value?.default_domain_resolver ?? '',
@@ -918,19 +897,22 @@ const defaultResolver = computed({
 
 const dnsToDirect = computed({
   get: (): string[] => {
-    const ruleIndex = dns.value?.rules?.findIndex((r: any) => r.server == "direct-dns" && Object.hasOwn(r, 'rule_set')) ?? -1
-    return ruleIndex >= 0 ? dns.value.rules[ruleIndex].rule_set : []
+    const ruleIndex = dnsRules.value.findIndex((r: any) => r.server == "direct-dns" && Object.hasOwn(r, 'rule_set'))
+    return ruleIndex >= 0 ? dnsRules.value[ruleIndex].rule_set : []
   },
   set: (v: string[]) => {
-    const ruleIndex = dns.value?.rules?.findIndex((r: any) => r.server == "direct-dns" && Object.hasOwn(r, 'rule_set')) ?? -1
+    const ruleIndex = dnsRules.value.findIndex((r: any) => r.server == "direct-dns" && Object.hasOwn(r, 'rule_set'))
     if (v.length > 0) {
       if (ruleIndex >= 0) {
-        dns.value.rules[ruleIndex].rule_set = v
+        dnsRules.value[ruleIndex].rule_set = v
       } else {
+        // 两个兄弟 setter 都有这个兜底,只有这里漏了:手写的 dns 块可以没有 rules 键,
+        // 直接 push 会在 undefined 上抛,chip 点了没反应也没有任何提示。
+        if (!Array.isArray(dns.value.rules)) dns.value.rules = []
         dns.value.rules.push({ rule_set: v, action: "route", server: "direct-dns" })
       }
     } else {
-      if (ruleIndex != -1) dns.value.rules.splice(ruleIndex, 1)
+      if (ruleIndex != -1) dnsRules.value.splice(ruleIndex, 1)
     }
     updateRuleSets()
   }
@@ -959,7 +941,9 @@ const platformProxy = computed({
   set: (v: boolean) => { subJsonExt.value.inbounds[0].platform = v ? cloneDefault(defaultInb[0].platform) : undefined }
 })
 
-const rules = computed((): any => subJsonExt.value?.rules ?? undefined)
+// 非数组一律当「没有」:下面每个 setter 的 `rules.value == undefined` 兜底会把它重建成
+// 数组,而不是在 {} 上调 findIndex / unshift 把整页渲染带崩。
+const rules = computed((): any => Array.isArray(subJsonExt.value?.rules) ? subJsonExt.value.rules : undefined)
 
 const ruleToDirect = computed({
   get: (): string[] => {
@@ -1004,34 +988,19 @@ const ruleToBlock = computed({
 })
 
 const updateRuleSets = () => {
-  const tags = <string[]>[]
-  if ((dns.value?.rules?.length ?? 0) > 0) dns.value.rules.forEach((r: any) => { if (r.rule_set) tags.push(...r.rule_set) })
-  if ((rules.value?.length ?? 0) > 0) rules.value.forEach((r: any) => { if (r.rule_set) tags.push(...r.rule_set) })
-  // The list is rebuilt from the selectors, so anything the operator added by
-  // hand in the JSON editor has to be carried over or a single chip click
-  // silently drops it. That editor takes any JSON, so the stored value is not
-  // necessarily an array.
-  const existing = subJsonExt.value?.rule_set
-  const list: any[] = Array.isArray(existing) ? existing : []
-  const byTag = new Map(list.map((rs: any) => [rs.tag, rs]))
-  const custom = list.filter((rs: any) => !geo.some((g: any) => g.tag == rs.tag))
-  if (tags.length > 0 || custom.length > 0) {
-    subJsonExt.value.rule_set = [
-      // A catalog entry the operator already edited wins over the catalog --
-      // swapping the jsDelivr URL for a mirror has to survive a chip click.
-      // The trade-off is that later catalog fixes no longer reach them.
-      ...geo.filter((g: any) => tags.includes(g.tag)).map((g: any) => byTag.get(g.tag) ?? cloneDefault(g)),
-      ...custom,
-    ]
-  } else {
-    delete subJsonExt.value.rule_set
-  }
+  const tags = collectRuleSetTags(dnsRules.value, rules.value)
+  const merged = mergeRuleSets(tags, subJsonExt.value?.rule_set, geo)
+  if (merged) subJsonExt.value.rule_set = merged
+  else delete subJsonExt.value.rule_set
   if (rules.value?.length == 0) delete subJsonExt.value.rules
 }
 
 const saveJsonEditor = (data: string) => {
   try {
-    subJsonExt.value = JSON.parse(data)
+    const result = JSON.parse(data)
+    // 与 saveClashEditor 一样的形状检查:顶层只能是对象,数组/标量存进去会让整页白屏
+    if (typeof result != 'object' || result == null || Array.isArray(result)) throw new Error()
+    subJsonExt.value = result
   } catch (e) {
     push.error({
       message: i18n.global.t('failed') + ": " + i18n.global.t('error.invalidData'),
@@ -1068,7 +1037,13 @@ const metaJson = computed({
 })
 
 const updateMetaJson = (data: any, key: string) => {
-  const newMetaJson = metaJson.value
+  // subClashExt 存的是【整份】Clash 配置而非补丁:clashService 只在它为空时才回退到
+  // basicClashConfig。所以第一次打开任意一个选项都要把其余默认值一并落下,否则订阅里只剩
+  // 这一个键,没有入站也没有 MATCH 兜底。defaultConfig 就是 basicClashConfig 的前端副本,
+  // 它是冻结的而下面要改,所以必须克隆。
+  const newMetaJson = Object.keys(metaJson.value).length == 0
+    ? cloneDefault(defaultConfig)
+    : metaJson.value
   if (data == null) {
     delete newMetaJson[key]
   } else {
@@ -1076,6 +1051,10 @@ const updateMetaJson = (data: any, key: string) => {
   }
   metaJson.value = newMetaJson
 }
+
+// 以下读 defaultConfig 都不克隆:updateMetaJson 只是把值塞进临时的 yaml.parse 结果、随即
+// stringify 成字符串,引用不留在任何地方(真有人原地改它,冻结会当场抛错)。上面那次整份
+// 播种是唯一承重的克隆,因为只有它会被接着修改。
 
 const optionMixed = computed({
   get: (): boolean => (metaJson.value['mixed-port'] ?? 0) > 0,
@@ -1085,9 +1064,12 @@ const optionMixed = computed({
   }
 })
 
+// 与 optionMixed / optionExt / optionLog 一样判「这块在不在」而不是判 enable:判 enable 的话,
+// 关掉 clashTun 开关会让 v-if="optionTun" 把开关本身一起移除,再也点不回来,唯一入口是选项
+// 菜单——而那条路会把用户改过的整块 tun 推平回默认值。
 const optionTun = computed({
-  get: (): boolean => metaJson.value['tun']?.['enable'] ?? false,
-  set: (v: boolean) => { updateMetaJson(v ? cloneDefault(defaultConfig['tun']) : null, 'tun') }
+  get: (): boolean => metaJson.value['tun'] != undefined,
+  set: (v: boolean) => { updateMetaJson(v ? defaultConfig['tun'] : null, 'tun') }
 })
 
 const optionExt = computed({
@@ -1101,14 +1083,14 @@ const optionLog = computed({
 })
 
 const optionDns = computed({
-  get: (): boolean => metaJson.value['dns']?.['enable'] ?? false,
-  set: (v: boolean) => { updateMetaJson(v ? cloneDefault(defaultConfig['dns']) : null, 'dns') }
+  get: (): boolean => metaJson.value['dns'] != undefined,
+  set: (v: boolean) => { updateMetaJson(v ? defaultConfig['dns'] : null, 'dns') }
 })
 
 const optionRules = computed({
   get: (): boolean => (metaJson.value['rules']?.length ?? 0) > 0,
   set: (v: boolean) => {
-    updateMetaJson(v ? cloneDefault(defaultConfig['rules']) : null, 'rules')
+    updateMetaJson(v ? defaultConfig['rules'] : null, 'rules')
     updateMetaJson(v ? defaultConfig['mode'] : null, 'mode')
   }
 })

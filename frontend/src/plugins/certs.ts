@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import HttpUtils from '@/plugins/httputil'
+import { i18n } from '@/locales'
 
 /** 「域名与证书」页面上的一条记录，字段与后端 service.CertInfo 一一对应。 */
 export interface Cert {
@@ -85,4 +86,25 @@ export function findCert(domain: string): Cert | undefined {
 /** 剩余天数。后端只给 unix 秒：服务器时区不一定是用户的，它算好会差一天。 */
 export function daysLeft(unixSec: number): number {
   return Math.floor((unixSec * 1000 - Date.now()) / 86400000)
+}
+
+export type CertNote = { text: string; kind: 'ok' | 'warn' | 'mute'; offerIssue: boolean }
+
+// 域名框下面那行回执。反代开着却没证书是【保存必失败】的组合(生成不出 vhost),
+// 与其等后端报错不如当场说清楚。
+export function certNote(domain: string, behindProxy: boolean): CertNote | null {
+  const d = (domain ?? '').trim()
+  if (!d) return null
+  // 清单拿不到时宁可闭嘴:此时说「还没有证书」是把一次查询故障当成事实陈述
+  if (!certsLoaded()) return null
+  const c = findCert(d)
+  if (!c) {
+    return behindProxy
+      ? { text: i18n.global.t('setting.certNoteMissingProxy'), kind: 'warn', offerIssue: true }
+      : { text: i18n.global.t('setting.certNoteMissing'), kind: 'mute', offerIssue: true }
+  }
+  if (!c.notAfter) return { text: i18n.global.t('setting.certNoteUnreadable'), kind: 'warn', offerIssue: false }
+  const days = daysLeft(c.notAfter)
+  if (days < 0) return { text: i18n.global.t('setting.certNoteExpired'), kind: 'warn', offerIssue: false }
+  return { text: i18n.global.t('setting.certNoteOk', { days }), kind: days <= 14 ? 'warn' : 'ok', offerIssue: false }
 }

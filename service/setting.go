@@ -241,11 +241,16 @@ func (s *SettingService) GetWebURI() (string, error) {
 	return s.getString("webURI")
 }
 
+// GetWebPath 决定面板实际服务在哪个路径上(web.go 用它挂全部路由、渲染 BASE_URL),
+// 所以它必须和 normalizeProxyPath 逐字同规:后者 TrimSpace 而这里不 trim 的话,一个
+// 带空格的 webPath 会让 nginx 代理到的路径和面板服务的路径对不上,整站 404。
+// 这里也 trim 是为了让已经存进库的坏值在读取时自愈,不用等下一次保存。
 func (s *SettingService) GetWebPath() (string, error) {
 	webPath, err := s.getString("webPath")
 	if err != nil {
 		return "", err
 	}
+	webPath = strings.TrimSpace(webPath)
 	if !strings.HasPrefix(webPath, "/") {
 		webPath = "/" + webPath
 	}
@@ -256,6 +261,7 @@ func (s *SettingService) GetWebPath() (string, error) {
 }
 
 func (s *SettingService) SetWebPath(webPath string) error {
+	webPath = strings.TrimSpace(webPath)
 	if !strings.HasPrefix(webPath, "/") {
 		webPath = "/" + webPath
 	}
@@ -329,11 +335,13 @@ func (s *SettingService) SetSubPort(subPort int) error {
 	return s.setInt("subPort", subPort)
 }
 
+// 同 GetWebPath:trim 不能少,否则订阅服务和它的 nginx location 会落在两个路径上。
 func (s *SettingService) GetSubPath() (string, error) {
 	subPath, err := s.getString("subPath")
 	if err != nil {
 		return "", err
 	}
+	subPath = strings.TrimSpace(subPath)
 	if !strings.HasPrefix(subPath, "/") {
 		subPath = "/" + subPath
 	}
@@ -344,6 +352,7 @@ func (s *SettingService) GetSubPath() (string, error) {
 }
 
 func (s *SettingService) SetSubPath(subPath string) error {
+	subPath = strings.TrimSpace(subPath)
 	if !strings.HasPrefix(subPath, "/") {
 		subPath = "/" + subPath
 	}
@@ -547,8 +556,16 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 		}
 
 		// Correct Pathes start and ends with `/`
+		//
+		// TrimSpace 是必须的,不是整洁问题:面板服务在 GetWebPath 上,而 nginx 的
+		// location 和自动填的 webURI 走的是 normalizeProxyPath——后者 trim,前者不 trim,
+		// 于是粘进来一个带空格的 "/panel/ " 会让面板服务在 "/panel/ /" 上,反代过来的
+		// 每一个请求都撞 web.go 的前缀检查返回空 404,连改回来的设置页都打不开,只能
+		// 靠 shell 跑 sui setting -path 救。前端 normalizePath 同样 trim,所以它的
+		// 「URI 路径与面板路径不一致」校验看不见这种差异,拦不住。
 		if key == "webPath" ||
 			key == "subPath" {
+			obj = strings.TrimSpace(obj)
 			if !strings.HasPrefix(obj, "/") {
 				obj = "/" + obj
 			}

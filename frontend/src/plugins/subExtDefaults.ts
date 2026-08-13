@@ -2,13 +2,34 @@
  * Default snippets for the JSON / Clash subscription builders on the
  * settings page. Pure data — no Vue, no i18n — so it lives outside the SFC.
  *
- * These are module-scoped catalogs. Always clone before putting a value into
- * reactive form state — assignment by reference permanently mutates the
- * shared export (and unlike the old setup()-local consts, remounting Settings
- * no longer recreates them).
+ * These are module-scoped catalogs: clone one of them before putting it into
+ * reactive form state, or the form edits it in place and every later read of
+ * the "default" returns the previous operator's edits (and unlike the old
+ * setup()-local consts, remounting Settings no longer recreates them).
+ *
+ * That rule is enforced rather than documented — see deepFreeze below.
+ */
+import { toRaw } from 'vue'
+
+/**
+ * Clone a catalog entry for the reactive form. toRaw first: structuredClone
+ * throws DataCloneError on a Vue proxy, so a caller that hands us something
+ * already in the form state would otherwise blow up mid-setter.
  */
 export function cloneDefault<T>(v: T): T {
-  return structuredClone(v)
+  return structuredClone(toRaw(v))
+}
+
+/**
+ * Every export below is frozen, so forgetting cloneDefault fails loudly at the
+ * first write (ES modules are strict mode, so a write through Vue's reactive
+ * proxy throws TypeError) instead of silently poisoning the catalog for the
+ * rest of the session. The frozen-ness does not survive structuredClone, so
+ * the copies handed to the form stay writable.
+ */
+function deepFreeze<T>(v: T): T {
+  if (v && typeof v === 'object') Object.values(v).forEach(deepFreeze)
+  return Object.freeze(v)
 }
 
 export const levels = ["trace", "debug", "info", "warn", "error", "fatal", "panic"]
@@ -110,14 +131,6 @@ export const defaultDns = {
   "strategy": "prefer_ipv4"
 }
 
-export const geositeList = [
-  { title: "Private", value: "geosite-private" },
-  { title: "Ads", value: "geosite-ads" },
-  { title: "🇮🇷 Iran", value: "geosite-ir" },
-  { title: "🇨🇳 China", value: "geosite-cn" },
-  { title: "🇻🇳 Vietnam", value: "geosite-vn" },
-]
-
 export const geoList = [
   { title: "Site-Private", value: "geosite-private" },
   { title: "IP-Private", value: "geoip-private" },
@@ -129,6 +142,14 @@ export const geoList = [
   { title: "🇻🇳 Site-Vietnam", value: "geosite-vn" },
   { title: "🇻🇳 IP-Vietnam", value: "geoip-vn" },
 ]
+
+// Derived, not a third hand-written copy of the same tags: `geo` is the only
+// authority (updateRuleSets builds the rule_set definitions by filtering it), so
+// a tag that exists in a selector but not in `geo` ships a subscription whose
+// rule_set reference has no definition — sing-box aborts at startup on that.
+export const geositeList = geoList
+  .filter(g => g.value.startsWith('geosite-'))
+  .map(g => ({ title: g.title.replace('Site-', ''), value: g.value }))
 
 export const geo = [
   {
@@ -246,3 +267,10 @@ export const rulesIP = [
   { title: '🇯🇵 Japan-Direct', value: 'GEOIP,JP,DIRECT' },
   { title: '🇯🇵 Japan-Block', value: 'GEOIP,JP,REJECT' },
 ]
+
+// Applied here rather than around each literal so the catalogs stay readable and
+// their inferred types are unchanged; the guarantee is a runtime one.
+;[
+  levels, dnsTypes, defaultLog, defaultInb, defaultExp, defaultDns,
+  geositeList, geoList, geo, defaultConfig, clashLevels, rulesIP,
+].forEach(deepFreeze)
