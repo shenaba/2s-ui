@@ -1,7 +1,15 @@
 /**
  * Default snippets for the JSON / Clash subscription builders on the
  * settings page. Pure data — no Vue, no i18n — so it lives outside the SFC.
+ *
+ * These are module-scoped catalogs. Always clone before putting a value into
+ * reactive form state — assignment by reference permanently mutates the
+ * shared export (and unlike the old setup()-local consts, remounting Settings
+ * no longer recreates them).
  */
+export function cloneDefault<T>(v: T): T {
+  return structuredClone(v)
+}
 
 export const levels = ["trace", "debug", "info", "warn", "error", "fatal", "panic"]
 export const dnsTypes = ['udp', 'tcp', 'local', 'tls', 'quic', 'h3']

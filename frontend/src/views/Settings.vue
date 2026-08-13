@@ -296,6 +296,7 @@ import {
   proxyInputs, loopbackListens, normalizePath, panelIsTLS, buildURL, uriPathOf,
 } from '@/plugins/settingsPath'
 import {
+  cloneDefault,
   levels, dnsTypes, defaultLog, defaultInb, defaultExp, defaultDns,
   geositeList, geoList, geo, defaultConfig, clashLevels, rulesIP,
 } from '@/plugins/subExtDefaults'
@@ -861,14 +862,14 @@ watch(subJsonExt, (v) => {
 
 const enableLog = computed({
   get: (): boolean => subJsonExt.value?.log != undefined,
-  set: (v: boolean) => { v ? subJsonExt.value.log = defaultLog : delete subJsonExt.value.log }
+  set: (v: boolean) => { v ? subJsonExt.value.log = cloneDefault(defaultLog) : delete subJsonExt.value.log }
 })
 
 const enableDns = computed({
   get: (): boolean => subJsonExt.value?.dns != undefined,
   set: (v: boolean) => {
     if (v) {
-      subJsonExt.value.dns = defaultDns
+      subJsonExt.value.dns = cloneDefault(defaultDns)
       if (rules.value == undefined) subJsonExt.value.rules = [{ action: 'sniff' }]
       subJsonExt.value.rules.unshift({ protocol: "dns", action: "hijack-dns" })
     } else {
@@ -882,12 +883,12 @@ const enableDns = computed({
 
 const enableInb = computed({
   get: (): boolean => subJsonExt.value?.inbounds != undefined,
-  set: (v: boolean) => { v ? subJsonExt.value.inbounds = defaultInb.slice() : delete subJsonExt.value.inbounds }
+  set: (v: boolean) => { v ? subJsonExt.value.inbounds = cloneDefault(defaultInb) : delete subJsonExt.value.inbounds }
 })
 
 const enableExp = computed({
   get: (): boolean => subJsonExt.value?.experimental != undefined,
-  set: (v: boolean) => { v ? subJsonExt.value.experimental = defaultExp : delete subJsonExt.value.experimental }
+  set: (v: boolean) => { v ? subJsonExt.value.experimental = cloneDefault(defaultExp) : delete subJsonExt.value.experimental }
 })
 
 const dns = computed((): any => subJsonExt.value?.dns ?? undefined)
@@ -955,7 +956,7 @@ const tunExcludePkg = computed({
 
 const platformProxy = computed({
   get: (): boolean => inbounds.value?.[0]?.platform != undefined,
-  set: (v: boolean) => { subJsonExt.value.inbounds[0].platform = v ? defaultInb[0].platform : undefined }
+  set: (v: boolean) => { subJsonExt.value.inbounds[0].platform = v ? cloneDefault(defaultInb[0].platform) : undefined }
 })
 
 const rules = computed((): any => subJsonExt.value?.rules ?? undefined)
@@ -1019,7 +1020,7 @@ const updateRuleSets = () => {
       // A catalog entry the operator already edited wins over the catalog --
       // swapping the jsDelivr URL for a mirror has to survive a chip click.
       // The trade-off is that later catalog fixes no longer reach them.
-      ...geo.filter((g: any) => tags.includes(g.tag)).map((g: any) => byTag.get(g.tag) ?? g),
+      ...geo.filter((g: any) => tags.includes(g.tag)).map((g: any) => byTag.get(g.tag) ?? cloneDefault(g)),
       ...custom,
     ]
   } else {
@@ -1086,7 +1087,7 @@ const optionMixed = computed({
 
 const optionTun = computed({
   get: (): boolean => metaJson.value['tun']?.['enable'] ?? false,
-  set: (v: boolean) => { updateMetaJson(v ? defaultConfig['tun'] : null, 'tun') }
+  set: (v: boolean) => { updateMetaJson(v ? cloneDefault(defaultConfig['tun']) : null, 'tun') }
 })
 
 const optionExt = computed({
@@ -1101,13 +1102,13 @@ const optionLog = computed({
 
 const optionDns = computed({
   get: (): boolean => metaJson.value['dns']?.['enable'] ?? false,
-  set: (v: boolean) => { updateMetaJson(v ? defaultConfig['dns'] : null, 'dns') }
+  set: (v: boolean) => { updateMetaJson(v ? cloneDefault(defaultConfig['dns']) : null, 'dns') }
 })
 
 const optionRules = computed({
   get: (): boolean => (metaJson.value['rules']?.length ?? 0) > 0,
   set: (v: boolean) => {
-    updateMetaJson(v ? defaultConfig['rules'] : null, 'rules')
+    updateMetaJson(v ? cloneDefault(defaultConfig['rules']) : null, 'rules')
     updateMetaJson(v ? defaultConfig['mode'] : null, 'mode')
   }
 })
