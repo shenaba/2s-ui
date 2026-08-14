@@ -40,11 +40,23 @@ export function isOnlySniff(rules: unknown): boolean {
     list[0]?.action === 'sniff' && Object.keys(list[0]).length === 1
 }
 
+/**
+ * Read a sing-box `Listable[string]`: the JSON accepts either a bare string or
+ * an array, and the editor passes both through untouched.
+ *
+ * Missing the string form is not cosmetic — the rule keeps its reference either
+ * way, so a tag we fail to collect here is a rule_set reference with no matching
+ * definition, and sing-box aborts at startup with "rule-set not found".
+ */
+function asStringList(v: unknown): string[] {
+  return typeof v === 'string' ? [v] : asArray(v)
+}
+
 /** Every rule_set tag referenced by the DNS rules and the routing rules. */
 export function collectRuleSetTags(...ruleLists: unknown[]): string[] {
   const tags: string[] = []
   for (const list of ruleLists) {
-    asArray(list).forEach((r: any) => { if (r.rule_set) tags.push(...asArray(r.rule_set)) })
+    asArray(list).forEach((r: any) => { if (r.rule_set) tags.push(...asStringList(r.rule_set)) })
   }
   return tags
 }
