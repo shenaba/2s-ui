@@ -58,6 +58,14 @@ outbound Naive sẽ báo rằng binary được build mà không có nó.
 
 Tiếng Anh · Tiếng Ba Tư · Tiếng Việt · Tiếng Trung (Giản thể) · Tiếng Trung (Phồn thể) · Tiếng Nga
 
+## Nền tảng được hỗ trợ
+
+| Nền tảng | Kiến trúc | Trạng thái |
+|----------|--------------|---------|
+| Linux    | amd64, arm64, armv7, armv6, armv5, 386, s390x | ✅ Được hỗ trợ |
+| Windows  | amd64, 386, arm64 | ✅ Được hỗ trợ |
+| macOS    | amd64, arm64 | 🚧 Thử nghiệm |
+
 ## Ảnh chụp màn hình
 
 !["Main"](frontend/media/main.png)
@@ -175,7 +183,7 @@ VERSION=v1.5.5 && bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-u
 5. Làm theo trình hướng dẫn cài đặt
 6. Truy cập bảng điều khiển tại http://localhost:2095/app
 
-**Gỡ cài đặt**
+**Gỡ cài đặt — systemd**
 
 ```sh
 sudo -i
@@ -184,6 +192,19 @@ systemctl disable s-ui  --now
 
 rm -f /etc/systemd/system/sing-box.service
 systemctl daemon-reload
+
+rm -fr /usr/local/s-ui
+rm /usr/bin/s-ui
+```
+
+**Gỡ cài đặt — OpenRC (Alpine)**
+
+```sh
+sudo -i
+
+rc-service s-ui stop
+rc-update del s-ui default
+rm -f /etc/init.d/s-ui
 
 rm -fr /usr/local/s-ui
 rm /usr/bin/s-ui
@@ -203,14 +224,6 @@ binary mới rồi thay thế và khởi động lại. Không cần SSH.
 > phiên bản chỉ dẫn tới trang release. Trong Docker, binary mới nằm ở lớp ghi được
 > của container: nó sống sót qua `docker restart`, nhưng tạo lại container sẽ quay
 > về phiên bản của image — hãy pull image mới để giữ lâu dài.
-
-### Nền tảng được hỗ trợ
-
-| Nền tảng | Kiến trúc | Trạng thái |
-|----------|--------------|---------|
-| Linux    | amd64, arm64, armv7, armv6, armv5, 386, s390x | ✅ Được hỗ trợ |
-| Windows  | amd64, 386, arm64 | ✅ Được hỗ trợ |
-| macOS    | amd64, arm64 | 🚧 Thử nghiệm |
 
 ## Cụm đa node
 

@@ -51,6 +51,14 @@ amd64、arm64、armv7 和 386 上带这个协议。在 armv6、armv5、s390x 上
 
 English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) · Russian
 
+## 支持平台
+
+| 平台 | 架构 | 状态 |
+| ---- | ---- | ---- |
+| Linux | amd64, arm64, armv7, armv6, armv5, 386, s390x | 支持 |
+| Windows | amd64, 386, arm64 | 支持 |
+| macOS | amd64, arm64 | 实验性 |
+
 ## 截图
 
 !["Main"](frontend/media/main.png)
@@ -166,7 +174,7 @@ VERSION=v1.5.5 && bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-u
 5. 按安装向导操作
 6. 通过 http://localhost:2095/app 访问面板
 
-**卸载**
+**卸载（systemd）**
 
 ```sh
 sudo -i
@@ -175,6 +183,19 @@ systemctl disable s-ui  --now
 
 rm -f /etc/systemd/system/sing-box.service
 systemctl daemon-reload
+
+rm -fr /usr/local/s-ui
+rm /usr/bin/s-ui
+```
+
+**卸载（OpenRC / Alpine）**
+
+```sh
+sudo -i
+
+rc-service s-ui stop
+rc-update del s-ui default
+rm -f /etc/init.d/s-ui
 
 rm -fr /usr/local/s-ui
 rm /usr/bin/s-ui
@@ -191,14 +212,6 @@ rm /usr/bin/s-ui
 > Windows 上运行中的 `.exe` 无法自我替换，版本标签只会跳转到 release 页面。
 > Docker 里新二进制写在容器可写层：`docker restart` 后仍在，但重建容器会退回镜像
 > 自带的版本——想长期生效请拉取新镜像。
-
-### 支持平台
-
-| 平台 | 架构 | 状态 |
-| ---- | ---- | ---- |
-| Linux | amd64, arm64, armv7, armv6, armv5, 386, s390x | 支持 |
-| Windows | amd64, 386, arm64 | 支持 |
-| macOS | amd64, arm64 | 实验性 |
 
 ## 多节点集群
 

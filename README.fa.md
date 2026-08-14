@@ -55,6 +55,14 @@ outbound از نوع Naive اعلام می‌کند که باینری بدون �
 
 انگلیسی · فارسی · ویتنامی · چینی (ساده‌شده) · چینی (سنتی) · روسی
 
+## پلتفرم‌های پشتیبانی‌شده
+
+| پلتفرم | معماری | وضعیت |
+|----------|--------------|---------|
+| Linux    | amd64, arm64, armv7, armv6, armv5, 386, s390x | ✅ پشتیبانی‌شده |
+| Windows  | amd64, 386, arm64 | ✅ پشتیبانی‌شده |
+| macOS    | amd64, arm64 | 🚧 آزمایشی |
+
 ## تصاویر
 
 !["Main"](frontend/media/main.png)
@@ -172,7 +180,7 @@ VERSION=v1.5.5 && bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-u
 5. مراحل جادوگر نصب (wizard) را دنبال کنید
 6. به پنل از طریق http://localhost:2095/app دسترسی پیدا کنید
 
-**حذف**
+**حذف — systemd**
 
 ```sh
 sudo -i
@@ -181,6 +189,19 @@ systemctl disable s-ui  --now
 
 rm -f /etc/systemd/system/sing-box.service
 systemctl daemon-reload
+
+rm -fr /usr/local/s-ui
+rm /usr/bin/s-ui
+```
+
+**حذف — OpenRC (آلپاین)**
+
+```sh
+sudo -i
+
+rc-service s-ui stop
+rc-update del s-ui default
+rm -f /etc/init.d/s-ui
 
 rm -fr /usr/local/s-ui
 rm /usr/bin/s-ui
@@ -200,14 +221,6 @@ systemd و چه Docker) با یک کلیک ارتقا در همان محل ان�
 > فقط به صفحه انتشار لینک می‌دهد. در Docker باینری جدید در لایه قابل‌نوشتن کانتینر
 > قرار می‌گیرد: با `docker restart` باقی می‌ماند، اما ساخت دوباره کانتینر به نسخه ایمیج
 > برمی‌گردد — برای ماندگاری، ایمیج جدید را pull کنید.
-
-### پلتفرم‌های پشتیبانی‌شده
-
-| پلتفرم | معماری | وضعیت |
-|----------|--------------|---------|
-| Linux    | amd64, arm64, armv7, armv6, armv5, 386, s390x | ✅ پشتیبانی‌شده |
-| Windows  | amd64, 386, arm64 | ✅ پشتیبانی‌شده |
-| macOS    | amd64, arm64 | 🚧 آزمایشی |
 
 ## کلاستر چندنودی
 

@@ -51,6 +51,14 @@ amd64、arm64、armv7 與 386 上帶這個協定。在 armv6、armv5、s390x 上
 
 English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) · Russian
 
+## 支援平台
+
+| 平台 | 架構 | 狀態 |
+| ---- | ---- | ---- |
+| Linux | amd64, arm64, armv7, armv6, armv5, 386, s390x | 支援 |
+| Windows | amd64, 386, arm64 | 支援 |
+| macOS | amd64, arm64 | 實驗性 |
+
 ## 螢幕截圖
 
 !["Main"](frontend/media/main.png)
@@ -166,7 +174,7 @@ VERSION=v1.5.5 && bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-u
 5. 依安裝精靈操作
 6. 透過 http://localhost:2095/app 存取面板
 
-**解除安裝**
+**解除安裝（systemd）**
 
 ```sh
 sudo -i
@@ -175,6 +183,19 @@ systemctl disable s-ui  --now
 
 rm -f /etc/systemd/system/sing-box.service
 systemctl daemon-reload
+
+rm -fr /usr/local/s-ui
+rm /usr/bin/s-ui
+```
+
+**解除安裝（OpenRC / Alpine）**
+
+```sh
+sudo -i
+
+rc-service s-ui stop
+rc-update del s-ui default
+rm -f /etc/init.d/s-ui
 
 rm -fr /usr/local/s-ui
 rm /usr/bin/s-ui
@@ -191,14 +212,6 @@ GitHub 也會提示。Linux 上（systemd 或 Docker）點一下即可原地升�
 > Windows 上執行中的 `.exe` 無法自我替換，版本標籤只會連到 release 頁面。
 > Docker 裡新的執行檔寫在容器可寫層：`docker restart` 後仍在，但重建容器會退回映像
 > 檔自帶的版本——想長期生效請拉取新映像檔。
-
-### 支援平台
-
-| 平台 | 架構 | 狀態 |
-| ---- | ---- | ---- |
-| Linux | amd64, arm64, armv7, armv6, armv5, 386, s390x | 支援 |
-| Windows | amd64, 386, arm64 | 支援 |
-| macOS | amd64, arm64 | 實驗性 |
 
 ## 多節點叢集
 

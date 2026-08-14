@@ -57,6 +57,14 @@ outbound reports that the binary was built without it.
 
 English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) · Russian
 
+## Supported platforms
+
+| Platform | Architecture | Status |
+|----------|--------------|---------|
+| Linux    | amd64, arm64, armv7, armv6, armv5, 386, s390x | ✅ Supported |
+| Windows  | amd64, 386, arm64 | ✅ Supported |
+| macOS    | amd64, arm64 | 🚧 Experimental |
+
 ## Screenshots
 
 !["Main"](frontend/media/main.png)
@@ -174,7 +182,7 @@ VERSION=v1.5.5 && bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-u
 5. Follow the installation wizard
 6. Access the panel at http://localhost:2095/app
 
-**Uninstall**
+**Uninstall — systemd**
 
 ```sh
 sudo -i
@@ -183,6 +191,19 @@ systemctl disable s-ui  --now
 
 rm -f /etc/systemd/system/sing-box.service
 systemctl daemon-reload
+
+rm -fr /usr/local/s-ui
+rm /usr/bin/s-ui
+```
+
+**Uninstall — OpenRC (Alpine)**
+
+```sh
+sudo -i
+
+rc-service s-ui stop
+rc-update del s-ui default
+rm -f /etc/init.d/s-ui
 
 rm -fr /usr/local/s-ui
 rm /usr/bin/s-ui
@@ -202,14 +223,6 @@ binary, then replaces it and restarts. No SSH.
 > the release page. In Docker the new binary lives in the container's writable
 > layer: it survives `docker restart`, but recreating the container reverts to
 > the image's version — pull a new image to make it stick.
-
-### Supported platforms
-
-| Platform | Architecture | Status |
-|----------|--------------|---------|
-| Linux    | amd64, arm64, armv7, armv6, armv5, 386, s390x | ✅ Supported |
-| Windows  | amd64, 386, arm64 | ✅ Supported |
-| macOS    | amd64, arm64 | 🚧 Experimental |
 
 ## Multi-Node Cluster
 

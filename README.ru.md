@@ -59,6 +59,14 @@ Linux включают его только на amd64, arm64, armv7 и 386. На
 
 Английский · Фарси · Вьетнамский · Китайский (упрощённый) · Китайский (традиционный) · Русский
 
+## Поддерживаемые платформы
+
+| Платформа | Архитектура | Статус |
+|----------|--------------|---------|
+| Linux    | amd64, arm64, armv7, armv6, armv5, 386, s390x | ✅ Поддерживается |
+| Windows  | amd64, 386, arm64 | ✅ Поддерживается |
+| macOS    | amd64, arm64 | 🚧 Экспериментально |
+
 ## Скриншоты
 
 !["Main"](frontend/media/main.png)
@@ -176,7 +184,7 @@ VERSION=v1.5.5 && bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-u
 5. Следуйте указаниям мастера установки
 6. Откройте панель по адресу http://localhost:2095/app
 
-**Удаление**
+**Удаление — systemd**
 
 ```sh
 sudo -i
@@ -185,6 +193,19 @@ systemctl disable s-ui  --now
 
 rm -f /etc/systemd/system/sing-box.service
 systemctl daemon-reload
+
+rm -fr /usr/local/s-ui
+rm /usr/bin/s-ui
+```
+
+**Удаление — OpenRC (Alpine)**
+
+```sh
+sudo -i
+
+rc-service s-ui stop
+rc-update del s-ui default
+rm -f /etc/init.d/s-ui
 
 rm -fr /usr/local/s-ui
 rm /usr/bin/s-ui
@@ -204,14 +225,6 @@ rm /usr/bin/s-ui
 > лишь ведёт на страницу релиза. В Docker новый бинарник живёт в записываемом слое
 > контейнера: он переживает `docker restart`, но пересоздание контейнера вернёт
 > версию из образа — чтобы обновление закрепилось, скачайте новый образ.
-
-### Поддерживаемые платформы
-
-| Платформа | Архитектура | Статус |
-|----------|--------------|---------|
-| Linux    | amd64, arm64, armv7, armv6, armv5, 386, s390x | ✅ Поддерживается |
-| Windows  | amd64, 386, arm64 | ✅ Поддерживается |
-| macOS    | amd64, arm64 | 🚧 Экспериментально |
 
 ## Кластер из нескольких узлов
 
