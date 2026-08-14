@@ -241,34 +241,20 @@ func (s *SettingService) GetWebURI() (string, error) {
 	return s.getString("webURI")
 }
 
-// GetWebPath 决定面板实际服务在哪个路径上(web.go 用它挂全部路由、渲染 BASE_URL),
-// 所以它必须和 normalizeProxyPath 逐字同规:后者 TrimSpace 而这里不 trim 的话,一个
-// 带空格的 webPath 会让 nginx 代理到的路径和面板服务的路径对不上,整站 404。
-// 这里也 trim 是为了让已经存进库的坏值在读取时自愈,不用等下一次保存。
+// GetWebPath 决定面板实际服务在哪个路径上(web.go 用它挂全部路由、渲染 BASE_URL)。
+// 它和 nginx location 必须逐字同规,所以两边【调用同一个函数】而不是各写一遍——手抄
+// 一份少了 TrimSpace,就是「带空格的 webPath 让代理路径和服务路径对不上、整站 404」
+// 这个 bug 的由来。读取时也规整,是为了让已经存进库的坏值自愈,不用等下一次保存。
 func (s *SettingService) GetWebPath() (string, error) {
 	webPath, err := s.getString("webPath")
 	if err != nil {
 		return "", err
 	}
-	webPath = strings.TrimSpace(webPath)
-	if !strings.HasPrefix(webPath, "/") {
-		webPath = "/" + webPath
-	}
-	if !strings.HasSuffix(webPath, "/") {
-		webPath += "/"
-	}
-	return webPath, nil
+	return normalizeProxyPath(webPath), nil
 }
 
 func (s *SettingService) SetWebPath(webPath string) error {
-	webPath = strings.TrimSpace(webPath)
-	if !strings.HasPrefix(webPath, "/") {
-		webPath = "/" + webPath
-	}
-	if !strings.HasSuffix(webPath, "/") {
-		webPath += "/"
-	}
-	return s.setString("webPath", webPath)
+	return s.setString("webPath", normalizeProxyPath(webPath))
 }
 
 func (s *SettingService) GetSecret() ([]byte, error) {
@@ -335,31 +321,17 @@ func (s *SettingService) SetSubPort(subPort int) error {
 	return s.setInt("subPort", subPort)
 }
 
-// 同 GetWebPath:trim 不能少,否则订阅服务和它的 nginx location 会落在两个路径上。
+// 同 GetWebPath:走同一个规整函数,否则订阅服务和它的 nginx location 会落在两个路径上。
 func (s *SettingService) GetSubPath() (string, error) {
 	subPath, err := s.getString("subPath")
 	if err != nil {
 		return "", err
 	}
-	subPath = strings.TrimSpace(subPath)
-	if !strings.HasPrefix(subPath, "/") {
-		subPath = "/" + subPath
-	}
-	if !strings.HasSuffix(subPath, "/") {
-		subPath += "/"
-	}
-	return subPath, nil
+	return normalizeProxyPath(subPath), nil
 }
 
 func (s *SettingService) SetSubPath(subPath string) error {
-	subPath = strings.TrimSpace(subPath)
-	if !strings.HasPrefix(subPath, "/") {
-		subPath = "/" + subPath
-	}
-	if !strings.HasSuffix(subPath, "/") {
-		subPath += "/"
-	}
-	return s.setString("subPath", subPath)
+	return s.setString("subPath", normalizeProxyPath(subPath))
 }
 
 func (s *SettingService) GetSubDomain() (string, error) {
@@ -503,7 +475,10 @@ func (s *SettingService) GetFinalSubURI(host string) (string, error) {
 	} else {
 		port = ":" + port
 	}
-	return protocol + "://" + host + port + (*allSetting)["subPath"], nil
+	// 路径要规整过再拼:这里读的是 GetAllSetting 的原始 map,而订阅服务挂载在
+	// GetSubPath() 上。存量库里一个带空格的 " /sub/ " 会让服务跑在 /sub/、发给客户端的
+	// 链接却带着空格,正是要修的那种「服务路径与对外地址分家」。
+	return protocol + "://" + host + port + normalizeProxyPath((*allSetting)["subPath"]), nil
 }
 
 func (s *SettingService) GetConfig() (string, error) {
@@ -555,23 +530,14 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 			return common.NewErrorf("%s 不能是通配符域名: %q;请填一个具体的主机名(通配符证书对具体主机名同样生效)", key, obj)
 		}
 
-		// Correct Pathes start and ends with `/`
-		//
-		// TrimSpace 是必须的,不是整洁问题:面板服务在 GetWebPath 上,而 nginx 的
-		// location 和自动填的 webURI 走的是 normalizeProxyPath——后者 trim,前者不 trim,
-		// 于是粘进来一个带空格的 "/panel/ " 会让面板服务在 "/panel/ /" 上,反代过来的
-		// 每一个请求都撞 web.go 的前缀检查返回空 404,连改回来的设置页都打不开,只能
-		// 靠 shell 跑 sui setting -path 救。前端 normalizePath 同样 trim,所以它的
-		// 「URI 路径与面板路径不一致」校验看不见这种差异,拦不住。
-		if key == "webPath" ||
-			key == "subPath" {
-			obj = strings.TrimSpace(obj)
-			if !strings.HasPrefix(obj, "/") {
-				obj = "/" + obj
-			}
-			if !strings.HasSuffix(obj, "/") {
-				obj += "/"
-			}
+		// 路径前后都补斜杠,并且【必须去空白】:面板服务在 GetWebPath 上,而 nginx 的
+		// location 和自动填的 webURI 走 normalizeProxyPath。两边规则一旦分叉,粘进来一个
+		// 带空格的 "/panel/ " 就会让面板服务在 "/panel/ /" 上,反代过来的每个请求都撞
+		// web.go 的前缀检查返回空 404,连改回来的设置页都打不开,只能靠 shell 跑
+		// sui setting -path 救。前端 normalizePath 也 trim,所以它那条「URI 路径与面板
+		// 路径不一致」的校验看不见这种差异、拦不住。用同一个函数就没有分叉的余地。
+		if key == "webPath" || key == "subPath" {
+			obj = normalizeProxyPath(obj)
 		}
 
 		// Delete all stats if it is set to 0
