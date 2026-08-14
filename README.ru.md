@@ -85,11 +85,21 @@ Linux включают его только на amd64, arm64, armv7 и 386. На
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
-systemd и OpenRC (Alpine) определяются автоматически. Язык следует `$LANG`,
-либо укажите `en`, `fa`, `ru`, `vi`, `zhcn` или `zhtw`:
+Язык следует `$LANG`, либо укажите `en`, `fa`, `ru`, `vi`, `zhcn` или
+`zhtw`:
 
 ```sh
 SUI_LANG=ru bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
+```
+
+### Alpine Linux
+
+В Alpine нет ни `bash`, ни `curl` — доставьте их, после чего установщик сам
+определит Alpine и поставит панель как службу OpenRC:
+
+```sh
+apk add bash curl
+bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
 ### Windows

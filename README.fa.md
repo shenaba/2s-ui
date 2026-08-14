@@ -81,11 +81,21 @@ outbound از نوع Naive اعلام می‌کند که باینری بدون �
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
-systemd و OpenRC (آلپاین) خودکار تشخیص داده می‌شوند. زبان از `$LANG` پیروی می‌کند،
-یا یکی از `en`، `fa`، `ru`، `vi`، `zhcn`، `zhtw` را بدهید:
+زبان از `$LANG` پیروی می‌کند، یا یکی از `en`، `fa`، `ru`، `vi`، `zhcn`،
+`zhtw` را بدهید:
 
 ```sh
 SUI_LANG=fa bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
+```
+
+### Alpine Linux
+
+آلپاین نه `bash` دارد و نه `curl`؛ اول آن‌ها را نصب کنید تا اسکریپت، آلپاین را
+تشخیص دهد و پنل را به‌صورت سرویس OpenRC راه‌اندازی کند:
+
+```sh
+apk add bash curl
+bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
 ### Windows

@@ -83,11 +83,21 @@ English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) 
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
-systemd and OpenRC (Alpine) are detected automatically. The language follows
-`$LANG`, or pass `en`, `fa`, `ru`, `vi`, `zhcn` or `zhtw`:
+The language follows `$LANG`, or pass `en`, `fa`, `ru`, `vi`, `zhcn` or
+`zhtw`:
 
 ```sh
 SUI_LANG=zhcn bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
+```
+
+### Alpine Linux
+
+Alpine ships neither `bash` nor `curl`. Add them first; the installer then
+detects Alpine and sets the panel up as an OpenRC service:
+
+```sh
+apk add bash curl
+bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
 ### Windows

@@ -77,10 +77,19 @@ English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) 
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
-systemd 与 OpenRC（Alpine）自动识别。语言默认跟随 `$LANG`，也可指定 `en`、`fa`、`ru`、`vi`、`zhcn`、`zhtw`：
+语言默认跟随 `$LANG`，也可指定 `en`、`fa`、`ru`、`vi`、`zhcn`、`zhtw`：
 
 ```sh
 SUI_LANG=zhcn bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
+```
+
+### Alpine Linux
+
+Alpine 不预装 `bash` 和 `curl`，先补上；脚本会识别 Alpine 并装成 OpenRC 服务：
+
+```sh
+apk add bash curl
+bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
 ### Windows

@@ -84,11 +84,21 @@ Tiếng Anh · Tiếng Ba Tư · Tiếng Việt · Tiếng Trung (Giản thể) 
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
-systemd và OpenRC (Alpine) được nhận diện tự động. Ngôn ngữ theo `$LANG`, hoặc
-chỉ định `en`, `fa`, `ru`, `vi`, `zhcn` hay `zhtw`:
+Ngôn ngữ theo `$LANG`, hoặc chỉ định `en`, `fa`, `ru`, `vi`, `zhcn` hay
+`zhtw`:
 
 ```sh
 SUI_LANG=vi bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
+```
+
+### Alpine Linux
+
+Alpine không có sẵn `bash` lẫn `curl`; cài thêm rồi trình cài đặt sẽ nhận ra
+Alpine và dựng bảng điều khiển thành dịch vụ OpenRC:
+
+```sh
+apk add bash curl
+bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
 ### Windows
