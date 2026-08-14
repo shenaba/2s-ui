@@ -1,9 +1,9 @@
 # <img src="frontend/public/assets/favicon.svg" width="44" height="44" align="texttop" alt=""> 2S-UI
 [English](README.md) · [فارسی](README.fa.md) · [Tiếng Việt](README.vi.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [Русский](README.ru.md)
 
-2S-UI 是一个开源的 [Sing-Box](https://github.com/SagerNet/sing-box) 管理面板，面向自建代理服务的部署与运维。协议配置、路由规则、用户与订阅、流量统计集中于同一套界面，支持六种语言与深浅双主题；单机即可运行，多台亦可组成集群统一管理。
+2S-UI 是一个开源的 [Sing-Box](https://github.com/SagerNet/sing-box) 管理面板，它提供简洁、多语言的界面，用于部署、配置和监控各种代理与 VPN 协议——从单台 VPS 到多节点部署。
 
-2S-UI 由 [s-ui](https://github.com/alireza0/s-ui) 分支而来，重写了整套前端，并引入多节点集群、ACME 证书自动签发与续期、面板内一键升级，以及不中断在线连接的用户热更新。
+2S-UI 由 s-ui 分支而来，重写了整套前端，新增了许多提升使用体验的功能。
 
 ![](https://img.shields.io/github/v/release/shenaba/2s-ui.svg)
 [![Docker Pulls](https://img.shields.io/docker/pulls/shenaba/2s-ui.svg)](https://hub.docker.com/r/shenaba/2s-ui)
@@ -13,32 +13,23 @@
 
 > **免责声明：** 本项目仅供个人学习与交流使用，请勿用于非法用途，请勿用于生产环境。
 
-**如果你觉得这个项目有帮助，可以给一个** :star2:
-
 ## 功能
 
-- **多协议** —— 入站出站支持 VLESS、VMess、Trojan、Shadowsocks、Hysteria2、TUIC、
-  AnyTLS 等，另有 WireGuard / WARP / Tailscale 三类 Endpoint（[完整列表](#protocols)）
-- **TLS 集中管理** —— Reality、uTLS 指纹、XTLS；证书注册一次，之后按入站选用
-- **路由规则** —— 按域名、IP、端口、协议、进程、用户或 rule-set 匹配，可 and/or 组合。
-  DNS 有自己独立的一套规则。
-- **多入站客户端** —— 一个客户端可挂在多个入站上，各带流量上限和到期时间，超量或过期
-  自动禁用
-- **配额自动化** —— 可以从首次使用才开始计时，也可以每 N 天自动重置，跑满的客户端到期
-  自动恢复
-- **每客户端 IP 数限制** —— 限制单个客户端同时使用的来源 IP 数量，超出的会被断开并短暂
-  拒绝重连，不依赖 fail2ban
-- **用户热更新** —— 改客户端时原地改写入站的用户表，不重建监听器，其他人不掉线
-- **订阅链接** —— 支持 `link`、`json`、`clash` 三种格式，回传用量和到期时间，可并入外部
-  链接
-- **多节点集群** —— 监控其他 2S-UI 面板、跨节点共享用户、各节点线路合并进同一条订阅
-  （[详见下文](#多节点集群)）
-- **HTTPS 自动化** —— Let's Encrypt 自动签发续期，并自动生成 nginx 反向代理
-  （[详见下文](#域名与证书)）
-- **一键更新** —— 面板内原地升级，带校验和验证
-- **实时仪表盘** —— 系统资源、流量、协议占比、网络吞吐、节点健康，每块卡片都能单独开关
-- **账号与语言** —— 支持多个面板管理员、带过期时间的
-  [API Token](https://github.com/shenaba/2s-ui/wiki/API-Documentation)、深色/浅色主题、六种语言
+- **多协议** —— VLESS、VMess、Trojan、Shadowsocks、Hysteria2、TUIC、AnyTLS 等入站与
+  出站，以及 WireGuard、WARP、Tailscale 端点（[完整列表](#protocols)）。
+- **TLS 集中管理** —— Reality、uTLS 指纹、XTLS，以及一次注册、按入站选用的证书。
+- **路由规则** —— 按域名、IP、端口、协议、进程、用户和 rule-set 匹配，支持 and/or 组合，
+  DNS 规则独立成套。
+- **客户端管理** —— 流量配额、到期日期、IP 限制、实时在线状态，以及一键分享链接、
+  二维码和订阅。
+- **流量统计** —— 按入站、按客户端、按出站统计，并支持重置控制。
+- **订阅链接** —— `link`、`json`、`clash` 三种格式，回传用量与到期时间，并可并入外部链接。
+- **多节点集群** —— 节点状态监控、跨节点共享用户、多节点线路合并进同一条订阅
+  （[详见下文](#多节点集群)）。
+- **HTTPS 自动化** —— Let's Encrypt 自动签发与续期，以及自动生成的 nginx 反向代理
+  （[详见下文](#域名与证书)）。
+- **一键更新** —— 面板内原地升级，带校验和验证。
+- **全新界面** —— 从零重写的前端、自研组件、深浅双主题、六种语言（含 RTL）。
 
 <details id="protocols">
   <summary>支持的协议</summary>
@@ -63,14 +54,11 @@ English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) 
 
 </details>
 
-<details>
-  <summary>截图</summary>
+## 截图
 
 !["Main"](frontend/media/main.png)
 
-更多截图：[frontend/screenshots.md](frontend/screenshots.md)
-
-</details>
+[更多 UI 截图](frontend/screenshots.md)
 
 ## 安装
 

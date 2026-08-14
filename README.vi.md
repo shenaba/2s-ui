@@ -1,9 +1,9 @@
 # <img src="frontend/public/assets/favicon.svg" width="44" height="44" align="texttop" alt=""> 2S-UI
 [English](README.md) · [فارسی](README.fa.md) · [Tiếng Việt](README.vi.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [Русский](README.ru.md)
 
-2S-UI là bảng điều khiển web mã nguồn mở dành cho [sing-box](https://github.com/SagerNet/sing-box), hướng tới việc triển khai và vận hành dịch vụ proxy tự lưu trữ. Cấu hình giao thức, luật định tuyến, người dùng và subscription, thống kê lưu lượng đều nằm trong cùng một giao diện — sáu ngôn ngữ và hai chế độ sáng/tối; chạy được trên một máy chủ đơn lẻ và cũng ghép được thành cụm.
+2S-UI là bảng điều khiển mã nguồn mở dành cho [sing-box](https://github.com/SagerNet/sing-box), với giao diện gọn gàng và đa ngôn ngữ để triển khai, cấu hình và giám sát nhiều loại giao thức proxy và VPN — từ một VPS đơn lẻ cho tới hệ thống nhiều node.
 
-2S-UI khởi đầu là một bản fork của [s-ui](https://github.com/alireza0/s-ui): toàn bộ frontend được viết lại, và trên nền đó là cụm đa node, cấp phát cùng gia hạn chứng chỉ ACME tự động, tự cập nhật ngay trong bảng điều khiển, và cập nhật người dùng tại chỗ không làm rớt các kết nối đang mở.
+2S-UI khởi đầu là một bản fork của s-ui: toàn bộ frontend được viết lại, cùng nhiều tính năng được bổ sung để dùng bảng điều khiển thoải mái hơn.
 
 ![](https://img.shields.io/github/v/release/shenaba/2s-ui.svg)
 [![Docker Pulls](https://img.shields.io/docker/pulls/shenaba/2s-ui.svg)](https://hub.docker.com/r/shenaba/2s-ui)
@@ -13,39 +13,30 @@
 
 > **Tuyên bố miễn trừ trách nhiệm:** Dự án này chỉ dành cho mục đích học tập và trao đổi cá nhân, vui lòng không sử dụng cho các mục đích bất hợp pháp, vui lòng không sử dụng trong môi trường production
 
-**Nếu bạn thấy dự án này hữu ích, bạn có thể cho một**:star2:
-
 ## Tính năng
 
-- **Đa giao thức** — VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC, AnyTLS và
-  nhiều hơn nữa, cả inbound lẫn outbound, cùng các endpoint WireGuard/WARP/Tailscale
-  ([danh sách đầy đủ](#protocols))
-- **TLS tập trung một chỗ** — Reality, vân tay uTLS, XTLS; chứng chỉ đăng ký một
-  lần rồi chọn cho từng inbound
-- **Luật định tuyến dựng ngay trong giao diện** — khớp theo tên miền, IP, cổng,
-  giao thức, tiến trình, người dùng hoặc rule-set, kết hợp bằng and/or. DNS có bộ
-  luật riêng của nó.
-- **Một client trên nhiều inbound cùng lúc**, mỗi client có hạn mức lưu lượng và
-  ngày hết hạn riêng; vượt một trong hai là tự động bị tắt
-- **Tự động hóa hạn mức** — đồng hồ có thể bắt đầu từ lần dùng đầu tiên và tự reset
-  mỗi N ngày, tự đưa client đã cạn hạn mức trở lại
-- **Giới hạn số IP mỗi client** — quy định một client được dùng bao nhiêu IP nguồn
-  cùng lúc; phần dư bị ngắt và chặn trong chốc lát, không cần đến fail2ban
-- **Cập nhật người dùng tại chỗ** — sửa client sẽ ghi lại bảng người dùng của
-  inbound tại chỗ thay vì dựng lại listener, nên những người còn lại không rớt kết nối
+- **Đa giao thức** — VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC, AnyTLS
+  và nhiều hơn nữa, cả inbound lẫn outbound, cùng endpoint WireGuard, WARP và
+  Tailscale ([danh sách đầy đủ](#protocols)).
+- **TLS tập trung một chỗ** — Reality, vân tay uTLS, XTLS, và chứng chỉ đăng ký
+  một lần rồi chọn cho từng inbound.
+- **Luật định tuyến** — khớp theo tên miền, IP, cổng, giao thức, tiến trình,
+  người dùng và rule-set, kết hợp bằng and/or; DNS có bộ luật riêng.
+- **Quản lý client** — hạn mức lưu lượng, ngày hết hạn, giới hạn IP, trạng thái
+  trực tuyến theo thời gian thực, cùng liên kết chia sẻ, mã QR và subscription chỉ
+  với một cú nhấp.
+- **Thống kê lưu lượng** — theo inbound, theo client và theo outbound, có điều
+  khiển đặt lại.
 - **Subscription** — các định dạng `link`, `json` và `clash`, trả lượng đã dùng và
-  hạn dùng về ứng dụng client, gộp được cả liên kết bên ngoài
-- **Cụm đa node** — giám sát các bảng điều khiển 2S-UI khác, dùng chung người dùng
-  giữa chúng, gộp máy chủ của chúng vào cùng một subscription ([chi tiết](#cụm-đa-node))
-- **HTTPS tự động** — cấp phát và gia hạn chứng chỉ Let's Encrypt, kèm reverse proxy
-  nginx tự động ([chi tiết](#tên-miền-và-chứng-chỉ))
+  hạn dùng về ứng dụng client, gộp được cả liên kết bên ngoài.
+- **Cụm đa node** — giám sát tình trạng node, dùng chung người dùng giữa các node,
+  gộp máy chủ của chúng vào cùng một subscription ([chi tiết](#cụm-đa-node)).
+- **HTTPS tự động** — cấp phát và gia hạn chứng chỉ Let's Encrypt, kèm reverse
+  proxy nginx tự động ([chi tiết](#tên-miền-và-chứng-chỉ)).
 - **Cập nhật một cú nhấp** — nâng cấp tại chỗ ngay trong bảng điều khiển, có xác
-  thực checksum
-- **Bảng điều khiển thời gian thực** — tài nguyên hệ thống, lưu lượng, tỷ trọng giao
-  thức, thông lượng mạng, tình trạng node; mỗi thẻ đều bật/tắt được
-- **Truy cập và ngôn ngữ** — nhiều quản trị viên bảng điều khiển,
-  [API token](https://github.com/shenaba/2s-ui/wiki/API-Documentation) có hạn dùng,
-  giao diện sáng/tối, sáu ngôn ngữ
+  thực checksum.
+- **Giao diện viết mới** — frontend viết lại từ đầu, component tự dựng, chế độ
+  sáng/tối, sáu ngôn ngữ (kể cả RTL).
 
 <details id="protocols">
   <summary>Các giao thức được hỗ trợ</summary>
@@ -70,14 +61,11 @@ Tiếng Anh · Tiếng Ba Tư · Tiếng Việt · Tiếng Trung (Giản thể) 
 
 </details>
 
-<details>
-  <summary>Ảnh chụp màn hình</summary>
+## Ảnh chụp màn hình
 
 !["Main"](frontend/media/main.png)
 
-Các ảnh chụp màn hình giao diện khác: [frontend/screenshots.md](frontend/screenshots.md)
-
-</details>
+[Các ảnh chụp màn hình giao diện khác](frontend/screenshots.md)
 
 ## Cài đặt
 
