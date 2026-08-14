@@ -83,9 +83,8 @@ English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) 
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
-systemd and OpenRC (Alpine) are both supported; the installer picks the right
-one. It follows your system `$LANG`, or you can pass `en`, `fa`, `ru`, `vi`,
-`zhcn` or `zhtw`, which the `s-ui` menu then remembers:
+systemd and OpenRC (Alpine) are detected automatically. The language follows
+`$LANG`, or pass `en`, `fa`, `ru`, `vi`, `zhcn` or `zhtw`:
 
 ```sh
 SUI_LANG=zhcn bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)

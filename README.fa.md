@@ -81,9 +81,8 @@ outbound از نوع Naive اعلام می‌کند که باینری بدون �
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
-هم systemd و هم OpenRC (آلپاین) پشتیبانی می‌شوند؛ اسکریپت نصب خودش مورد درست را
-انتخاب می‌کند. اسکریپت از `$LANG` سیستم پیروی می‌کند، یا یکی از `en`، `fa`، `ru`،
-`vi`، `zhcn`، `zhtw` را مشخص کنید تا منوی `s-ui` هم همان را به یاد بسپارد:
+systemd و OpenRC (آلپاین) خودکار تشخیص داده می‌شوند. زبان از `$LANG` پیروی می‌کند،
+یا یکی از `en`، `fa`، `ru`، `vi`، `zhcn`، `zhtw` را بدهید:
 
 ```sh
 SUI_LANG=fa bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)

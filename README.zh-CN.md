@@ -77,8 +77,7 @@ English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) 
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
-同时支持 systemd 和 OpenRC（Alpine），安装脚本会自动选择。脚本默认跟随系统 `$LANG`，
-也可以指定 `en`、`fa`、`ru`、`vi`、`zhcn`、`zhtw` 之一，之后 `s-ui` 菜单会沿用：
+systemd 与 OpenRC（Alpine）自动识别。语言默认跟随 `$LANG`，也可指定 `en`、`fa`、`ru`、`vi`、`zhcn`、`zhtw`：
 
 ```sh
 SUI_LANG=zhcn bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)

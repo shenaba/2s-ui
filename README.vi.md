@@ -84,9 +84,8 @@ Tiếng Anh · Tiếng Ba Tư · Tiếng Việt · Tiếng Trung (Giản thể) 
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
-Hỗ trợ cả systemd lẫn OpenRC (Alpine); trình cài đặt sẽ tự chọn đúng loại. Nó
-theo `$LANG` của hệ thống, hoặc bạn chỉ định `en`, `fa`, `ru`, `vi`, `zhcn`
-hay `zhtw`, và menu `s-ui` sẽ ghi nhớ:
+systemd và OpenRC (Alpine) được nhận diện tự động. Ngôn ngữ theo `$LANG`, hoặc
+chỉ định `en`, `fa`, `ru`, `vi`, `zhcn` hay `zhtw`:
 
 ```sh
 SUI_LANG=vi bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
