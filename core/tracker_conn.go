@@ -61,13 +61,24 @@ func SetIPLimitActive(active bool) {
 	ipLimitActive.Store(active)
 }
 
-// ipv6IdentityPrefixBits is how much of an IPv6 address identifies one
+// IPLimitActive reports whether lastActive is being stamped at all. Readers of
+// IPWindow.LastSeen need it: with no limit anywhere the field never moves off
+// the connection's creation time, so an idle test against it measures age, not
+// inactivity.
+func IPLimitActive() bool {
+	return ipLimitActive.Load()
+}
+
+// IPv6IdentityPrefixBits is how much of an IPv6 address identifies one
 // subscriber. This is policy rather than mechanism -- /128 lets a single SLAAC
 // host exhaust any limit through address rotation, /48 would hold an entire
 // site to one slot -- but unlike the ban list it cannot live in the service
 // layer: the normalized address is the map key every later stage groups on, so
 // it has to be decided at track time. Change the trade-off here.
-const ipv6IdentityPrefixBits = 64
+//
+// Exported because anything displaying a normalized v6 address has to say which
+// prefix it stands for: the bare masked address is one no client ever used.
+const IPv6IdentityPrefixBits = 64
 
 // normalizeSrc reduces a source address to the identity an IP limit counts.
 //
@@ -85,7 +96,7 @@ func normalizeSrc(addr netip.Addr) netip.Addr {
 	if !addr.Is6() {
 		return addr
 	}
-	prefix, err := addr.Prefix(ipv6IdentityPrefixBits)
+	prefix, err := addr.Prefix(IPv6IdentityPrefixBits)
 	if err != nil {
 		return addr
 	}
@@ -240,17 +251,26 @@ func (c *ConnTracker) RoutedPacketConnection(ctx context.Context, conn network.P
 	return c.createWrappedPacketConn(conn, connInfo)
 }
 
-// UserIPs snapshots every tracked user's live source IPs, returning now in the
-// same monotonic basis as the windows so a caller never mixes clocks. The maps
-// are freshly built because the caller reads them on a cron goroutine, well
-// after the tracker lock is gone.
-func (c *ConnTracker) UserIPs() (map[string]map[netip.Addr]IPWindow, int64) {
+// UserIPs snapshots the live source IPs of every user want accepts, returning
+// now in the same monotonic basis as the windows so a caller never mixes
+// clocks. The maps are freshly built because the caller reads them on a cron
+// goroutine, well after the tracker lock is gone.
+//
+// want filters (nil means every user) because this runs under the mutex that
+// every connection setup and teardown takes: the walk over c.connections is
+// unavoidable, but building a nested map for each of hundreds of users when the
+// caller wants one of them is allocation held against the data plane. Both
+// callers know exactly which names they need.
+func (c *ConnTracker) UserIPs(want func(user string) bool) (map[string]map[netip.Addr]IPWindow, int64) {
 	c.access.Lock()
 	defer c.access.Unlock()
 
 	users := make(map[string]map[netip.Addr]IPWindow)
 	for _, connInfo := range c.connections {
 		if connInfo.User == "" || !connInfo.Source.IsValid() {
+			continue
+		}
+		if want != nil && !want(connInfo.User) {
 			continue
 		}
 		ips, ok := users[connInfo.User]

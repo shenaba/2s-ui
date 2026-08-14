@@ -45,25 +45,34 @@ const props = defineProps<{
 }>()
 defineEmits<{ close: [] }>()
 
-type OnlineIP = { ip: string; since: number; idle: boolean }
+// idle is null when the backend cannot tell: it only stamps per-connection
+// activity while some client has an IP limit, so with none set the answer would
+// be connection age, not inactivity. No badge is the honest rendering.
+type OnlineIP = { ip: string; since: number; idle: boolean | null }
 
 const loading = ref(false)
 const ips = ref<OnlineIP[]>([])
-// Which client the in-flight request is for, so a response that arrives after
-// the modal was reopened on someone else is dropped instead of rendered.
-const pending = ref('')
+// Identifies the request, not the client it is for. Keying on the name cannot
+// disown a superseded request for that same name -- close and reopen on one
+// client leaves two in flight, both matching -- so whichever landed last won,
+// and an older response arriving second overwrote the newer list.
+let issued = 0
+let awaited = 0
 
 // Fetched once per open rather than subscribed: the ws topic list is a fixed
 // union, and a modal opened occasionally does not justify a fourth topic.
 const loadData = async () => {
   if (!props.name) return
   const name = props.name
-  pending.value = name
+  const seq = ++issued
+  awaited = seq
   loading.value = true
   const data = await HttpUtils.get('api/onlineIps', { name })
-  if (pending.value !== name) return
-  ips.value = data.success ? (data.obj?.ips ?? []) : []
+  // Superseded: either a newer request is still running, in which case the
+  // spinner belongs to it, or the modal closed and the watcher cleared it.
+  if (awaited !== seq) return
   loading.value = false
+  ips.value = data.success ? (data.obj?.ips ?? []) : []
 }
 
 watch(() => props.visible, (open) => {
@@ -71,13 +80,17 @@ watch(() => props.visible, (open) => {
     loadData()
     return
   }
-  // Clearing pending also disowns any in-flight request.
-  pending.value = ''
+  // Bumping the sequence disowns whatever is in flight, so its response cannot
+  // land on the next open.
+  awaited = ++issued
+  loading.value = false
   ips.value = []
 })
 
+// Date included, not just the time: the point of the list is judging which IPs
+// are stale, and a tunnel opened three days ago must not read as this afternoon.
 const formatSince = (unix: number): string =>
-  new Date(unix * 1000).toLocaleTimeString(intlLocale())
+  new Date(unix * 1000).toLocaleString(intlLocale())
 </script>
 
 <style scoped>

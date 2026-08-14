@@ -28,6 +28,8 @@
   cap and expiry date; over either one it is disabled automatically
 - **Quota automation** — the clock can start on first use, and reset every N
   days, bringing a depleted client back on its own
+- **Per-client IP cap** — bound how many source IPs one client may use at once;
+  the excess is disconnected and held off briefly, no fail2ban involved
 - **Live user updates** — editing a client rewrites the inbound's user table in
   place instead of rebuilding the listener, so nobody else drops
 - **Subscriptions** — `link`, `json` and `clash` formats, usage and expiry

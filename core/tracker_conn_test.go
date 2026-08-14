@@ -86,7 +86,7 @@ func TestUserIPs(t *testing.T) {
 	noSource := &ConnectionInfo{ID: "no-source", Inbound: "in", User: "alice", Type: "tcp"}
 	tr.trackConnection(noSource.ID, noSource)
 
-	users, now := tr.UserIPs()
+	users, now := tr.UserIPs(nil)
 	// Zero is a legitimate reading: on Windows the monotonic clock advances in
 	// ~0.5ms ticks and this test finishes inside one. Nothing may require the
 	// tracker's timestamps to be distinct -- ordering falls back to the address.
@@ -112,6 +112,15 @@ func TestUserIPs(t *testing.T) {
 	if len(users["bob"]) != 1 {
 		t.Errorf("bob has %d IPs, want 1", len(users["bob"]))
 	}
+
+	// The filter runs under the tracker mutex, so a caller after one client must
+	// not pay a nested map for every other online user.
+	t.Run("want filters by user", func(t *testing.T) {
+		only, _ := tr.UserIPs(func(user string) bool { return user == "bob" })
+		if len(only) != 1 || len(only["bob"]) != 1 {
+			t.Errorf("got %v, want bob's single IP alone", only)
+		}
+	})
 }
 
 func TestCloseConnByUserIPs(t *testing.T) {
@@ -207,7 +216,7 @@ func TestConnGate(t *testing.T) {
 		routeOne(tr, newMetadata("alice", "2.2.2.2"))
 		routeOne(tr, newMetadata("bob", "1.1.1.1"))
 
-		users, _ := tr.UserIPs()
+		users, _ := tr.UserIPs(nil)
 		if _, banned := users["alice"][mustAddr(t, "1.1.1.1")]; banned {
 			t.Error("the denied IP was tracked anyway")
 		}
@@ -242,7 +251,7 @@ func TestConnGate(t *testing.T) {
 		SetConnGate(nil)
 		tr := NewConnTracker()
 		routeOne(tr, newMetadata("alice", "1.1.1.1"))
-		users, _ := tr.UserIPs()
+		users, _ := tr.UserIPs(nil)
 		if len(users["alice"]) != 1 {
 			t.Error("a connection was refused with no gate installed")
 		}

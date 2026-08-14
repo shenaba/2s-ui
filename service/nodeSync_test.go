@@ -67,8 +67,10 @@ func TestIsNodeLinkFor(t *testing.T) {
 // makes it worth pinning the payload here rather than only in a live cluster.
 func TestExpectedClientsCarriesLimitIp(t *testing.T) {
 	// expectedClients reads the package-level handle rather than taking one, so
-	// the DB has to be installed globally. Same-package tests run serially and
-	// nothing else here reads it, so this stays contained.
+	// the DB has to be installed globally. CloseDBForTest puts it back on the way
+	// out: leaving a closed pool behind the global would fail whatever ran next
+	// with "sql: database is closed", from a handle it never set up, and today
+	// nothing catches that but the alphabetical order of the test files.
 	dir := t.TempDir()
 	if err := database.InitDB(filepath.Join(dir, "test.db")); err != nil {
 		t.Fatalf("init db: %v", err)
@@ -77,8 +79,8 @@ func TestExpectedClientsCarriesLimitIp(t *testing.T) {
 	// Registered after TempDir's own cleanup, so LIFO runs it first: Windows
 	// refuses to delete the file while the pool still holds it open.
 	t.Cleanup(func() {
-		if sqlDB, err := db.DB(); err == nil {
-			sqlDB.Close()
+		if err := database.CloseDBForTest(); err != nil {
+			t.Errorf("close db: %v", err)
 		}
 	})
 

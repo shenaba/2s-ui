@@ -455,12 +455,10 @@ const ipCount = (c: any): number => dataStore.ipCounts?.[c.name] ?? 0
 const ipCountTitle = computed(() =>
   (dataStore.nodes?.length ?? 0) > 0 ? t('ui.ipCountLocalHint') : t('ui.ipCountHint'),
 )
-const ipChipColor = (c: any): string => {
-  const n = ipCount(c)
-  if (n > c.limitIp) return 'rose'
-  if (n == c.limitIp) return 'amber'
-  return 'emerald'
-}
+// Two states only. The count is how many IPs the scan admitted, and it never
+// admits more than the limit, so "over quota" is not a state this number can
+// reach — showing it would promise a reading the backend does not publish.
+const ipChipColor = (c: any): string => (ipCount(c) >= c.limitIp ? 'amber' : 'emerald')
 const ips = ref({ visible: false, name: '' })
 const showIps = (name: string) => {
   ips.value.name = name

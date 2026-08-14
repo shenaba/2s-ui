@@ -172,6 +172,30 @@ func GetDB() *gorm.DB {
 	return db
 }
 
+// CloseDBForTest closes the pool and puts the package back to its pre-InitDB
+// state. A test that installs a global DB has to call it: closing without
+// clearing the handle would leave GetDB serving a live *gorm.DB wrapped around
+// a dead pool, which fails as "sql: database is closed" from somewhere that
+// never opened one.
+//
+// Named for tests because it must not become a shutdown hook. Clearing the
+// handle makes GetDB return nil, which no caller checks; APP.Stop runs
+// cronJob.Stop first but that does not wait for in-flight jobs, and the
+// scheduler is built without cron.Recover, so the first GetDB().Model(...) in a
+// still-running job would panic the process instead of logging. Shutdown leaves
+// the pool open and lets the process exit take it down.
+func CloseDBForTest() error {
+	if db == nil {
+		return nil
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	db = nil
+	return sqlDB.Close()
+}
+
 func IsNotFound(err error) bool {
 	return err == gorm.ErrRecordNotFound
 }

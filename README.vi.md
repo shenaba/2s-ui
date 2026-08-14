@@ -29,6 +29,8 @@
   ngày hết hạn riêng; vượt một trong hai là tự động bị tắt
 - **Tự động hóa hạn mức** — đồng hồ có thể bắt đầu từ lần dùng đầu tiên và tự reset
   mỗi N ngày, tự đưa client đã cạn hạn mức trở lại
+- **Giới hạn số IP mỗi client** — quy định một client được dùng bao nhiêu IP nguồn
+  cùng lúc; phần dư bị ngắt và chặn trong chốc lát, không cần đến fail2ban
 - **Cập nhật người dùng tại chỗ** — sửa client sẽ ghi lại bảng người dùng của
   inbound tại chỗ thay vì dựng lại listener, nên những người còn lại không rớt kết nối
 - **Subscription** — các định dạng `link`, `json` và `clash`, trả lượng đã dùng và
