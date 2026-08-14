@@ -47,12 +47,9 @@ amd64、arm64、armv7 與 386 上帶這個協定。在 armv6、armv5、s390x 上
 
 </details>
 
-<details>
-  <summary>語言</summary>
+## 語言
 
 English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) · Russian
-
-</details>
 
 ## 螢幕截圖
 

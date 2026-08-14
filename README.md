@@ -53,12 +53,9 @@ outbound reports that the binary was built without it.
 
 </details>
 
-<details>
-  <summary>Languages</summary>
+## Languages
 
 English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) · Russian
-
-</details>
 
 ## Screenshots
 

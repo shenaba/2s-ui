@@ -47,12 +47,9 @@ amd64、arm64、armv7 和 386 上带这个协议。在 armv6、armv5、s390x 上
 
 </details>
 
-<details>
-  <summary>语言</summary>
+## 语言
 
 English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) · Russian
-
-</details>
 
 ## 截图
 

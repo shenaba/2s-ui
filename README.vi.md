@@ -54,12 +54,9 @@ outbound Naive sẽ báo rằng binary được build mà không có nó.
 
 </details>
 
-<details>
-  <summary>Ngôn ngữ</summary>
+## Ngôn ngữ
 
 Tiếng Anh · Tiếng Ba Tư · Tiếng Việt · Tiếng Trung (Giản thể) · Tiếng Trung (Phồn thể) · Tiếng Nga
-
-</details>
 
 ## Ảnh chụp màn hình
 
