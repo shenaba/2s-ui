@@ -1041,9 +1041,15 @@ const updateMetaJson = (data: any, key: string) => {
   // basicClashConfig。所以第一次打开任意一个选项都要把其余默认值一并落下,否则订阅里只剩
   // 这一个键,没有入站也没有 MATCH 兜底。defaultConfig 就是 basicClashConfig 的前端副本,
   // 它是冻结的而下面要改,所以必须克隆。
-  const newMetaJson = Object.keys(metaJson.value).length == 0
+  //
+  // 【只在新增时播种】。optionMixed / optionRules 关一次会连调两次:第一次删完键后对象空了,
+  // subClashExt 被写成 "",第二次就会命中「空」这个条件——于是「关掉开关」反而把整份默认
+  // 配置写回去,开关弹回 ON、用户手写的模板被换掉、订阅还多出没人要的 tun 和 fake-ip DNS。
+  // 清空是合法终态:空串正是「回退到后端 basicClashConfig」的表达方式。
+  const cur = metaJson.value
+  const newMetaJson = data != null && Object.keys(cur).length == 0
     ? cloneDefault(defaultConfig)
-    : metaJson.value
+    : cur
   if (data == null) {
     delete newMetaJson[key]
   } else {
