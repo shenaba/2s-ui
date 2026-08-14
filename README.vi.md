@@ -68,6 +68,14 @@ Tiếng Anh · Tiếng Ba Tư · Tiếng Việt · Tiếng Trung (Giản thể) 
 
 [Wiki Tài liệu API](https://github.com/shenaba/2s-ui/wiki/API-Documentation)
 
+## Thông tin cài đặt mặc định
+
+| | Mặc định |
+| --- | --- |
+| Bảng điều khiển | cổng `2095`, đường dẫn `/app/` |
+| Subscription | cổng `2096`, đường dẫn `/sub/` |
+| Người dùng / mật khẩu | `admin` / `admin` |
+
 ## Cài đặt
 
 ### Linux/macOS
@@ -77,12 +85,6 @@ bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
 Sau đó mở `http://<máy-chủ-của-bạn>:2095/app/` và đăng nhập bằng `admin` / `admin`.
-
-| | Mặc định |
-| --- | --- |
-| Bảng điều khiển | cổng `2095`, đường dẫn `/app/` |
-| Subscription | cổng `2096`, đường dẫn `/sub/` |
-| Người dùng / mật khẩu | `admin` / `admin` |
 
 Hỗ trợ cả systemd lẫn OpenRC (Alpine); trình cài đặt sẽ tự chọn đúng loại. Nó dùng
 cùng sáu ngôn ngữ với bảng điều khiển: `en`, `fa`, `ru`, `vi`, `zhcn`, `zhtw`, mặc

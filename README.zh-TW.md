@@ -61,6 +61,14 @@ English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) 
 
 [API Documentation Wiki](https://github.com/shenaba/2s-ui/wiki/API-Documentation)
 
+## 預設安裝資訊
+
+| | 預設值 |
+| --- | --- |
+| 面板 | 連接埠 `2095`，路徑 `/app/` |
+| 訂閱 | 連接埠 `2096`，路徑 `/sub/` |
+| 使用者名稱 / 密碼 | `admin` / `admin` |
+
 ## 安裝
 
 ### Linux/macOS
@@ -70,12 +78,6 @@ bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
 裝好後開啟 `http://<你的伺服器>:2095/app/`，以 `admin` / `admin` 登入。
-
-| | 預設值 |
-| --- | --- |
-| 面板 | 連接埠 `2095`，路徑 `/app/` |
-| 訂閱 | 連接埠 `2096`，路徑 `/sub/` |
-| 使用者名稱 / 密碼 | `admin` / `admin` |
 
 同時支援 systemd 與 OpenRC（Alpine），安裝腳本會自動選擇。腳本支援與面板相同的六種
 語言：`en`、`fa`、`ru`、`vi`、`zhcn`、`zhtw`，預設跟隨系統 `$LANG`，也可以手動指定，

@@ -67,6 +67,14 @@ English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) 
 
 [API-Documentation Wiki](https://github.com/shenaba/2s-ui/wiki/API-Documentation)
 
+## Default Installation Information
+
+| | Default |
+| --- | --- |
+| Panel | port `2095`, path `/app/` |
+| Subscription | port `2096`, path `/sub/` |
+| User / password | `admin` / `admin` |
+
 ## Install
 
 ### Linux/macOS
@@ -76,12 +84,6 @@ bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
 Then open `http://<your-server>:2095/app/` and log in with `admin` / `admin`.
-
-| | Default |
-| --- | --- |
-| Panel | port `2095`, path `/app/` |
-| Subscription | port `2096`, path `/sub/` |
-| User / password | `admin` / `admin` |
 
 systemd and OpenRC (Alpine) are both supported; the installer picks the right
 one for your system. It speaks the same six languages as the panel — `en`, `fa`,
