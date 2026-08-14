@@ -210,7 +210,7 @@ import Toggle from '@/components/ui/Toggle.vue'
 import SwitchLabel from '@/components/ui/SwitchLabel.vue'
 import ChipSelect from '@/components/ui/ChipSelect.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
-import { levels } from '@/plugins/subExtDefaults'
+import { levels } from '@/plugins/optionLists'
 
 const oldConfig = ref({})
 const loading = ref(false)

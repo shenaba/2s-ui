@@ -21,26 +21,30 @@ export function cloneDefault<T>(v: T): T {
 }
 
 /**
- * Every export below is frozen, so forgetting cloneDefault fails loudly at the
- * first write (ES modules are strict mode, so a write through Vue's reactive
- * proxy throws TypeError) instead of silently poisoning the catalog for the
- * rest of the session. The frozen-ness does not survive structuredClone, so
- * the copies handed to the form stay writable.
+ * Every catalog below is wrapped in this, so forgetting cloneDefault fails
+ * loudly at the first write (ES modules are strict mode, so a write through
+ * Vue's reactive proxy throws TypeError) instead of silently poisoning the
+ * catalog for the rest of the session. The frozen-ness does not survive
+ * structuredClone, so the copies handed to the form stay writable.
+ *
+ * Wrapped at each declaration rather than in one pass at the end of the file:
+ * a trailing forEach over an export list is a second, hand-maintained copy of
+ * that list which silently stops covering whatever someone forgets to add to
+ * it, and being a top-level side effect it also pins every catalog against
+ * tree-shaking. The PURE annotation on each call tells the bundler it may drop
+ * a catalog nobody imports.
  */
 function deepFreeze<T>(v: T): T {
   if (v && typeof v === 'object') Object.values(v).forEach(deepFreeze)
   return Object.freeze(v)
 }
 
-export const levels = ["trace", "debug", "info", "warn", "error", "fatal", "panic"]
-export const dnsTypes = ['udp', 'tcp', 'local', 'tls', 'quic', 'h3']
-
-export const defaultLog = {
+export const defaultLog = /* @__PURE__ */ deepFreeze({
   "level": "info",
   "timestamp": true
-}
+})
 
-export const defaultInb = [
+export const defaultInb = /* @__PURE__ */ deepFreeze([
   {
     "type": "tun",
     "address": [
@@ -67,9 +71,9 @@ export const defaultInb = [
     "listen_port": 2080,
     "users": []
   }
-]
+])
 
-export const defaultExp = {
+export const defaultExp = /* @__PURE__ */ deepFreeze({
   "clash_api": {
     "external_controller": "127.0.0.1:9090",
     "external_ui": "ui",
@@ -82,9 +86,9 @@ export const defaultExp = {
     "enabled": true,
     "store_fakeip": false
   }
-}
+})
 
-export const defaultDns = {
+export const defaultDns = /* @__PURE__ */ deepFreeze({
   "servers": [
     {
       "type": "tcp",
@@ -129,9 +133,9 @@ export const defaultDns = {
   ],
   "final": "local-dns",
   "strategy": "prefer_ipv4"
-}
+})
 
-export const geoList = [
+export const geoList = /* @__PURE__ */ deepFreeze([
   { title: "Site-Private", value: "geosite-private" },
   { title: "IP-Private", value: "geoip-private" },
   { title: "Site-Ads", value: "geosite-ads" },
@@ -141,17 +145,19 @@ export const geoList = [
   { title: "🇨🇳 IP-China", value: "geoip-cn" },
   { title: "🇻🇳 Site-Vietnam", value: "geosite-vn" },
   { title: "🇻🇳 IP-Vietnam", value: "geoip-vn" },
-]
+])
 
 // Derived, not a third hand-written copy of the same tags: `geo` is the only
 // authority (updateRuleSets builds the rule_set definitions by filtering it), so
 // a tag that exists in a selector but not in `geo` ships a subscription whose
 // rule_set reference has no definition — sing-box aborts at startup on that.
-export const geositeList = geoList
-  .filter(g => g.value.startsWith('geosite-'))
-  .map(g => ({ title: g.title.replace('Site-', ''), value: g.value }))
+export const geositeList = /* @__PURE__ */ deepFreeze(
+  geoList
+    .filter(g => g.value.startsWith('geosite-'))
+    .map(g => ({ title: g.title.replace('Site-', ''), value: g.value })),
+)
 
-export const geo = [
+export const geo = /* @__PURE__ */ deepFreeze([
   {
     tag: "geosite-ads",
     type: "remote",
@@ -215,9 +221,9 @@ export const geo = [
     url: "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/vn.srs",
     download_detour: "direct"
   }
-]
+])
 
-export const defaultConfig: any = {
+export const defaultConfig: any = /* @__PURE__ */ deepFreeze({
   "mixed-port": 7890,
   "allow-lan": false,
   "mode": "rule",
@@ -247,11 +253,9 @@ export const defaultConfig: any = {
     "GEOIP,Private,DIRECT",
     "MATCH,Proxy"
   ]
-}
+})
 
-export const clashLevels = ['debug', 'info', 'warning', 'error']
-
-export const rulesIP = [
+export const rulesIP = /* @__PURE__ */ deepFreeze([
   { title: 'Private-Direct', value: 'GEOIP,Private,DIRECT' },
   { title: 'Private-Block', value: 'GEOIP,Private,REJECT' },
   { title: 'LAN-Direct', value: 'GEOIP,LAN,DIRECT' },
@@ -266,11 +270,5 @@ export const rulesIP = [
   { title: '🇻🇳 Vietnam-Block', value: 'GEOIP,CATEGORY-VN,REJECT' },
   { title: '🇯🇵 Japan-Direct', value: 'GEOIP,JP,DIRECT' },
   { title: '🇯🇵 Japan-Block', value: 'GEOIP,JP,REJECT' },
-]
+])
 
-// Applied here rather than around each literal so the catalogs stay readable and
-// their inferred types are unchanged; the guarantee is a runtime one.
-;[
-  levels, dnsTypes, defaultLog, defaultInb, defaultExp, defaultDns,
-  geositeList, geoList, geo, defaultConfig, clashLevels, rulesIP,
-].forEach(deepFreeze)

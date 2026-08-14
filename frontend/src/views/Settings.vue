@@ -299,9 +299,10 @@ import {
 import { asArray, isOnlySniff, collectRuleSetTags, mergeRuleSets } from '@/plugins/subExtRules'
 import {
   cloneDefault,
-  levels, dnsTypes, defaultLog, defaultInb, defaultExp, defaultDns,
-  geositeList, geoList, geo, defaultConfig, clashLevels, rulesIP,
+  defaultLog, defaultInb, defaultExp, defaultDns,
+  geositeList, geoList, geo, defaultConfig, rulesIP,
 } from '@/plugins/subExtDefaults'
+import { levels, dnsTypes, clashLevels } from '@/plugins/optionLists'
 
 const tab = ref('interface')
 const loading = ref(false)
