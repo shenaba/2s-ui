@@ -85,8 +85,6 @@ Linux включают его только на amd64, arm64, armv7 и 386. На
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
-Затем откройте `http://<ваш-сервер>:2095/app/` и войдите с `admin` / `admin`.
-
 Поддерживаются и systemd, и OpenRC (Alpine) — установщик сам выберет нужный. Он
 следует системной переменной `$LANG`, либо укажите `en`, `fa`, `ru`, `vi`,
 `zhcn` или `zhtw` — меню `s-ui` затем это запомнит:

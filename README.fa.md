@@ -81,8 +81,6 @@ outbound از نوع Naive اعلام می‌کند که باینری بدون �
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
-سپس `http://<سرور-شما>:2095/app/` را باز کنید و با `admin` / `admin` وارد شوید.
-
 هم systemd و هم OpenRC (آلپاین) پشتیبانی می‌شوند؛ اسکریپت نصب خودش مورد درست را
 انتخاب می‌کند. اسکریپت از `$LANG` سیستم پیروی می‌کند، یا یکی از `en`، `fa`، `ru`،
 `vi`، `zhcn`، `zhtw` را مشخص کنید تا منوی `s-ui` هم همان را به یاد بسپارد:

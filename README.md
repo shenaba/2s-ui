@@ -83,8 +83,6 @@ English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) 
 bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 ```
 
-Then open `http://<your-server>:2095/app/` and log in with `admin` / `admin`.
-
 systemd and OpenRC (Alpine) are both supported; the installer picks the right
 one. It follows your system `$LANG`, or you can pass `en`, `fa`, `ru`, `vi`,
 `zhcn` or `zhtw`, which the `s-ui` menu then remembers:
