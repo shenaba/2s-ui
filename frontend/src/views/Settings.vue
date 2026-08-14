@@ -475,6 +475,18 @@ const save = async () => {
   const webWillAutofill = webOn && now.webDomain && (!now.webURI || now.webURI === webAuto)
   const subWillAutofill = subOn && now.subDomain && (!now.subURI || now.subURI === subAuto)
 
+  // 先拦「不是绝对地址」。这种值会被重启后的 location.replace 当【相对】地址解析,拼成
+  // https://<当前主机>/<当前路径>/<你填的东西>,而那时面板已经重启完了。不加 webWillAutofill
+  // 豁免:非空且解析不了的值必然 !== webAuto,自动填充不会去修它,只会一直卡在这儿。
+  if (webUriInvalid.value) {
+    push.error({ title: i18n.global.t('setting.webUriInvalid'), duration: 10000 })
+    return
+  }
+  if (subUriInvalid.value) {
+    push.error({ title: i18n.global.t('setting.subUriInvalid'), duration: 10000 })
+    return
+  }
+
   // A mismatch restarts the panel onto a path it does not serve, and the only way back is the
   // page that no longer opens — so block before anything is written.
   //
@@ -632,13 +644,17 @@ const subBehindProxyDesc = computed(() => {
   return base + ' ' + i18n.global.t('setting.behindProxyListenWarn')
 })
 
+// 「填了但不是个绝对地址」和「路径对不上」是两件事,必须分开报。合并成一个布尔的话,漏写
+// https:// 的人看到的是「路径与 Base URI 不一致,去改 Base URI」——而他的路径其实是对的,
+// Base URI 才是全页唯一能把自己锁在外面的字段,这条提示等于把人往最危险的操作上推。
+const webUriInvalid = computed(() => uriPathOf(settings.value.webURI) === null)
+const subUriInvalid = computed(() => uriPathOf(settings.value.subURI) === null)
+
 // Panel URI is not a route: the served path — and the generated nginx location — comes from Base
 // URI. The names hide that, so editing the URI to move the panel is a common, expensive mistake.
 const webUriPathMismatch = computed(() => {
   const p = uriPathOf(settings.value.webURI)
-  // 解析不出来(多半是漏了 https://)也要拦:那种值会被 location.replace 当相对地址拼,
-  // 重启后跳到一个死地址,而这里是唯一还能拦住它的地方。
-  if (p === null) return true
+  if (p === null) return false // 交给 webUriInvalid 报,别两条一起弹
   return p !== '' && p !== normalizePath(settings.value.webPath)
 })
 
@@ -646,19 +662,22 @@ const webUriPathMismatch = computed(() => {
 // clients, so a mismatch never 404s — subscriptions just stop updating.
 const subUriPathMismatch = computed(() => {
   const p = uriPathOf(settings.value.subURI)
-  if (p === null) return true
+  if (p === null) return false
   return p !== '' && p !== normalizePath(settings.value.subPath)
 })
 
-const subUriHint = computed(() =>
-  subUriPathMismatch.value ? i18n.global.t('setting.subUriPathMismatch') : '')
+const subUriHint = computed(() => {
+  if (subUriInvalid.value) return i18n.global.t('setting.subUriInvalid')
+  return subUriPathMismatch.value ? i18n.global.t('setting.subUriPathMismatch') : ''
+})
 
 // Behind a proxy the panel cannot infer its public address, so the post-restart redirect depends
 // on webURI. Only warn there; otherwise the field is an optional override.
 const webUriHint = computed(() => {
   const parts: string[] = []
   if (webBehindProxy.value) parts.push(i18n.global.t('setting.webUriProxyHint'))
-  if (webUriPathMismatch.value) parts.push(i18n.global.t('setting.webUriPathMismatch'))
+  if (webUriInvalid.value) parts.push(i18n.global.t('setting.webUriInvalid'))
+  else if (webUriPathMismatch.value) parts.push(i18n.global.t('setting.webUriPathMismatch'))
   return parts.join(' ')
 })
 
