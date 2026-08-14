@@ -296,7 +296,7 @@ import {
   proxyInputs, loopbackListens, normalizePath, panelIsTLS, buildURL, uriPathOf,
   autoURI, sleep, waitReachable,
 } from '@/plugins/settingsPath'
-import { asArray, isOnlySniff, collectRuleSetTags, mergeRuleSets } from '@/plugins/subExtRules'
+import { asArray, asStringList, isOnlySniff, collectRuleSetTags, mergeRuleSets } from '@/plugins/subExtRules'
 import {
   cloneDefault,
   defaultLog, defaultInb, defaultExp, defaultDns,
@@ -899,7 +899,9 @@ const defaultResolver = computed({
 const dnsToDirect = computed({
   get: (): string[] => {
     const ruleIndex = dnsRules.value.findIndex((r: any) => r.server == "direct-dns" && Object.hasOwn(r, 'rule_set'))
-    return ruleIndex >= 0 ? dnsRules.value[ruleIndex].rule_set : []
+    // asStringList:rule_set 可以是裸字符串(sing-box 的 Listable),而 ChipSelect 收的是
+    // string[]——直接给它字符串会按字符渲染成一堆 chip,点一下还会抛
+    return ruleIndex >= 0 ? asStringList(dnsRules.value[ruleIndex].rule_set) : []
   },
   set: (v: string[]) => {
     const ruleIndex = dnsRules.value.findIndex((r: any) => r.server == "direct-dns" && Object.hasOwn(r, 'rule_set'))
@@ -949,7 +951,7 @@ const rules = computed((): any => Array.isArray(subJsonExt.value?.rules) ? subJs
 const ruleToDirect = computed({
   get: (): string[] => {
     const ruleIndex = rules.value?.findIndex((r: any) => r.outbound == "direct" && Object.hasOwn(r, 'rule_set')) ?? -1
-    return ruleIndex >= 0 ? rules.value[ruleIndex].rule_set : []
+    return ruleIndex >= 0 ? asStringList(rules.value[ruleIndex].rule_set) : []
   },
   set: (v: string[]) => {
     const ruleIndex = rules.value?.findIndex((r: any) => r.outbound == "direct" && Object.hasOwn(r, 'rule_set')) ?? -1
@@ -970,7 +972,7 @@ const ruleToDirect = computed({
 const ruleToBlock = computed({
   get: (): string[] => {
     const ruleIndex = rules.value?.findIndex((r: any) => r.action == "reject" && Object.hasOwn(r, 'rule_set')) ?? -1
-    return ruleIndex >= 0 ? rules.value[ruleIndex].rule_set : []
+    return ruleIndex >= 0 ? asStringList(rules.value[ruleIndex].rule_set) : []
   },
   set: (v: string[]) => {
     const ruleIndex = rules.value?.findIndex((r: any) => r.action == "reject" && Object.hasOwn(r, 'rule_set')) ?? -1
@@ -1043,19 +1045,27 @@ const updateMetaJson = (data: any, key: string) => {
   // 这一个键,没有入站也没有 MATCH 兜底。defaultConfig 就是 basicClashConfig 的前端副本,
   // 它是冻结的而下面要改,所以必须克隆。
   //
-  // 【只在新增时播种】。optionMixed / optionRules 关一次会连调两次:第一次删完键后对象空了,
-  // subClashExt 被写成 "",第二次就会命中「空」这个条件——于是「关掉开关」反而把整份默认
-  // 配置写回去,开关弹回 ON、用户手写的模板被换掉、订阅还多出没人要的 tun 和 fake-ip DNS。
-  // 清空是合法终态:空串正是「回退到后端 basicClashConfig」的表达方式。
+  // 只在【新增】时播种。optionMixed / optionRules 关一次会连调两次:第一次删完键后对象空了、
+  // subClashExt 被写成 "",若删除路径也播种,「关掉开关」反而把整份默认配置写回去——开关弹回
+  // ON、用户手写的模板被换掉、订阅还多出没人要的 tun 和 fake-ip DNS。清空是合法终态:空串正是
+  // 「回退到后端 basicClashConfig」的表达方式。
+  //
+  // usable 判的是「是不是一个能往上写属性的普通对象」而不只是「非空」:yaml 能解析出标量和
+  // 列表(metaJson 的 ?? {} 只挡得住 null),往标量上写属性在严格模式直接抛、往数组上写会被
+  // yaml.stringify 静默丢掉——两种都表现为开关点了没反应。这种值这个界面根本表达不了,
+  // 所以新增时用默认值顶掉,删除时无事可做、原样留着别写坏。
   const cur = metaJson.value
-  const newMetaJson = data != null && Object.keys(cur).length == 0
-    ? cloneDefault(defaultConfig)
-    : cur
+  const usable = !!cur && typeof cur === 'object' && !Array.isArray(cur)
+
   if (data == null) {
-    delete newMetaJson[key]
-  } else {
-    newMetaJson[key] = data
+    if (!usable || Object.keys(cur).length == 0) return
+    delete cur[key]
+    metaJson.value = cur
+    return
   }
+
+  const newMetaJson = usable && Object.keys(cur).length > 0 ? cur : cloneDefault(defaultConfig)
+  newMetaJson[key] = data
   metaJson.value = newMetaJson
 }
 

@@ -44,11 +44,13 @@ export function isOnlySniff(rules: unknown): boolean {
  * Read a sing-box `Listable[string]`: the JSON accepts either a bare string or
  * an array, and the editor passes both through untouched.
  *
- * Missing the string form is not cosmetic — the rule keeps its reference either
- * way, so a tag we fail to collect here is a rule_set reference with no matching
- * definition, and sing-box aborts at startup with "rule-set not found".
+ * Every reader of a rule_set has to go through this, not just the tag collector.
+ * Missing it when collecting tags emits no definition for the referenced set and
+ * sing-box aborts at startup with "rule-set not found"; missing it when reading
+ * one into the chip selectors hands a string to a `string[]` prop, which draws
+ * one chip per character and throws on click.
  */
-function asStringList(v: unknown): string[] {
+export function asStringList(v: unknown): string[] {
   return typeof v === 'string' ? [v] : asArray(v)
 }
 
