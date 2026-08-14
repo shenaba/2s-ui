@@ -63,6 +63,10 @@ English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) 
 
 [Other UI Screenshots](frontend/screenshots.md)
 
+## API Documentation
+
+[API-Documentation Wiki](https://github.com/shenaba/2s-ui/wiki/API-Documentation)
+
 ## Install
 
 ### Linux/macOS

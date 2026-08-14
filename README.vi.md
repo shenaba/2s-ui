@@ -64,6 +64,10 @@ Tiếng Anh · Tiếng Ba Tư · Tiếng Việt · Tiếng Trung (Giản thể) 
 
 [Các ảnh chụp màn hình giao diện khác](frontend/screenshots.md)
 
+## Tài liệu API
+
+[Wiki Tài liệu API](https://github.com/shenaba/2s-ui/wiki/API-Documentation)
+
 ## Cài đặt
 
 ### Linux/macOS

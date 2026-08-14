@@ -57,6 +57,10 @@ English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) 
 
 [更多 UI 截图](frontend/screenshots.md)
 
+## API 文档
+
+[API Documentation Wiki](https://github.com/shenaba/2s-ui/wiki/API-Documentation)
+
 ## 安装
 
 ### Linux/macOS

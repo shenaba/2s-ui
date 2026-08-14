@@ -65,6 +65,10 @@ Linux включают его только на amd64, arm64, armv7 и 386. На
 
 [Другие скриншоты интерфейса](frontend/screenshots.md)
 
+## Документация API
+
+[Wiki с документацией API](https://github.com/shenaba/2s-ui/wiki/API-Documentation)
+
 ## Установка
 
 ### Linux/macOS

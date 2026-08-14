@@ -61,6 +61,10 @@ outbound از نوع Naive اعلام می‌کند که باینری بدون �
 
 [سایر تصاویر رابط کاربری](frontend/screenshots.md)
 
+## مستندات API
+
+[ویکی مستندات API](https://github.com/shenaba/2s-ui/wiki/API-Documentation)
+
 ## نصب
 
 ### Linux/macOS
