@@ -86,10 +86,9 @@ bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 
 Sau đó mở `http://<máy-chủ-của-bạn>:2095/app/` và đăng nhập bằng `admin` / `admin`.
 
-Hỗ trợ cả systemd lẫn OpenRC (Alpine); trình cài đặt sẽ tự chọn đúng loại. Nó dùng
-cùng sáu ngôn ngữ với bảng điều khiển: `en`, `fa`, `ru`, `vi`, `zhcn`, `zhtw`, mặc
-định theo `$LANG` của hệ thống, hoặc bạn có thể chọn một ngôn ngữ và menu `s-ui` sẽ
-ghi nhớ:
+Hỗ trợ cả systemd lẫn OpenRC (Alpine); trình cài đặt sẽ tự chọn đúng loại. Nó
+theo `$LANG` của hệ thống, hoặc bạn chỉ định `en`, `fa`, `ru`, `vi`, `zhcn`
+hay `zhtw`, và menu `s-ui` sẽ ghi nhớ:
 
 ```sh
 SUI_LANG=vi bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)

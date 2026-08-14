@@ -79,9 +79,8 @@ bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 
 裝好後開啟 `http://<你的伺服器>:2095/app/`，以 `admin` / `admin` 登入。
 
-同時支援 systemd 與 OpenRC（Alpine），安裝腳本會自動選擇。腳本支援與面板相同的六種
-語言：`en`、`fa`、`ru`、`vi`、`zhcn`、`zhtw`，預設跟隨系統 `$LANG`，也可以手動指定，
-之後 `s-ui` 選單會沿用該語言：
+同時支援 systemd 與 OpenRC（Alpine），安裝腳本會自動選擇。腳本預設跟隨系統 `$LANG`，
+也可以指定 `en`、`fa`、`ru`、`vi`、`zhcn`、`zhtw` 之一，之後 `s-ui` 選單會沿用：
 
 ```sh
 SUI_LANG=zhtw bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)

@@ -88,9 +88,8 @@ bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
 Затем откройте `http://<ваш-сервер>:2095/app/` и войдите с `admin` / `admin`.
 
 Поддерживаются и systemd, и OpenRC (Alpine) — установщик сам выберет нужный. Он
-говорит на тех же шести языках, что и панель: `en`, `fa`, `ru`, `vi`, `zhcn`,
-`zhtw`. По умолчанию используется системная переменная `$LANG`, но язык можно
-выбрать явно — меню `s-ui` затем его запомнит:
+следует системной переменной `$LANG`, либо укажите `en`, `fa`, `ru`, `vi`,
+`zhcn` или `zhtw` — меню `s-ui` затем это запомнит:
 
 ```sh
 SUI_LANG=ru bash <(curl -Ls https://raw.githubusercontent.com/shenaba/2s-ui/main/install.sh)
