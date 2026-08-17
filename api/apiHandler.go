@@ -40,6 +40,12 @@ func (a *APIHandler) postHandler(c *gin.Context) {
 		a.ApiService.Login(c)
 	case "changePass":
 		a.ApiService.ChangePass(c)
+	case "twoFaSetup":
+		a.ApiService.TwoFaSetup(c)
+	case "twoFaEnable":
+		a.ApiService.TwoFaEnable(c)
+	case "twoFaDisable":
+		a.ApiService.TwoFaDisable(c)
 	case "save":
 		hostname, err := a.ApiService.canonicalHost(c)
 		if err != nil {

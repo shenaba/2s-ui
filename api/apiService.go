@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -34,6 +36,7 @@ type ApiService struct {
 	service.UpdateService
 	service.NodeService
 	service.NodeSyncService
+	service.LoginGuardService
 }
 
 func (a *ApiService) UpdateInfo(c *gin.Context) {
@@ -278,11 +281,44 @@ func (a *ApiService) postActions(c *gin.Context) (string, json.RawMessage, error
 
 func (a *ApiService) Login(c *gin.Context) {
 	remoteIP := getRemoteIp(c)
-	loginUser, err := a.UserService.Login(c.Request.FormValue("user"), c.Request.FormValue("pass"), remoteIP)
+	username := c.Request.FormValue("user")
+
+	// Checked before the password so a banned attempt costs one indexed lookup
+	// instead of a bcrypt comparison -- otherwise the limiter would leave the
+	// panel's most expensive unauthenticated operation wide open.
+	if wait := a.LoginGuardService.BanRemaining(remoteIP, username); wait > 0 {
+		// Unlike a wrong password, this says exactly what happened: whoever
+		// caused the ban already knows they are being refused, while a
+		// legitimate user who mistyped needs to be told that waiting is the fix
+		// rather than trying again immediately and extending nothing.
+		logger.Warning("login refused, ban still in force. IP: ", remoteIP)
+		minutes := int((wait + time.Minute - 1) / time.Minute)
+		jsonMsgObj(c, "", map[string]interface{}{"retryAfter": int(wait.Seconds())},
+			common.NewErrorf("too many failed attempts, try again in %d minute(s)", minutes))
+		return
+	}
+
+	loginUser, err := a.UserService.Login(username, c.Request.FormValue("pass"), c.Request.FormValue("code"), remoteIP)
+	if errors.Is(err, service.ErrTwoFaRequired) {
+		// Counted, even though the password was right and this is only the
+		// first half of a two-step login: reaching here has already paid for a
+		// bcrypt comparison, so leaving it uncounted would let whoever holds a
+		// leaked password drive that cost indefinitely without ever tripping
+		// the limiter. A real two-step login lands here exactly once and then
+		// clears the whole tally on success, so it never accumulates.
+		a.LoginGuardService.RecordFailure(remoteIP, username)
+		// Written out rather than sent through jsonMsg because this is not an
+		// error to report: an empty msg is what keeps httputil.ts from raising
+		// a red "failed" toast over what is really the next step of the form.
+		c.JSON(http.StatusOK, Msg{Success: false, Obj: map[string]interface{}{"twoFa": true}})
+		return
+	}
 	if err != nil {
+		a.LoginGuardService.RecordFailure(remoteIP, username)
 		jsonMsg(c, "", err)
 		return
 	}
+	a.LoginGuardService.RecordSuccess(remoteIP, username)
 
 	sessionMaxAge, err := a.SettingService.GetSessionMaxAge()
 	if err != nil {
@@ -311,11 +347,64 @@ func (a *ApiService) ChangePass(c *gin.Context) {
 		// under the old credentials would otherwise keep receiving the full
 		// config. Dropping them forces a fresh handshake.
 		service.DropAllClients()
+		// Every session issued under the old credentials, including this one,
+		// stops being accepted the moment the row changes. Clearing the cookie
+		// here just makes that immediate and visible rather than surfacing as
+		// an "Invalid login" on whatever the user happens to click next.
+		ClearSession(c)
 		jsonMsg(c, "save", nil)
 	} else {
 		logger.Warning("change user credentials failed:", err)
 		jsonMsg(c, "", err)
 	}
+}
+
+// TwoFaSetup mints a candidate secret and returns the otpauth:// URI the QR
+// code encodes. Nothing is stored yet: the secret only becomes the account's
+// once TwoFaEnable has seen a working code from it, so an enrolment abandoned
+// halfway leaves no trace and cannot lock anyone out.
+func (a *ApiService) TwoFaSetup(c *gin.Context) {
+	loginUser := GetLoginUser(c)
+	secret, err := util.GenerateTOTPSecret()
+	if err != nil {
+		jsonMsg(c, "", err)
+		return
+	}
+
+	// The host goes in the account name so a phone enrolled against several
+	// panels shows which is which -- they would otherwise all read "s-ui: admin".
+	account := loginUser
+	if host := getHostname(c); host != "" {
+		account += "@" + host
+	}
+	jsonObj(c, map[string]interface{}{
+		"secret": secret,
+		"uri":    util.TOTPKeyURI(secret, account, config.GetName()),
+	}, nil)
+}
+
+func (a *ApiService) TwoFaEnable(c *gin.Context) {
+	loginUser := GetLoginUser(c)
+	err := a.UserService.EnableTwoFa(loginUser, c.Request.FormValue("secret"), c.Request.FormValue("code"))
+	if err != nil {
+		logger.Warning("enable two-factor failed:", err)
+		jsonMsg(c, "", err)
+		return
+	}
+	logger.Info("two-factor authentication enabled for ", loginUser)
+	jsonMsg(c, "save", nil)
+}
+
+func (a *ApiService) TwoFaDisable(c *gin.Context) {
+	loginUser := GetLoginUser(c)
+	err := a.UserService.DisableTwoFa(loginUser, c.Request.FormValue("pass"))
+	if err != nil {
+		logger.Warning("disable two-factor failed:", err)
+		jsonMsg(c, "", err)
+		return
+	}
+	logger.Info("two-factor authentication disabled for ", loginUser)
+	jsonMsg(c, "save", nil)
 }
 
 // Save handles POST api/save. fanout triggers an immediate node reconcile for

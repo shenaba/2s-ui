@@ -13,6 +13,12 @@
     @close="closeChangesModal"
   />
   <TokenModal :open="tokenModal.visible" @close="closeTokenModal" />
+  <TwoFaModal
+    :open="twoFaModal.visible"
+    :enabled="twoFaModal.enabled"
+    @close="twoFaModal.visible = false"
+    @saved="loadData"
+  />
 
   <div class="page-stack-lg fade-up">
     <!-- toolbar -->
@@ -30,6 +36,7 @@
             <div style="font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ item.username }}</div>
             <div style="font-size: 11.5px; color: var(--text-3);">{{ $t('ui.lastLogin') }}</div>
           </div>
+          <Chip v-if="item.twoFa" color="emerald">{{ $t('admin.twoFa.short') }}</Chip>
         </div>
         <div class="admin-rows">
           <div class="kv-row">
@@ -47,6 +54,13 @@
         </div>
         <div class="admin-actions">
           <CardBtn icon="edit" :title="$t('actions.edit')" @click="showEditModal(item)" />
+          <CardBtn
+            icon="shield"
+            border
+            :disabled="currentUser !== '' && item.username !== currentUser"
+            :title="$t('admin.twoFa.title')"
+            @click="showTwoFaModal(item)"
+          />
           <CardBtn icon="list" border :title="$t('ui.changes')" @click="showChangesModal(item.username)" />
         </div>
       </div>
@@ -58,12 +72,14 @@
 import AdminModal from '@/layouts/drawers/admin/AdminModal.vue'
 import ChangesModal from '@/layouts/drawers/admin/ChangesModal.vue'
 import TokenModal from '@/layouts/drawers/admin/TokenModal.vue'
+import TwoFaModal from '@/layouts/drawers/admin/TwoFaModal.vue'
 import { intlLocale } from '@/locales'
 import HttpUtils from '@/plugins/httputil'
 import { ref, onMounted } from 'vue'
 import Btn from '@/components/ui/Btn.vue'
 import Avatar from '@/components/ui/Avatar.vue'
 import CardBtn from '@/components/ui/CardBtn.vue'
+import Chip from '@/components/ui/Chip.vue'
 
 const loading = ref(false)
 
@@ -88,6 +104,7 @@ const loadData = async () => {
       users.value.push({
         id: u.id,
         username: u.username,
+        twoFa: u.twoFa === true,
         loginDate: loginDateTime[0],
         loginTime: loginDateTime[1],
         ip: lastLogin[2] ?? "-",
@@ -138,6 +155,27 @@ const showChangesModal = (actor: string) => {
 const closeChangesModal = () => {
   changesModal.value.visible = false
   changesModal.value.actor = ''
+}
+
+// Enrolment always applies to the logged-in account — the backend reads the
+// session rather than a user id — so opening this for a different row would
+// write the secret to the wrong account with nothing on screen saying so.
+// There is only ever one admin today, but the page renders a list, hence the
+// button being disabled on every row but your own.
+//
+// This key is written at login and can go missing on its own — a cleared
+// localStorage leaves the session cookie intact — so an empty value means "no
+// idea who you are" and disables nothing. Locking every row would be worse:
+// with one admin it makes 2FA unreachable, and unlike the mismatch case there
+// is nothing on screen to explain it.
+const currentUser = localStorage.getItem('2sui-user') ?? ''
+const twoFaModal = ref({
+  visible: false,
+  enabled: false,
+})
+const showTwoFaModal = (user: any) => {
+  twoFaModal.value.enabled = user.twoFa === true
+  twoFaModal.value.visible = true
 }
 
 const tokenModal = ref({

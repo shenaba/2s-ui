@@ -72,6 +72,15 @@
       <SRow :label="$t('setting.sessionAge')" :hint="$t('date.m')">
         <input class="input mono" type="number" min="0" v-model.number="sessionMaxAge" />
       </SRow>
+      <SRow :label="$t('setting.loginMaxFailures')" :hint="$t('setting.loginGuardHint')">
+        <input class="input mono" type="number" min="0" v-model.number="loginMaxFailures" />
+      </SRow>
+      <SRow :label="$t('setting.loginFailWindow')" :hint="$t('date.m')">
+        <input class="input mono" type="number" min="0" v-model.number="loginFailWindow" />
+      </SRow>
+      <SRow :label="$t('setting.loginBanDuration')" :hint="$t('date.m')">
+        <input class="input mono" type="number" min="0" v-model.number="loginBanDuration" />
+      </SRow>
       <SRow :label="$t('setting.trafficAge')" :hint="$t('date.d')">
         <input class="input mono" type="number" min="0" v-model.number="trafficAge" />
       </SRow>
@@ -321,6 +330,9 @@ const settings = ref({
   webPath: "/app/",
   webURI: "",
   sessionMaxAge: "0",
+  loginMaxFailures: "5",
+  loginFailWindow: "5",
+  loginBanDuration: "15",
   trafficAge: "30",
   timeLocation: "Asia/Tehran",
   subListen: "",
@@ -844,6 +856,24 @@ const webPort = computed({
 const sessionMaxAge = computed({
   get: () => { return settings.value.sessionMaxAge.length > 0 ? parseInt(settings.value.sessionMaxAge) : 0 },
   set: (v: number) => { settings.value.sessionMaxAge = v > 0 ? v.toString() : "0" }
+})
+
+// Any of the three at 0 turns the login rate limit off entirely — the backend
+// treats a zero window or ban the same as no failure budget, since neither
+// would refuse anyone.
+const loginMaxFailures = computed({
+  get: () => { return settings.value.loginMaxFailures.length > 0 ? parseInt(settings.value.loginMaxFailures) : 0 },
+  set: (v: number) => { settings.value.loginMaxFailures = v > 0 ? v.toString() : "0" }
+})
+
+const loginFailWindow = computed({
+  get: () => { return settings.value.loginFailWindow.length > 0 ? parseInt(settings.value.loginFailWindow) : 0 },
+  set: (v: number) => { settings.value.loginFailWindow = v > 0 ? v.toString() : "0" }
+})
+
+const loginBanDuration = computed({
+  get: () => { return settings.value.loginBanDuration.length > 0 ? parseInt(settings.value.loginBanDuration) : 0 },
+  set: (v: number) => { settings.value.loginBanDuration = v > 0 ? v.toString() : "0" }
 })
 
 const trafficAge = computed({

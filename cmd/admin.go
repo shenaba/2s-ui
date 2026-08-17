@@ -24,6 +24,26 @@ func resetAdmin() {
 	}
 }
 
+// disableAdminTwoFa is the only way back in once the second factor cannot be
+// satisfied -- a lost authenticator, or a clock that moved backwards past the
+// replay high-water mark. The panel side of this asks for the password on
+// purpose; here the password is not what is missing.
+func disableAdminTwoFa() {
+	err := database.InitDB(config.GetDBPath())
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	userService := service.UserService{}
+	err = userService.ClearFirstUserTwoFa()
+	if err != nil {
+		fmt.Println("disable two-factor authentication failed:", err)
+	} else {
+		fmt.Println("two-factor authentication disabled")
+	}
+}
+
 func updateAdmin(username string, password string) {
 	err := database.InitDB(config.GetDBPath())
 	if err != nil {

@@ -123,6 +123,7 @@ func InitDB(dbPath string) error {
 		&model.Changes{},
 		&model.Node{},
 		&model.Cert{},
+		&model.LoginAttempt{},
 	)
 	if err != nil {
 		return err

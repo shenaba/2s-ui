@@ -222,6 +222,17 @@ export default {
       msg: "Vui lòng sao chép mã thông báo bên dưới và lưu trữ nó ở nơi an toàn. Nó sẽ không được hiển thị lại.",
       token: "Mã thông báo"
     },
+    twoFa: {
+      title: "Xác thực hai bước",
+      short: "2FA",
+      enable: "Bật",
+      disable: "Tắt",
+      enabledMsg: "Tài khoản này đã bật xác thực hai bước.",
+      scanMsg: "Quét mã bằng ứng dụng xác thực, hoặc nhập khóa bí mật thủ công.",
+      secret: "Khóa bí mật",
+      confirmHint: "Nhập mã hiển thị để xác nhận",
+      disableHint: "Cần mật khẩu để tắt",
+    },
   },
   setting: {
     interface: "Giao diện",
@@ -303,6 +314,10 @@ export default {
     webUriPathMismatch: "Đường dẫn khác «Đường dẫn gốc»; muốn đổi, hãy sửa mục đó.",
     webUriPathBlocked: "Lưu thất bại: đường dẫn «URI bảng điều khiển» không khớp «Đường dẫn gốc»",
     sessionAge: "Tuổi tối đa của phiên",
+    loginMaxFailures: "Giới hạn đăng nhập thất bại",
+    loginFailWindow: "Cửa sổ đếm thất bại",
+    loginBanDuration: "Thời gian khóa",
+    loginGuardHint: "0 là không giới hạn",
     trafficAge: "Tuổi lưu thông tối đa",
     timeLoc: "Vị trí múi giờ",
     subEncode: "Kích hoạt mã hóa",

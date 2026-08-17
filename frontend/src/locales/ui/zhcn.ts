@@ -424,6 +424,7 @@ export default {
   rememberMe: "记住我",
   needHelp: "需要帮助?",
   signIn: "登录",
+  twoFaCode: "验证码",
   protectedArea: "受保护区域 · 仅限授权管理员",
   heroTitle: "一个面板,掌控整个 sing-box 边缘。",
   heroDesc: "管理入站、客户端、路由与 TLS —— 实时洞察每个节点的流量。",

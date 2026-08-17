@@ -424,6 +424,7 @@ export default {
   rememberMe: "Ghi nhớ tôi",
   needHelp: "Cần trợ giúp?",
   signIn: "Đăng nhập",
+  twoFaCode: "Mã xác minh",
   protectedArea: "Khu vực bảo vệ · chỉ quản trị viên",
   heroTitle: "Một bảng cho toàn bộ edge sing-box của bạn.",
   heroDesc: "Quản lý inbound, khách, định tuyến và TLS — với phân tích lưu lượng trực tiếp trên mọi node.",

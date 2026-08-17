@@ -424,6 +424,7 @@ export default {
   rememberMe: "Remember me",
   needHelp: "Need help?",
   signIn: "Sign in",
+  twoFaCode: "Verification code",
   protectedArea: "Protected area · authorised administrators only",
   heroTitle: "One panel for your entire sing-box edge.",
   heroDesc: "Manage inbounds, clients, routing and TLS — with live traffic insight across every node.",

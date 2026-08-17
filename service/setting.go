@@ -55,6 +55,9 @@ var defaultValueMap = map[string]string{
 	"webPath":            "/app/",
 	"webURI":             "",
 	"sessionMaxAge":      "0",
+	"loginMaxFailures":   "5",
+	"loginFailWindow":    "5",
+	"loginBanDuration":   "15",
 	"trafficAge":         "30",
 	"statsBucketSeconds": "60",
 	"timeLocation":       "Asia/Tehran",
@@ -282,6 +285,23 @@ func (s *SettingService) GetSessionMaxAge() (int, error) {
 
 func (s *SettingService) GetTrafficAge() (int, error) {
 	return s.getInt("trafficAge")
+}
+
+// GetLoginGuard returns the login rate limit's three knobs: how many failures
+// are tolerated, over how many minutes, and how many minutes a ban then lasts.
+// Zero or negative failures disables the limiter outright, which is why the
+// caller gets the raw numbers rather than a "enabled" flag -- see loginGuard.
+func (s *SettingService) GetLoginGuard() (maxFailures int, windowMinutes int, banMinutes int, err error) {
+	if maxFailures, err = s.getInt("loginMaxFailures"); err != nil {
+		return 0, 0, 0, err
+	}
+	if windowMinutes, err = s.getInt("loginFailWindow"); err != nil {
+		return 0, 0, 0, err
+	}
+	if banMinutes, err = s.getInt("loginBanDuration"); err != nil {
+		return 0, 0, 0, err
+	}
+	return maxFailures, windowMinutes, banMinutes, nil
 }
 
 // GetStatsBucketSeconds returns the bucket size (in seconds) that traffic

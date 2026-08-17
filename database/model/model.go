@@ -20,6 +20,44 @@ type User struct {
 	Username   string `json:"username" form:"username"`
 	Password   string `json:"password" form:"password"`
 	LastLogins string `json:"lastLogin"`
+	// Base32 TOTP shared secret; empty means the second factor is off. Tagged
+	// json:"-" because knowing it is enough to generate valid codes: the panel
+	// hands it out exactly once, during enrolment, and never reads it back to
+	// any caller afterwards.
+	TwoFaSecret string `json:"-"`
+	// Counter the last accepted code matched. A code stays valid for up to 90
+	// seconds, so without this the same six digits could be replayed for the
+	// rest of that window; anything at or below it is refused.
+	TwoFaCounter int64 `json:"-"`
+	// Whether TwoFaSecret is set, which is all the UI is ever told. It is
+	// computed by the query that selects it, so it is read-only ("->") and
+	// excluded from migrations ("-:migration") -- there is no such column.
+	TwoFa bool `json:"twoFa" gorm:"->;-:migration"`
+}
+
+// LoginAttempt is the rate limiter's record for one identity -- a source IP or
+// a username, told apart by Scope. It lives in the DB rather than in memory
+// because a restart must not hand an attacker a fresh window, and a restart is
+// not rare here: operators do it on upgrade, and checkCoreJob can do it on its
+// own.
+//
+// One row per identity, updated in place, rather than one row per failure: the
+// window this enforces is the fixed one 3x-ui also settled on, and counting
+// rows would mean an unbounded table plus a COUNT on every login attempt.
+type LoginAttempt struct {
+	Id uint `json:"id" gorm:"primaryKey;autoIncrement"`
+	// "ip" or "user". Both are counted, so a spray across many usernames from
+	// one address and a spray from many addresses at one username each trip a
+	// limit on their own.
+	Scope string `json:"scope" gorm:"uniqueIndex:idx_login_attempt,priority:1"`
+	Key   string `json:"key" gorm:"uniqueIndex:idx_login_attempt,priority:2"`
+	// Failures counted since WindowStart, both unix seconds.
+	Failures    int   `json:"failures"`
+	WindowStart int64 `json:"windowStart"`
+	// Unix seconds until which logins are refused; 0 once a ban has been served
+	// or was never imposed. Wall-clock on purpose, like the IP limit's bans:
+	// outliving the process is the whole point.
+	BannedUntil int64 `json:"bannedUntil"`
 }
 
 type Client struct {

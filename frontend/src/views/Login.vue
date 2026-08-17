@@ -36,8 +36,22 @@
           <Field :label="$t('ui.username')" :mb="16">
             <input class="input" v-model="username" name="username" autocomplete="username" autofocus />
           </Field>
-          <Field :label="$t('ui.password')" :mb="22">
+          <Field :label="$t('ui.password')" :mb="twoFa ? 16 : 22">
             <input class="input" v-model="password" name="password" type="password" autocomplete="current-password" />
+          </Field>
+          <!-- Only after the backend says this account has a second factor, so
+               the field never appears for panels that do not use one. -->
+          <Field v-if="twoFa" :label="$t('ui.twoFaCode')" :mb="22">
+            <input
+              ref="codeInput"
+              class="input mono"
+              v-model="code"
+              name="one-time-code"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              maxlength="6"
+              placeholder="000000"
+            />
           </Field>
           <Btn variant="primary" type="submit" :loading="loading" style="width: 100%; height: 44px;">
             {{ $t('ui.signIn') }} <Ico name="chevron" :size="16" />
@@ -51,7 +65,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import HttpUtil from '@/plugins/httputil'
 import Logo from '@/components/ui/Logo.vue'
@@ -66,20 +80,41 @@ const router = useRouter()
 
 const username = ref('')
 const password = ref('')
+const code = ref('')
+const twoFa = ref(false)
+const codeInput = ref<HTMLInputElement | null>(null)
 const loading = ref(false)
 
 const login = async () => {
+  // The submit button is disabled while a request is in flight, but pressing
+  // Enter in a field submits the form anyway. Resending the same code is not
+  // harmless: the first request burns it, so the second is refused as a replay
+  // and counts against the login rate limit.
+  if (loading.value) return
   if (username.value == '' || password.value == '') return
   loading.value = true
-  const response = await HttpUtil.post('api/login', { user: username.value, pass: password.value })
+  const response = await HttpUtil.post('api/login', {
+    user: username.value,
+    pass: password.value,
+    code: code.value,
+  })
   if (response.success) {
     localStorage.setItem('2sui-user', username.value)
     setTimeout(() => {
       loading.value = false
       router.push('/')
     }, 500)
-  } else {
-    loading.value = false
+    return
+  }
+
+  loading.value = false
+  // The password was right and a code is what is missing. The backend only
+  // ever answers this once the password has checked out, so revealing the
+  // field here does not tell an anonymous caller anything.
+  if (response.obj?.twoFa) {
+    twoFa.value = true
+    code.value = ''
+    nextTick(() => codeInput.value?.focus())
   }
 }
 </script>
