@@ -1,6 +1,6 @@
-# Contributing to S-UI
+# Contributing to 2S-UI
 
-Thank you for your interest in contributing to S-UI. This document explains how to set up a development environment, follow project conventions, and submit changes. Your contributions help make the **multi-inbound-per-user** approach and the rest of the project better for everyone.
+Thank you for your interest in contributing to 2S-UI. This document explains how to set up a development environment, follow project conventions, and submit changes. Your contributions help make the **multi-inbound-per-user** approach and the rest of the project better for everyone.
 
 ## Table of Contents
 
@@ -193,7 +193,7 @@ Community help is especially valuable in these areas. Check the [Issues](https:/
 
 ### High-Value Areas
 
-- **Multi-inbound per user**: Core differentiator of S-UI; improvements to UX, docs, and robustness are welcome.
+- **Multi-inbound per user**: Core differentiator of 2S-UI; improvements to UX, docs, and robustness are welcome.
 - **API (v1 and v2)**: Completeness, consistency, and documentation (see [API Documentation](https://github.com/shenaba/2s-ui/wiki/API-Documentation)).
 - **Subscription service**: Link conversion, JSON subscription, and info endpoints (`sub/`, `util/`).
 - **Testing**: Adding unit and integration tests for critical paths.
@@ -265,7 +265,7 @@ If you maintain a fork or your own repository and want the contribution guide to
    In the repository **Settings → General → Features**, ensure “Issues” (and optionally “Discussions”) are enabled. The link to `CONTRIBUTING.md` appears when users create a new issue or PR; no extra config is needed as long as the file is in the root.
 
 4. **When forking**  
-   If you fork S-UI, `CONTRIBUTING.md` is already in the repo. Update the clone URLs and repo names in this file if you want your fork’s contribution instructions to point to your own repository.
+   If you fork 2S-UI, `CONTRIBUTING.md` is already in the repo. Update the clone URLs and repo names in this file if you want your fork’s contribution instructions to point to your own repository.
 
 ---
 
@@ -277,4 +277,4 @@ If you maintain a fork or your own repository and want the contribution guide to
 
 ---
 
-Thank you for helping S-UI grow. Your contributions make it possible for more users to adopt S-UI in production and benefit from its multi-inbound-per-user design.
+Thank you for helping 2S-UI grow. Your contributions make it possible for more users to adopt 2S-UI in production and benefit from its multi-inbound-per-user design.
