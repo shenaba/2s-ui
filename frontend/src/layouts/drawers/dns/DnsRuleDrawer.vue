@@ -88,6 +88,7 @@
 
     <!-- match conditions -->
     <MHint v-if="logical" style="margin-bottom: 15px;">{{ $t('ui.logicalHint') }}</MHint>
+    <MHint v-if="hasTextList" style="margin-bottom: 15px;">{{ $t('rule.etaHint') }}</MHint>
 
     <div
       v-for="(r, ri) in (logical ? form.rules : form.rules.slice(0, 1))"
@@ -124,14 +125,17 @@
           <div v-else-if="kindOf(k) === 'bool'" style="display: flex; align-items: center; height: 38px;">
             <Toggle :model-value="!!r[k]" @update:model-value="r[k] = $event" />
           </div>
-          <input
+          <textarea
             v-else
             class="input mono"
-            style="height: 38px; font-size: 12.5px;"
+            spellcheck="false"
+            dir="ltr"
+            :rows="rowsFor(r, k)"
+            style="height: auto; padding: 9px 11px; font-size: 12.5px; resize: vertical;"
             :value="csvGet(r, k)"
-            :placeholder="(PLACEHOLDER[k] ?? '') + ' ' + $t('commaSeparated')"
-            @change="csvSet(r, k, ($event.target as HTMLInputElement).value)"
-          />
+            :placeholder="PLACEHOLDER[k] ?? ''"
+            @change="csvSet(r, k, ($event.target as HTMLTextAreaElement).value)"
+          ></textarea>
 
           <button type="button" class="btn btn-subtle btn-icon" style="height: 38px; width: 34px;" @click="delMatcher(r, k)">
             <Ico name="close" :size="14" />
@@ -200,6 +204,10 @@ const PLACEHOLDER: Record<string, string> = {
 }
 const BOOL_KEYS = ['source_ip_is_private']
 const NUM_KEYS = ['port', 'source_port']
+// A comma is legal regex syntax, so these split on newlines only: comma
+// splitting tore a bounded repeat like `a{2,4}` into two entries that matched
+// nothing, leaving no way to enter such a pattern at all.
+const NEWLINE_ONLY_KEYS = ['domain_regex']
 const MULTI_OPTIONS: Record<string, string[]> = {
   protocol: ['http', 'tls', 'quic', 'stun', 'dns'],
 }
@@ -293,6 +301,14 @@ const extra = computed({
 // ---- matcher helpers ----
 const matcherKeys = (r: any): string[] => MATCH_KEYS.filter((k) => r[k] !== undefined)
 
+// Only worth explaining the one-per-line convention while a free-text list is on
+// screen; a rule matching purely on chips and toggles has nothing to type into.
+const hasTextList = computed(() =>
+  (logical.value ? form.value.rules : form.value.rules.slice(0, 1)).some((r: any) =>
+    matcherKeys(r).some((k) => kindOf(k) === 'csv' || kindOf(k) === 'nums'),
+  ),
+)
+
 function kindOf(k: string): string {
   if (k === 'ip_version') return 'ipver'
   if (BOOL_KEYS.includes(k)) return 'bool'
@@ -340,15 +356,26 @@ function addCondition(r: any) {
   addMatcherKey(r, r.domain_suffix === undefined ? 'domain_suffix' : free[0])
 }
 
-const csvGet = (r: any, k: string): string => (Array.isArray(r[k]) ? r[k].join(',') : '')
+const csvGet = (r: any, k: string): string => (Array.isArray(r[k]) ? r[k].join('\n') : '')
+
+// One entry per line is how these lists are pasted, and the single-line input
+// silently ate the newlines (the HTML value sanitiser strips them), collapsing a
+// pasted list into one unmatchable entry. Comma stays accepted so anything typed
+// or stored the old way still parses.
 function csvSet(r: any, k: string, v: string) {
-  const parts = v.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
+  const sep = NEWLINE_ONLY_KEYS.includes(k) ? /\n+/ : /[\n,]+/
+  const parts = [...new Set(v.split(sep).map((s) => s.trim()).filter((s) => s.length > 0))]
   if (NUM_KEYS.includes(k)) {
     r[k] = parts.length > 0 ? parts.map((s) => parseInt(s, 10)).filter((n) => !isNaN(n)) : []
   } else {
     r[k] = parts
   }
 }
+
+// Grow with the list so a long one is not read through a slit, with a ceiling so
+// it cannot push the rest of the drawer out of reach.
+const rowsFor = (r: any, k: string): number =>
+  Math.min(Math.max((Array.isArray(r[k]) ? r[k].length : 0) + 1, 2), 12)
 
 // ---- save (identical payload shaping to the legacy modal) ----
 function saveChanges() {
