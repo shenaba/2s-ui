@@ -141,6 +141,16 @@ func init() {
 	configSeq.Store(uint64(time.Now().UnixMilli()))
 }
 
+// NextConfigSeq allocates a version for a client list assembled outside this
+// package — api/save and api/clients answer with the whole list, and an
+// unversioned one leaves the SPA's high-water mark untouched, so a live push
+// that read the table before the save could still land after it and put the old
+// rows back. Call it BEFORE the read, for the same reason configHalf does: the
+// version has to order this read against a later one.
+func NextConfigSeq() uint64 {
+	return configSeq.Add(1)
+}
+
 // configCacheUsable is the whole staleness decision, kept pure so it can be
 // verified without a database. Serving a stale config is the one way this cache
 // can break the panel, so every reason to rebuild is spelled out here.

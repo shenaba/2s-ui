@@ -147,15 +147,31 @@ func (a *ApiService) LoadPartialData(c *gin.Context, objs []string) error {
 			// websocket payload, save responses — gets the lean projection.
 			var clients interface{}
 			var err error
+			// Whole-list reads are versioned like the payload assembler's own,
+			// and the seq is allocated before the read: this is the answer to
+			// api/save, and without a version the SPA applies the list without
+			// advancing its high-water mark, so a live push that read the table
+			// before the save commits can still land after it and restore the
+			// rows the save removed. Deliberately not set for an id read — that
+			// returns one row, and stamping a whole-list version on it would let
+			// a single record veto a later list. The node-facing full=1 read
+			// does not go near the SPA store either.
+			var clientsSeq uint64
 			if id == "" && c.Query("full") == "1" {
 				clients, err = a.ClientService.GetAllWithConfig()
 			} else {
+				if id == "" {
+					clientsSeq = service.NextConfigSeq()
+				}
 				clients, err = a.ClientService.Get(id)
 			}
 			if err != nil {
 				return err
 			}
 			data[obj] = clients
+			if clientsSeq > 0 {
+				data["clientsSeq"] = clientsSeq
+			}
 		case "config":
 			config, err := a.SettingService.GetConfig()
 			if err != nil {
