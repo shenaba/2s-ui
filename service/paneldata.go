@@ -24,11 +24,50 @@ type PanelDataService struct {
 	ServerService
 }
 
-// OnlinesPayload is the per-flush live data: which tags are online, plus the
+// OnlinesPayload is onlinesHalf plus the client list — the per-flush live push
+// and api/load's live answer, both of which have to carry it themselves.
+//
+// Everything here runs on the caller's goroutine, which is what lets
+// HubAfterStatsFlush call it straight after SaveStats and still read
+// onlineResources unsynchronized (see onlinesHalf). Keep it that way: moving
+// either read off this goroutine widens that access.
+func (s *PanelDataService) OnlinesPayload() (map[string]interface{}, error) {
+	data, err := s.onlinesHalf()
+	if err != nil {
+		return nil, err
+	}
+	// Client up/down is rewritten by every stats flush, which does not mark
+	// LastUpdate -- so it rides the live payload rather than waiting for a
+	// config push that may never come on a panel nobody is editing. Sending it
+	// here is what keeps the traffic columns, quota bars and per-client totals
+	// moving.
+	//
+	// Versioned off the same counter the config half uses, and allocated BEFORE
+	// the read for the same reason: the two payload kinds are built on
+	// different goroutines, so a list read here can still be enqueued after a
+	// full payload built later, and applying it would put pre-change rows back
+	// on screen. One shared counter gives both kinds a total order, so the
+	// client can always tell which list was read last.
+	clientsSeq := configSeq.Add(1)
+	clients, err := s.ClientService.GetAll()
+	if err != nil {
+		return nil, err
+	}
+	data["clients"] = clients
+	data["clientsSeq"] = clientsSeq
+	return data, nil
+}
+
+// onlinesHalf is the per-flush live data: which tags are online, plus the
 // newest core log line when sing-box is down (the UI surfaces it as a toast).
 // Callers that run on the StatsJob goroutine right after SaveStats get a value
 // snapshot of onlineResources before anything crosses a goroutine boundary.
-func (s *PanelDataService) OnlinesPayload() (map[string]interface{}, error) {
+//
+// Split out of OnlinesPayload for FullPayload's sake: that one takes its client
+// list from the config half, so going through OnlinesPayload had it scan the
+// whole clients table only to overwrite the result a few lines later — and on a
+// config-cache hit that discarded scan was the only query the call ran.
+func (s *PanelDataService) onlinesHalf() (map[string]interface{}, error) {
 	data := make(map[string]interface{})
 	onlines, err := s.StatsService.GetOnlines()
 
@@ -50,26 +89,6 @@ func (s *PanelDataService) OnlinesPayload() (map[string]interface{}, error) {
 	// so omitting it once nobody is over their limit would leave the last
 	// non-empty counts on screen forever.
 	data["ipCounts"] = GetIPCounts()
-	// Client up/down is rewritten by every stats flush, which does not mark
-	// LastUpdate -- so it rides the live payload rather than waiting for a
-	// config push that may never come on a panel nobody is editing. Sending it
-	// here rather than only in the config half is what keeps the traffic
-	// columns, quota bars and per-client totals moving; FullPayload overwrites
-	// the key with the identical list out of its config half.
-	//
-	// Versioned off the same counter the config half uses, and allocated BEFORE
-	// the read for the same reason: the two payload kinds are built on
-	// different goroutines, so a list read here can still be enqueued after a
-	// full payload built later, and applying it would put pre-change rows back
-	// on screen. One shared counter gives both kinds a total order, so the
-	// client can always tell which list was read last.
-	clientsSeq := configSeq.Add(1)
-	clients, err := s.ClientService.GetAll()
-	if err != nil {
-		return nil, err
-	}
-	data["clients"] = clients
-	data["clientsSeq"] = clientsSeq
 	return data, nil
 }
 
@@ -234,8 +253,10 @@ func (s *PanelDataService) FullPayload(hostname string) (map[string]interface{},
 		return nil, err
 	}
 	// The live half is never cached — onlines and the core's last log move on
-	// their own schedule, not the config's.
-	data, err := s.OnlinesPayload()
+	// their own schedule, not the config's. onlinesHalf rather than
+	// OnlinesPayload: the client list below comes from cfg, so reading a second
+	// one here would only be overwritten.
+	data, err := s.onlinesHalf()
 	if err != nil {
 		return nil, err
 	}
@@ -244,9 +265,8 @@ func (s *PanelDataService) FullPayload(hostname string) (map[string]interface{},
 	}
 	data["lu"] = stamp
 	data["cseq"] = seq
-	// The spread above replaced the live half's client list with the config
-	// half's, so the version has to follow it down -- keeping the live one
-	// would claim a newer read than the rows actually carry and make the next
+	// The client list came from cfg, so its version is the config half's --
+	// claiming a newer read than the rows actually carry would make the next
 	// live push look stale.
 	data["clientsSeq"] = seq
 	s.attachNodesStatus(data)
