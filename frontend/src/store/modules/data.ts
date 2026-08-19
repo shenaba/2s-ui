@@ -12,6 +12,10 @@ const Data = defineStore('Data', {
     // Highest config version applied; guards against a stale snapshot landing
     // after a newer push. See applyLive.
     cseq: 0,
+    // Same guard for the client list, which arrives on both the live and the
+    // full payload and so needs its own high-water mark: a live push carries no
+    // config and must not be rejected by cseq, nor reject a config push itself.
+    clientsSeq: 0,
     reloadItems: localStorage.getItem("reloadItems")?.split(',')?? <string[]>[],
     subURI: "",
     os: "",
@@ -46,6 +50,20 @@ const Data = defineStore('Data', {
     },
   },
   actions: {
+    // The client list reaches the store from two independently built payloads:
+    // the 10s live push and the config half of a full one. They are assembled on
+    // different goroutines, so arrival order does not imply read order -- without
+    // this high-water mark a list read before a save could land after it and put
+    // the old rows back for a whole flush interval, which reads as the save
+    // having silently failed. A payload with no version (a backend older than
+    // this) applies unconditionally, as it used to.
+    applyClients(list: any, seq: any) {
+      if (typeof seq === 'number') {
+        if (seq <= this.clientsSeq) return
+        this.clientsSeq = seq
+      }
+      this.clients = list ?? []
+    },
     // Shared by the websocket 'load' topic and the one-shot HTTP load below.
     // Websocket pushes are partial: a missing key means "unchanged", so only
     // present keys are applied.
@@ -53,6 +71,14 @@ const Data = defineStore('Data', {
       if (obj.onlines) this.onlines = obj.onlines
       if (Object.hasOwn(obj, 'nodesStatus')) this.nodesStatus = obj.nodesStatus ?? {}
       if (Object.hasOwn(obj, 'ipCounts')) this.ipCounts = obj.ipCounts ?? {}
+      // Client traffic is rewritten every stats flush without marking a config
+      // change, so the client list rides the live payload too -- waiting for the
+      // next full payload would freeze the traffic columns on a panel where
+      // nothing else is being saved. Payloads that carry a config go through
+      // setNewData instead, so their clients are applied there.
+      if (!obj.config && Object.hasOwn(obj, 'clients')) {
+        this.applyClients(obj.clients, obj.clientsSeq)
+      }
       if (obj.lastLog) {
         push.error({
           title: i18n.global.t('error.core'),
@@ -108,7 +134,7 @@ const Data = defineStore('Data', {
       if (data.os) this.os = data.os
       if (data.enableTraffic) this.enableTraffic = data.enableTraffic
       if (data.config) this.config = data.config
-      if (Object.hasOwn(data, 'clients')) this.clients = data.clients ?? []
+      if (Object.hasOwn(data, 'clients')) this.applyClients(data.clients, data.clientsSeq)
       if (Object.hasOwn(data, 'inbounds')) this.inbounds = data.inbounds ?? []
       if (Object.hasOwn(data, 'outbounds')) this.outbounds = data.outbounds ?? []
       if (Object.hasOwn(data, 'services')) this.services = data.services ?? []

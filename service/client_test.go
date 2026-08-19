@@ -2,10 +2,15 @@ package service
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"reflect"
 	"testing"
 
+	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/database/model"
+	"github.com/shenaba/2s-ui/logger"
+
+	"github.com/op/go-logging"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -244,5 +249,72 @@ func TestPayloadFields(t *testing.T) {
 				t.Errorf("payloadFields(%s) = %v, want %v", tc.data, got, tc.want)
 			}
 		})
+	}
+}
+
+// The DepleteJob fires every minute whether or not there is anything to do, and
+// its notify makes the hub push a full config payload -- which the SPA applies
+// by replacing its whole config object, taking any edit the operator has open
+// but unsaved on the rules/DNS/settings pages with it. The notify is gated on
+// this round having marked a change, so an idle round has to mark nothing.
+func TestDepleteClientsMarksOnlyRealChanges(t *testing.T) {
+	// DepleteClients reads the package-level handle rather than taking one, so
+	// the DB has to be installed globally. CloseDBForTest puts it back on the
+	// way out, and is registered after TempDir's own cleanup so LIFO runs it
+	// first: Windows refuses to delete the file while the pool holds it open.
+	// The deplete path logs each client it disables, and package logger panics
+	// on a nil handle -- nothing installs one in a test binary.
+	logger.InitLogger(logging.CRITICAL)
+
+	dir := t.TempDir()
+	if err := database.InitDB(filepath.Join(dir, "test.db")); err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.CloseDBForTest(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	})
+	db := database.GetDB()
+	var svc ClientService
+
+	// Inside its quota, no expiry, no periodic reset due: nothing to report.
+	healthy := model.Client{
+		Name: "healthy", Enable: true, Group: "user", Up: 1, Down: 1,
+		Inbounds: json.RawMessage(`[]`), Links: json.RawMessage(`[]`), Config: json.RawMessage(`{}`),
+	}
+	if err := db.Create(&healthy).Error; err != nil {
+		t.Fatalf("seed healthy client: %v", err)
+	}
+
+	before := lastUpdateSeq.Load()
+	if _, _, err := svc.DepleteClients(); err != nil {
+		t.Fatalf("idle round: %v", err)
+	}
+	if got := lastUpdateSeq.Load(); got != before {
+		t.Fatalf("an idle round marked %d change(s); the hub would push a full config and discard unsaved edits", got-before)
+	}
+
+	// Over quota: now the round has real news and must say so, or the panel
+	// never hears that the client was cut off.
+	over := model.Client{
+		Name: "over", Enable: true, Group: "user", Up: 10, Down: 10, Volume: 5,
+		Inbounds: json.RawMessage(`[]`), Links: json.RawMessage(`[]`), Config: json.RawMessage(`{}`),
+	}
+	if err := db.Create(&over).Error; err != nil {
+		t.Fatalf("seed over-quota client: %v", err)
+	}
+	if _, _, err := svc.DepleteClients(); err != nil {
+		t.Fatalf("depleting round: %v", err)
+	}
+	if lastUpdateSeq.Load() == before {
+		t.Error("depleting a client marked nothing, so no push would ever report it")
+	}
+	var stillEnabled bool
+	if err := db.Model(model.Client{}).Where("name = ?", "over").Select("enable").Scan(&stillEnabled).Error; err != nil {
+		t.Fatalf("read back client: %v", err)
+	}
+	if stillEnabled {
+		t.Error("over-quota client was not disabled")
 	}
 }

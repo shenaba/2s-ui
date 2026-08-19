@@ -20,9 +20,13 @@ var (
 	// Written by gin handlers (Save), the DepleteJob and NodesJob cron
 	// goroutines, and read by every api/load handler plus the websocket hub's
 	// read pump — a plain int64 here is a data race the detector flags.
-	// Unexported so the atomic cannot be bypassed; nothing outside this package
-	// touched it.
+	// Unexported so the atomics cannot be bypassed; nothing outside this
+	// package touches them. lastUpdateSeq counts the marks instead of stamping
+	// them, so a caller can tell whether its own run marked anything --
+	// comparing lastUpdate cannot, since two writers landing in the same second
+	// store the same unix value.
 	lastUpdate          atomic.Int64
+	lastUpdateSeq       atomic.Int64
 	corePtr             *core.Core
 	startCoreMu         sync.Mutex
 	startCoreInProgress bool
@@ -315,6 +319,7 @@ func SetLastUpdate(dt int64) {
 // MarkLastUpdate advances the change timestamp without waking the hub.
 func MarkLastUpdate(dt int64) {
 	lastUpdate.Store(dt)
+	lastUpdateSeq.Add(1)
 }
 
 func (s *ConfigService) CheckChanges(lu string) (bool, error) {

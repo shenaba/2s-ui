@@ -699,12 +699,22 @@ func (s *ClientService) DepleteClients() ([]uint, []string, error) {
 	dt := time.Now().Unix()
 	db := database.GetDB()
 
+	// This job runs every minute whether or not there is anything to deplete or
+	// reset, so notifying unconditionally is not free: the hub answers with a
+	// full config push and the SPA swaps its whole config object for the new
+	// one, throwing away whatever the operator had typed into the rules/DNS/
+	// settings pages but not saved yet. Both write paths below already mark
+	// LastUpdate exactly when they wrote something -- follow that same
+	// condition instead of announcing an idle round.
+	seqBefore := lastUpdateSeq.Load()
 	tx := db.Begin()
 	defer func() {
 		if err == nil {
 			tx.Commit()
 			// Only now is the write visible on the hub's own connection.
-			NotifyConfigChanged()
+			if lastUpdateSeq.Load() != seqBefore {
+				NotifyConfigChanged()
+			}
 			if err1 := db.Exec("PRAGMA wal_checkpoint(FULL)").Error; err1 != nil {
 				logger.Error("Error checkpointing WAL: ", err1.Error())
 			}
@@ -841,6 +851,13 @@ func (s *ClientService) ResetClients(tx *gorm.DB, dt int64) ([]uint, []string, e
 		if err != nil {
 			return nil, nil, err
 		}
+	}
+	// Mark on any write, not only on the ones that log a Changes row: the
+	// periodic-reset branch rewrites counters and can flip Enable back on
+	// without recording a change, and DepleteClients gates its hub notify on
+	// this mark. Without it a re-enabled client stays greyed out in every open
+	// panel while sing-box is already letting it back in.
+	if len(allClients) > 0 || len(changes) > 0 {
 		MarkLastUpdate(dt)
 	}
 	return inboundIds, reenabled, nil

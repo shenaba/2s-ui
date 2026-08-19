@@ -50,6 +50,26 @@ func (s *PanelDataService) OnlinesPayload() (map[string]interface{}, error) {
 	// so omitting it once nobody is over their limit would leave the last
 	// non-empty counts on screen forever.
 	data["ipCounts"] = GetIPCounts()
+	// Client up/down is rewritten by every stats flush, which does not mark
+	// LastUpdate -- so it rides the live payload rather than waiting for a
+	// config push that may never come on a panel nobody is editing. Sending it
+	// here rather than only in the config half is what keeps the traffic
+	// columns, quota bars and per-client totals moving; FullPayload overwrites
+	// the key with the identical list out of its config half.
+	//
+	// Versioned off the same counter the config half uses, and allocated BEFORE
+	// the read for the same reason: the two payload kinds are built on
+	// different goroutines, so a list read here can still be enqueued after a
+	// full payload built later, and applying it would put pre-change rows back
+	// on screen. One shared counter gives both kinds a total order, so the
+	// client can always tell which list was read last.
+	clientsSeq := configSeq.Add(1)
+	clients, err := s.ClientService.GetAll()
+	if err != nil {
+		return nil, err
+	}
+	data["clients"] = clients
+	data["clientsSeq"] = clientsSeq
 	return data, nil
 }
 
@@ -224,6 +244,11 @@ func (s *PanelDataService) FullPayload(hostname string) (map[string]interface{},
 	}
 	data["lu"] = stamp
 	data["cseq"] = seq
+	// The spread above replaced the live half's client list with the config
+	// half's, so the version has to follow it down -- keeping the live one
+	// would claim a newer read than the rows actually carry and make the next
+	// live push look stale.
+	data["clientsSeq"] = seq
 	s.attachNodesStatus(data)
 	return data, nil
 }
