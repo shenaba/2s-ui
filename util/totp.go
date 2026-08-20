@@ -61,23 +61,12 @@ func TOTPKeyURI(secret, account, issuer string) string {
 	return "otpauth://totp/" + label + "?" + params.Encode()
 }
 
-// ValidateTOTP reports whether code is currently valid for secret. A malformed
-// secret fails closed: the only way one reaches here is a corrupted row, and
-// treating it as "no second factor required" would turn that into a bypass.
-//
-// This accepts a code that has already been used. Callers that authenticate
-// with it want ValidateTOTPAfter instead.
-func ValidateTOTP(secret, code string) bool {
-	_, ok := validateTOTPAt(secret, code, 0, time.Now())
-	return ok
-}
-
-// ValidateTOTPAfter is ValidateTOTP plus replay rejection: after is the
-// counter the last accepted code matched, and anything at or below it is
-// refused (RFC 6238 §5.2). The returned counter is what the caller persists,
-// so the same six digits cannot be replayed for the rest of their acceptance
-// window -- which is up to 90 seconds here, long enough for a code read over
-// someone's shoulder to be worth something on its own.
+// ValidateTOTPAfter validates a code and rejects replays: after is the counter
+// the last accepted code matched, and anything at or below it is refused (RFC
+// 6238 §5.2). A malformed secret fails closed. The returned counter is what the
+// caller persists, so the same six digits cannot be replayed for the rest of
+// their acceptance window -- which is up to 90 seconds here, long enough for a
+// code read over someone's shoulder to be worth something on its own.
 func ValidateTOTPAfter(secret, code string, after int64) (int64, bool) {
 	return validateTOTPAt(secret, code, after, time.Now())
 }

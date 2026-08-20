@@ -1,6 +1,63 @@
 package api
 
-import "testing"
+import (
+	"net/netip"
+	"testing"
+)
+
+func TestClientIPTrustsOnlyConfiguredProxyChain(t *testing.T) {
+	custom := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+	cases := []struct {
+		name       string
+		remoteAddr string
+		forwarded  string
+		trusted    []netip.Prefix
+		want       string
+	}{
+		{
+			name:       "direct caller cannot forge header",
+			remoteAddr: "203.0.113.9:1234",
+			forwarded:  "198.51.100.4",
+			trusted:    custom,
+			want:       "203.0.113.9",
+		},
+		{
+			name:       "generated loopback proxy",
+			remoteAddr: "127.0.0.1:1234",
+			forwarded:  "192.0.2.1, 203.0.113.9",
+			trusted:    generatedProxyPeers,
+			want:       "203.0.113.9",
+		},
+		{
+			name:       "trusted proxy chain is stripped from the right",
+			remoteAddr: "10.0.0.2:1234",
+			forwarded:  "198.51.100.4, 10.0.0.3",
+			trusted:    custom,
+			want:       "198.51.100.4",
+		},
+		{
+			name:       "malformed chain fails closed",
+			remoteAddr: "10.0.0.2:1234",
+			forwarded:  "198.51.100.4, unknown",
+			trusted:    custom,
+			want:       "10.0.0.2",
+		},
+		{
+			name:       "trusted peer without header remains the peer",
+			remoteAddr: "10.0.0.2:1234",
+			trusted:    custom,
+			want:       "10.0.0.2",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := clientIP(tc.remoteAddr, tc.forwarded, tc.trusted); got != tc.want {
+				t.Errorf("clientIP() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
 
 // normalizeHost feeds the server field of every generated link and the
 // advertised subscription URI, and now also sanitises the configured web

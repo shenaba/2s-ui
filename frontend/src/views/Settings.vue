@@ -66,6 +66,9 @@
         <input class="input mono" type="number" min="1" v-model.number="webPort" />
       </SRow>
       <ToggleRow v-model="webBehindProxy" :label="$t('setting.behindProxy')" :desc="behindProxyDesc" />
+      <SRow :label="$t('setting.trustedProxies')" :hint="$t('setting.trustedProxiesHint')">
+        <input class="input mono" v-model="settings.webTrustedProxies" placeholder="10.0.0.0/8, 192.0.2.10" />
+      </SRow>
       <SRow :label="$t('setting.webUri')" :hint="webUriHint">
         <input class="input mono" v-model="settings.webURI" placeholder="https://panel.example.com/app/" />
       </SRow>
@@ -325,6 +328,7 @@ const settings = ref({
   webKeyFile: "",
   webCertMode: "",
   webNginx: "",
+  webTrustedProxies: "",
   webAcmeMethod: "auto",
   webAcmeEmail: "",
   webPath: "/app/",

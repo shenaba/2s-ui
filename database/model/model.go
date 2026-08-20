@@ -51,12 +51,15 @@ type LoginAttempt struct {
 	// limit on their own.
 	Scope string `json:"scope" gorm:"uniqueIndex:idx_login_attempt,priority:1"`
 	Key   string `json:"key" gorm:"uniqueIndex:idx_login_attempt,priority:2"`
-	// Failures counted since WindowStart, both unix seconds.
+	// Failures counted since WindowStart. After a username ban is served,
+	// Failures stays zero and WindowStart tracks the latest continued attack so
+	// the username scope can rearm after a quiet period. Times are unix seconds.
 	Failures    int   `json:"failures"`
 	WindowStart int64 `json:"windowStart"`
-	// Unix seconds until which logins are refused; 0 once a ban has been served
-	// or was never imposed. Wall-clock on purpose, like the IP limit's bans:
-	// outliving the process is the whole point.
+	// Unix seconds until which logins are refused. A served username ban keeps
+	// its old positive value while the row is disarmed; loginBanRemaining is the
+	// authority on whether it is active. Wall-clock on purpose, like the IP
+	// limit's bans: outliving the process is the whole point.
 	BannedUntil int64 `json:"bannedUntil"`
 }
 

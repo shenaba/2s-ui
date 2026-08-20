@@ -3,6 +3,7 @@ package api
 import (
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"github.com/shenaba/2s-ui/logger"
@@ -17,37 +18,75 @@ type Msg struct {
 	Obj     interface{} `json:"obj"`
 }
 
-// getRemoteIp identifies the caller. Forwarding headers are only honoured when
-// the panel is configured to sit behind a reverse proxy, because they are
-// client-supplied: on a directly exposed panel anyone can send a fresh value
-// per request, and the login rate limit keys on this, so trusting them there
-// would hand every attempt a brand new identity and defeat the limiter.
-//
-// Which entry to take matters as much as whether to take one. The generated
-// vhost sets `X-Forwarded-For $proxy_add_x_forwarded_for` (service/acme.go),
-// and that *appends* to whatever the client sent -- the forged value ends up
-// first and the address nginx actually observed ends up last. A proxy that
-// replaces the header instead leaves a single entry. Taking the last entry is
-// correct under both, so it is the only value read.
-//
-// X-Real-IP is deliberately not consulted, even though the generated vhost also
-// sets it: nginx forwards request headers it was not told to overwrite, so
-// behind a proxy that only configures X-Forwarded-For -- a perfectly ordinary
-// setup -- X-Real-IP would be nothing but client input, and preferring it would
-// hand the identity straight back to the caller.
+var generatedProxyPeers = []netip.Prefix{
+	netip.MustParsePrefix("127.0.0.0/8"),
+	netip.MustParsePrefix("::1/128"),
+}
+
+// getRemoteIp identifies the caller. X-Forwarded-For is accepted only when the
+// immediate peer is trusted: the generated nginx is implicitly trusted on
+// loopback, while operators of an external proxy configure its IP/CIDR through
+// webTrustedProxies. Tying this to webNginx alone made custom nginx/Caddy/tunnel
+// deployments record the proxy as every user's IP; trusting every peer when
+// that switch was set let direct callers forge a fresh limiter identity.
 func getRemoteIp(c *gin.Context) string {
 	var settingService service.SettingService
-	if behindProxy, err := settingService.GetWebNginx(); err == nil && behindProxy {
-		if value := c.GetHeader("X-Forwarded-For"); value != "" {
-			ips := strings.Split(value, ",")
-			if last := strings.TrimSpace(ips[len(ips)-1]); last != "" {
-				return last
-			}
+	trusted, err := settingService.GetWebTrustedProxies()
+	if err != nil {
+		logger.Warning("read trusted proxies:", err)
+		trusted = nil
+	}
+	if behindProxy, err := settingService.GetWebNginx(); err != nil {
+		logger.Warning("read reverse-proxy setting:", err)
+	} else if behindProxy {
+		trusted = append(trusted, generatedProxyPeers...)
+	}
+	return clientIP(c.Request.RemoteAddr, c.GetHeader("X-Forwarded-For"), trusted)
+}
+
+// clientIP strips trusted proxies from the right of an X-Forwarded-For chain
+// and returns the first untrusted hop. The generated nginx appends the address
+// it observed, so client-forged entries remain to the left and can never win.
+// A malformed chain fails closed to the socket peer. X-Real-IP is deliberately
+// ignored because proxies that do not overwrite it would pass pure client
+// input through unchanged.
+func clientIP(remoteAddr, forwardedFor string, trusted []netip.Prefix) string {
+	peerText, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		peerText = strings.Trim(remoteAddr, "[]")
+	}
+	peer, err := netip.ParseAddr(peerText)
+	if err != nil {
+		return peerText
+	}
+	peer = peer.Unmap()
+	if !addressInPrefixes(peer, trusted) || strings.TrimSpace(forwardedFor) == "" {
+		return peer.String()
+	}
+
+	parts := strings.Split(forwardedFor, ",")
+	leftmost := peer
+	for i := len(parts) - 1; i >= 0; i-- {
+		addr, err := netip.ParseAddr(strings.TrimSpace(parts[i]))
+		if err != nil {
+			return peer.String()
+		}
+		addr = addr.Unmap()
+		leftmost = addr
+		if !addressInPrefixes(addr, trusted) {
+			return addr.String()
 		}
 	}
-	addr := c.Request.RemoteAddr
-	ip, _, _ := net.SplitHostPort(addr)
-	return ip
+	return leftmost.String()
+}
+
+func addressInPrefixes(addr netip.Addr, prefixes []netip.Prefix) bool {
+	for _, prefix := range prefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 func getHostname(c *gin.Context) string {

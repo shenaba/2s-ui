@@ -216,18 +216,14 @@ func (s *UserService) ChangePass(id string, oldPass string, newUser string, newP
 	return db.Save(user).Error
 }
 
-// EnableTwoFa stores a secret only once a code generated from it has been
-// shown to work. Enrolling without that check is how users lock themselves out
-// of their own panel: a mistyped secret or a phone whose clock is far off
-// produces an account whose second factor can never be satisfied.
-func (s *UserService) EnableTwoFa(username string, secret string, code string) error {
+// EnableTwoFa stores a secret only after the current password and a code from
+// the candidate authenticator both work. The password prevents a stolen
+// session from binding somebody else's phone; the code prevents a mistyped
+// secret or bad phone clock from locking the real user out.
+func (s *UserService) EnableTwoFa(username string, password string, secret string, code string) error {
 	secret = strings.TrimSpace(secret)
 	if secret == "" {
 		return common.NewError("no secret to enable")
-	}
-	counter, ok := util.ValidateTOTPAfter(secret, code, 0)
-	if !ok {
-		return common.NewError("wrong code")
 	}
 
 	db := database.GetDB()
@@ -235,12 +231,22 @@ func (s *UserService) EnableTwoFa(username string, secret string, code string) e
 	if err := db.Model(model.User{}).Where("username = ?", username).First(user).Error; err != nil {
 		return err
 	}
+	// Enrolment is just as security-sensitive as removal: a session-only
+	// attacker who binds their own authenticator locks the real administrator
+	// out. Require the current password before accepting the candidate secret.
+	if !util.CheckPassword(password, user.Password) {
+		return common.NewError("wrong password")
+	}
 	// Replacing a live secret has to go through DisableTwoFa, which asks for the
 	// password. Allowing it here would make enrolment a way around that check:
 	// whoever reaches an unlocked browser could rebind the second factor to
 	// their own phone without ever knowing the password.
 	if user.TwoFaSecret != "" {
 		return common.NewError("two-factor authentication is already enabled; disable it first")
+	}
+	counter, ok := util.ValidateTOTPAfter(secret, code, 0)
+	if !ok {
+		return common.NewError("wrong code")
 	}
 	// The enrolment code counts as used, or it could be replayed to log in
 	// immediately after enabling.

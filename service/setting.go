@@ -2,11 +2,13 @@ package service
 
 import (
 	"encoding/json"
+	"net/netip"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/shenaba/2s-ui/config"
 	"github.com/shenaba/2s-ui/database"
@@ -50,6 +52,7 @@ var defaultValueMap = map[string]string{
 	"webKeyFile":         "",
 	"webCertMode":        "",
 	"webNginx":           "",
+	"webTrustedProxies":  "",
 	"webAcmeMethod":      "auto",
 	"webAcmeEmail":       "",
 	"webPath":            "/app/",
@@ -232,6 +235,38 @@ func (s *SettingService) GetWebNginx() (bool, error) {
 		return false, nil
 	}
 	return strconv.ParseBool(v)
+}
+
+// GetWebTrustedProxies returns the peers that are allowed to speak for a
+// caller through X-Forwarded-For. This is independent of webNginx: operators
+// using their own nginx, Caddy, tunnel or load balancer still need correct
+// source addresses without asking the panel to manage that proxy.
+func (s *SettingService) GetWebTrustedProxies() ([]netip.Prefix, error) {
+	raw, err := s.getString("webTrustedProxies")
+	if err != nil {
+		return nil, err
+	}
+	return parseTrustedProxies(raw)
+}
+
+func parseTrustedProxies(raw string) ([]netip.Prefix, error) {
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || unicode.IsSpace(r)
+	})
+	prefixes := make([]netip.Prefix, 0, len(parts))
+	for _, part := range parts {
+		prefix, err := netip.ParsePrefix(part)
+		if err != nil {
+			addr, addrErr := netip.ParseAddr(part)
+			if addrErr != nil {
+				return nil, common.NewErrorf("invalid trusted proxy %q: expected an IP address or CIDR", part)
+			}
+			addr = addr.Unmap()
+			prefix = netip.PrefixFrom(addr, addr.BitLen())
+		}
+		prefixes = append(prefixes, prefix.Masked())
+	}
+	return prefixes, nil
 }
 
 func (s *SettingService) GetWebAcmeEmail() (string, error) {
@@ -549,6 +584,11 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 	webNginx := settings["webNginx"] == "true"
 	subNginx := settings["subNginx"] == "true"
 	for key, obj := range settings {
+		if key == "webTrustedProxies" {
+			if _, err = parseTrustedProxies(obj); err != nil {
+				return err
+			}
+		}
 		// Secure file existence check
 		if obj != "" &&
 			(((key == "webCertFile" || key == "webKeyFile") && !webAcme && !webNginx) ||

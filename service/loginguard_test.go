@@ -67,13 +67,52 @@ func TestPlanLoginFailureDoesNotExtendAnActiveBan(t *testing.T) {
 // Once served, the ban is gone and counting starts over -- a single failure
 // after it lifts must not re-ban on the strength of the old tally.
 func TestPlanLoginFailureCountsAfreshOnceTheBanIsServed(t *testing.T) {
-	row := planLoginFailure(model.LoginAttempt{BannedUntil: 2_000_000}, 2_000_001, testGuard)
+	row := planLoginFailure(model.LoginAttempt{Scope: loginScopeIP, BannedUntil: 2_000_000}, 2_000_001, testGuard)
 
 	if row.BannedUntil > 2_000_001 {
 		t.Fatalf("re-banned immediately after the ban lifted: until %d", row.BannedUntil)
 	}
 	if row.Failures != 1 {
 		t.Errorf("Failures = %d after the first post-ban failure, want 1", row.Failures)
+	}
+}
+
+// A public username must not be a permanent lockout switch. Once its first ban
+// has been served, a continued distributed spray is left to the per-IP rows;
+// the username row stays disarmed until either a login succeeds or the attack
+// goes quiet long enough to treat a later burst as a new incident.
+func TestPlanLoginFailureDoesNotRenewServedUsernameBan(t *testing.T) {
+	row := model.LoginAttempt{
+		Scope:       loginScopeUser,
+		BannedUntil: 2_000_000,
+		WindowStart: 2_000_000 - testGuard.ban,
+	}
+
+	for now := int64(2_000_001); now < 2_001_000; now++ {
+		row = planLoginFailure(row, now, testGuard)
+		if row.BannedUntil > now {
+			t.Fatalf("username re-banned at %d until %d", now, row.BannedUntil)
+		}
+		if row.Failures != 0 {
+			t.Fatalf("served username ban resumed counting at %d: %d", now, row.Failures)
+		}
+	}
+}
+
+func TestPlanLoginFailureRearmsUsernameAfterQuietPeriod(t *testing.T) {
+	row := model.LoginAttempt{
+		Scope:       loginScopeUser,
+		BannedUntil: 2_000_000,
+		WindowStart: 2_000_000,
+	}
+	now := row.WindowStart + int64(loginAttemptRetention.Seconds())
+
+	row = planLoginFailure(row, now, testGuard)
+	if row.BannedUntil != 0 {
+		t.Fatalf("served ban was not cleared after quiet period: %d", row.BannedUntil)
+	}
+	if row.Failures != 1 || row.WindowStart != now {
+		t.Errorf("username did not rearm as a fresh window: %+v", row)
 	}
 }
 

@@ -300,13 +300,10 @@ func (a *ApiService) Login(c *gin.Context) {
 
 	loginUser, err := a.UserService.Login(username, c.Request.FormValue("pass"), c.Request.FormValue("code"), remoteIP)
 	if errors.Is(err, service.ErrTwoFaRequired) {
-		// Counted, even though the password was right and this is only the
-		// first half of a two-step login: reaching here has already paid for a
-		// bcrypt comparison, so leaving it uncounted would let whoever holds a
-		// leaked password drive that cost indefinitely without ever tripping
-		// the limiter. A real two-step login lands here exactly once and then
-		// clears the whole tally on success, so it never accumulates.
-		a.LoginGuardService.RecordFailure(remoteIP, username)
+		// The password matched and no second factor was attempted, so this is a
+		// prompt rather than a failed login. Counting it would make every real
+		// 2FA login consume one failure before the user can enter a code, cutting
+		// the configured budget roughly in half after any typo or abandoned form.
 		// Written out rather than sent through jsonMsg because this is not an
 		// error to report: an empty msg is what keeps httputil.ts from raising
 		// a red "failed" toast over what is really the next step of the form.
@@ -385,7 +382,7 @@ func (a *ApiService) TwoFaSetup(c *gin.Context) {
 
 func (a *ApiService) TwoFaEnable(c *gin.Context) {
 	loginUser := GetLoginUser(c)
-	err := a.UserService.EnableTwoFa(loginUser, c.Request.FormValue("secret"), c.Request.FormValue("code"))
+	err := a.UserService.EnableTwoFa(loginUser, c.Request.FormValue("pass"), c.Request.FormValue("secret"), c.Request.FormValue("code"))
 	if err != nil {
 		logger.Warning("enable two-factor failed:", err)
 		jsonMsg(c, "", err)

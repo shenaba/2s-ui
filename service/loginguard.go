@@ -21,9 +21,11 @@ const (
 	loginScopeUser = "user"
 )
 
-// How long a row that is neither banned nor inside its window is kept before
-// the next failure sweeps it away. Only slack: the row is already inert by
-// then, this just avoids deleting one that a slow request is about to reuse.
+// How long a served username ban stays disarmed after the last attack. A
+// username lockout can otherwise be renewed forever by five more distributed
+// attempts as soon as it expires. IP rows keep rearming; a sustained attack
+// therefore remains bounded per source without permanently locking the one
+// panel administrator out. After this much quiet the username row rearms too.
 const loginAttemptRetention = time.Hour
 
 // loginGuardConfig is the three settings resolved into seconds.
@@ -61,6 +63,21 @@ func planLoginFailure(row model.LoginAttempt, now int64, cfg loginGuardConfig) m
 		return row
 	}
 
+	// A served username ban stays disarmed while failures keep arriving. There
+	// is no way to hard-lock a public username repeatedly without also handing
+	// an attacker a permanent account-lockout primitive, so the IP axis carries
+	// the sustained protection after the first user ban. A successful login
+	// deletes the row, and a quiet period rearms it for a later attack.
+	if row.Scope == loginScopeUser && row.BannedUntil > 0 {
+		if row.WindowStart > 0 && now-row.WindowStart < int64(loginAttemptRetention.Seconds()) {
+			row.WindowStart = now
+			return row
+		}
+		row.BannedUntil = 0
+		row.Failures = 0
+		row.WindowStart = 0
+	}
+
 	if row.WindowStart == 0 || now-row.WindowStart >= cfg.window {
 		row.WindowStart = now
 		row.Failures = 1
@@ -70,11 +87,14 @@ func planLoginFailure(row model.LoginAttempt, now int64, cfg loginGuardConfig) m
 
 	if row.Failures >= cfg.maxFailures {
 		row.BannedUntil = now + cfg.ban
-		// Counting restarts after the ban is served rather than carrying the
-		// old tally forward, so one failure after the ban lifts does not
-		// immediately re-ban.
 		row.Failures = 0
-		row.WindowStart = 0
+		if row.Scope == loginScopeUser {
+			// Keep the start of the served-ban retention period. Post-ban
+			// failures move it forward while the attack remains active.
+			row.WindowStart = now
+		} else {
+			row.WindowStart = 0
+		}
 	}
 	return row
 }
@@ -222,9 +242,9 @@ func (s *LoginGuardService) RecordFailure(ip, username string) {
 	s.sweep(now, cfg)
 }
 
-// RecordSuccess clears the counts a successful login earned. The ban itself is
-// not clearable this way -- a banned attempt never reaches a password check --
-// so this only ever discards a partial tally.
+// RecordSuccess clears partial tallies and rearms a username row whose ban was
+// already served. An active ban is not clearable this way because its request
+// never reaches the password check.
 func (s *LoginGuardService) RecordSuccess(ip, username string) {
 	db := database.GetDB()
 	for _, key := range loginKeys(ip, username) {
@@ -234,6 +254,14 @@ func (s *LoginGuardService) RecordSuccess(ip, username string) {
 			logger.Warning("login guard: clear attempts:", err)
 		}
 	}
+}
+
+// ClearAll removes every partial count and active ban. It is deliberately a
+// CLI recovery operation rather than an unauthenticated endpoint: someone who
+// can reach the database can already reset the admin credentials, while a web
+// endpoint capable of clearing its own limiter would nullify the limiter.
+func (s *LoginGuardService) ClearAll() error {
+	return database.GetDB().Where("1 = 1").Delete(&model.LoginAttempt{}).Error
 }
 
 func (s *LoginGuardService) find(scope, key string) (model.LoginAttempt, error) {
@@ -247,9 +275,10 @@ func (s *LoginGuardService) find(scope, key string) (model.LoginAttempt, error) 
 	return row, err
 }
 
-// sweep drops rows that no longer refuse anything or hold any count. Run from
-// the failure path rather than a cron job: rows only ever appear there, so a
-// panel nobody is attacking never runs this at all.
+// sweep drops rows that no longer refuse anything, hold a count, or preserve a
+// recently served username ban. Run from the failure path rather than a cron
+// job: rows only ever appear there, so a panel nobody is attacking never runs
+// this at all.
 func (s *LoginGuardService) sweep(now int64, cfg loginGuardConfig) {
 	cutoff := now - cfg.window - int64(loginAttemptRetention.Seconds())
 	err := database.GetDB().

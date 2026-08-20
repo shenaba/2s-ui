@@ -33,7 +33,7 @@
             </Btn>
           </div>
         </Field>
-        <Field :label="$t('ui.twoFaCode')" :hint="$t('admin.twoFa.confirmHint')" :mb="0">
+        <Field :label="$t('ui.twoFaCode')" :hint="$t('admin.twoFa.confirmHint')" :mb="14">
           <input
             class="input mono"
             v-model="code"
@@ -42,6 +42,9 @@
             placeholder="000000"
             @keyup.enter="enable"
           />
+        </Field>
+        <Field :label="$t('admin.oldPass')" :hint="$t('admin.twoFa.enableHint')" :mb="0">
+          <input class="input" v-model="password" type="password" autocomplete="current-password" @keyup.enter="enable" />
         </Field>
       </div>
 
@@ -55,7 +58,7 @@
       <Btn v-if="enabled" variant="primary" sm :loading="loading" :disabled="!password" @click="disable">
         {{ $t('admin.twoFa.disable') }}
       </Btn>
-      <Btn v-else variant="primary" sm :loading="loading" :disabled="code.length < 6" @click="enable">
+      <Btn v-else variant="primary" sm :loading="loading" :disabled="code.length < 6 || !password" @click="enable">
         {{ $t('admin.twoFa.enable') }}
       </Btn>
     </template>
@@ -98,9 +101,13 @@ const loadSetup = async () => {
 }
 
 const enable = async () => {
-  if (code.value.length < 6) return
+  if (code.value.length < 6 || !password.value) return
   loading.value = true
-  const msg = await HttpUtils.post('api/twoFaEnable', { secret: secret.value, code: code.value })
+  const msg = await HttpUtils.post('api/twoFaEnable', {
+    pass: password.value,
+    secret: secret.value,
+    code: code.value,
+  })
   loading.value = false
   if (msg.success) {
     emit('saved')
