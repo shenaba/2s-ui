@@ -19,7 +19,18 @@ import (
 const (
 	loginScopeIP   = "ip"
 	loginScopeUser = "user"
+	// The first half of a two-step login: the password matched and the request
+	// carried no code. Not a failed attempt -- counting it as one spends the
+	// budget a real user needs to type a code with -- but it has already paid
+	// for a bcrypt comparison, so it cannot be free either. See RecordPrompt.
+	loginScopePrompt = "prompt"
 )
+
+// How much larger the prompt budget is than the failure budget. A genuine
+// two-step login spends one prompt and then clears the tally by succeeding, so
+// this only has to stay clear of someone retrying a handful of times; the point
+// is a ceiling, not a tight limit.
+const promptBudgetFactor = 10
 
 // How long a served username ban stays disarmed after the last attack. A
 // username lockout can otherwise be renewed forever by five more distributed
@@ -133,6 +144,18 @@ func loginKeys(ip, username string) []model.LoginAttempt {
 	return keys
 }
 
+// banKeys is every row that can refuse this attempt, or that a success clears.
+// It is loginKeys plus the prompt row, which is deliberately not in loginKeys:
+// a failed login must not spend the prompt budget, nor a prompt the failure
+// budget, but both refuse, and a completed login clears both.
+func banKeys(ip, username string) []model.LoginAttempt {
+	keys := loginKeys(ip, username)
+	if addr := normalizeLoginIP(ip); addr != "" {
+		keys = append(keys, model.LoginAttempt{Scope: loginScopePrompt, Key: addr})
+	}
+	return keys
+}
+
 // normalizeLoginIP reduces a source address to the identity this limiter
 // counts, on the same terms as the per-client IP limit (core's normalizeSrc).
 // Unmap first, so one client arriving as 1.2.3.4 on one path and ::ffff:1.2.3.4
@@ -182,7 +205,7 @@ func (s *LoginGuardService) BanRemaining(ip, username string) time.Duration {
 
 	now := time.Now().Unix()
 	longest := int64(0)
-	for _, key := range loginKeys(ip, username) {
+	for _, key := range banKeys(ip, username) {
 		row, err := s.find(key.Scope, key.Key)
 		if err != nil {
 			logger.Warning("login guard: read attempt:", err)
@@ -209,32 +232,8 @@ func (s *LoginGuardService) RecordFailure(ip, username string) {
 	}
 
 	now := time.Now().Unix()
-	db := database.GetDB()
 	for _, key := range loginKeys(ip, username) {
-		// One transaction per identity so the read-modify-write cannot
-		// interleave with a concurrent attempt on the same row and lose a
-		// count. SQLite has a single writer, so these serialize anyway.
-		err := db.Transaction(func(tx *gorm.DB) error {
-			row := model.LoginAttempt{Scope: key.Scope, Key: key.Key}
-			err := tx.Where("scope = ? AND key = ?", key.Scope, key.Key).First(&row).Error
-			if err != nil && !database.IsNotFound(err) {
-				return err
-			}
-			wasFree := loginBanRemaining(row, now) == 0
-			row = planLoginFailure(row, now, cfg)
-			row.Scope, row.Key = key.Scope, key.Key
-			if err := tx.Save(&row).Error; err != nil {
-				return err
-			}
-			// Log the transition only, not every attempt that lands while the
-			// ban is already in force.
-			if wasFree && row.BannedUntil > now {
-				logger.Warningf("login guard: %s %q banned for %ds after %d failures",
-					key.Scope, key.Key, cfg.ban, cfg.maxFailures)
-			}
-			return nil
-		})
-		if err != nil {
+		if err := s.bump(key.Scope, key.Key, now, cfg); err != nil {
 			logger.Warning("login guard: record failure:", err)
 		}
 	}
@@ -242,12 +241,67 @@ func (s *LoginGuardService) RecordFailure(ip, username string) {
 	s.sweep(now, cfg)
 }
 
+// RecordPrompt counts one two-factor prompt against the source address, on its
+// own scope and a budget promptBudgetFactor times the failure budget. Keyed on
+// the address alone: the username axis exists to stop a spray across accounts,
+// and reaching a prompt means the password for this one was already correct.
+// Without this the prompt is the panel's one unmetered bcrypt comparison, and
+// whoever holds a leaked password can drive it without limit.
+func (s *LoginGuardService) RecordPrompt(ip string) {
+	cfg, err := s.config()
+	if err != nil {
+		logger.Warning("login guard: read settings:", err)
+		return
+	}
+	if !cfg.enabled() {
+		return
+	}
+	cfg.maxFailures *= promptBudgetFactor
+
+	key := normalizeLoginIP(ip)
+	if key == "" {
+		return
+	}
+	now := time.Now().Unix()
+	if err := s.bump(loginScopePrompt, key, now, cfg); err != nil {
+		logger.Warning("login guard: record prompt:", err)
+	}
+	s.sweep(now, cfg)
+}
+
+// bump applies one more countable event to a row. One transaction per identity
+// so the read-modify-write cannot interleave with a concurrent attempt on the
+// same row and lose a count. SQLite has a single writer, so these serialize
+// anyway.
+func (s *LoginGuardService) bump(scope, key string, now int64, cfg loginGuardConfig) error {
+	return database.GetDB().Transaction(func(tx *gorm.DB) error {
+		row := model.LoginAttempt{Scope: scope, Key: key}
+		err := tx.Where("scope = ? AND key = ?", scope, key).First(&row).Error
+		if err != nil && !database.IsNotFound(err) {
+			return err
+		}
+		wasFree := loginBanRemaining(row, now) == 0
+		row = planLoginFailure(row, now, cfg)
+		row.Scope, row.Key = scope, key
+		if err := tx.Save(&row).Error; err != nil {
+			return err
+		}
+		// Log the transition only, not every attempt that lands while the ban
+		// is already in force.
+		if wasFree && row.BannedUntil > now {
+			logger.Warningf("login guard: %s %q banned for %ds after %d attempts",
+				scope, key, cfg.ban, cfg.maxFailures)
+		}
+		return nil
+	})
+}
+
 // RecordSuccess clears partial tallies and rearms a username row whose ban was
 // already served. An active ban is not clearable this way because its request
 // never reaches the password check.
 func (s *LoginGuardService) RecordSuccess(ip, username string) {
 	db := database.GetDB()
-	for _, key := range loginKeys(ip, username) {
+	for _, key := range banKeys(ip, username) {
 		err := db.Where("scope = ? AND key = ?", key.Scope, key.Key).
 			Delete(&model.LoginAttempt{}).Error
 		if err != nil {

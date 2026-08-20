@@ -5,6 +5,54 @@ import (
 	"testing"
 )
 
+// The generated vhost dials the panel at webListen when that names a concrete
+// address (service/acme.go's upstreamAddr), so loopback alone is not the whole
+// set of peers the panel's own nginx can arrive from.
+func TestGeneratedProxyPeerFollowsWebListen(t *testing.T) {
+	cases := []struct {
+		name   string
+		listen string
+		want   string
+	}{
+		{"empty listen is dialled on loopback", "", ""},
+		{"v4 wildcard is dialled on loopback", "0.0.0.0", ""},
+		{"v6 wildcard is dialled on loopback", "::", ""},
+		{"bracketed v6 wildcard", "[::]", ""},
+		{"not an address", "eth0", ""},
+		{"concrete v4 bind", "10.0.0.5", "10.0.0.5/32"},
+		{"concrete v6 bind", "2001:db8::5", "2001:db8::5/128"},
+		{"bracketed v6 bind", "[2001:db8::5]", "2001:db8::5/128"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prefix, ok := generatedProxyPeer(tc.listen)
+			if tc.want == "" {
+				if ok {
+					t.Errorf("generatedProxyPeer(%q) = %v, want no extra peer", tc.listen, prefix)
+				}
+				return
+			}
+			if !ok {
+				t.Fatalf("generatedProxyPeer(%q) returned no peer, want %s", tc.listen, tc.want)
+			}
+			if got := prefix.String(); got != tc.want {
+				t.Errorf("generatedProxyPeer(%q) = %q, want %q", tc.listen, got, tc.want)
+			}
+		})
+	}
+
+	// The property that matters: with the panel bound to a concrete address,
+	// the header its own nginx sets is honoured rather than discarded.
+	peer, ok := generatedProxyPeer("10.0.0.5")
+	if !ok {
+		t.Fatal("concrete bind produced no peer")
+	}
+	trusted := append(append([]netip.Prefix{}, generatedProxyPeers...), peer)
+	if got := clientIP("10.0.0.5:5000", "203.0.113.7", trusted); got != "203.0.113.7" {
+		t.Errorf("clientIP() = %q, want the forwarded client", got)
+	}
+}
+
 func TestClientIPTrustsOnlyConfiguredProxyChain(t *testing.T) {
 	custom := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
 	cases := []struct {

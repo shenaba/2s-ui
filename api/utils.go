@@ -18,17 +18,42 @@ type Msg struct {
 	Obj     interface{} `json:"obj"`
 }
 
+// generatedProxyPeers covers the usual generated-nginx case, where the vhost
+// dials the panel on loopback. It is not the whole story -- see
+// generatedProxyPeer.
 var generatedProxyPeers = []netip.Prefix{
 	netip.MustParsePrefix("127.0.0.0/8"),
 	netip.MustParsePrefix("::1/128"),
 }
 
+// generatedProxyPeer is the extra peer to trust when webListen names a concrete
+// address: service/acme.go's upstreamAddr only falls back to loopback for an
+// empty or wildcard listen, so the generated vhost dials the panel's own bind
+// address and nginx reaches it from there. Without this the vhost's own
+// X-Forwarded-For is discarded and every login is attributed to that address --
+// the last-login column shows it for everybody and the limiter's per-address
+// budget becomes one budget for the whole panel.
+func generatedProxyPeer(listen string) (netip.Prefix, bool) {
+	host := strings.Trim(strings.TrimSpace(listen), "[]")
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		// Wildcard listens are dialled on loopback, already covered above.
+		return netip.Prefix{}, false
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return netip.Prefix{}, false
+	}
+	addr = addr.Unmap()
+	return netip.PrefixFrom(addr, addr.BitLen()), true
+}
+
 // getRemoteIp identifies the caller. X-Forwarded-For is accepted only when the
-// immediate peer is trusted: the generated nginx is implicitly trusted on
-// loopback, while operators of an external proxy configure its IP/CIDR through
-// webTrustedProxies. Tying this to webNginx alone made custom nginx/Caddy/tunnel
-// deployments record the proxy as every user's IP; trusting every peer when
-// that switch was set let direct callers forge a fresh limiter identity.
+// immediate peer is trusted: the generated nginx is implicitly trusted on the
+// address it dials the panel at, while operators of an external proxy configure
+// its IP/CIDR through webTrustedProxies. Tying this to webNginx alone made
+// custom nginx/Caddy/tunnel deployments record the proxy as every user's IP;
+// trusting every peer when that switch was set let direct callers forge a fresh
+// limiter identity.
 func getRemoteIp(c *gin.Context) string {
 	var settingService service.SettingService
 	trusted, err := settingService.GetWebTrustedProxies()
@@ -40,6 +65,11 @@ func getRemoteIp(c *gin.Context) string {
 		logger.Warning("read reverse-proxy setting:", err)
 	} else if behindProxy {
 		trusted = append(trusted, generatedProxyPeers...)
+		if listen, err := settingService.GetListen(); err != nil {
+			logger.Warning("read panel listen address:", err)
+		} else if peer, ok := generatedProxyPeer(listen); ok {
+			trusted = append(trusted, peer)
+		}
 	}
 	return clientIP(c.Request.RemoteAddr, c.GetHeader("X-Forwarded-For"), trusted)
 }

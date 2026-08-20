@@ -319,9 +319,13 @@ func (a *ApiService) Login(c *gin.Context) {
 	loginUser, err := a.UserService.Login(username, c.Request.FormValue("pass"), c.Request.FormValue("code"), remoteIP)
 	if errors.Is(err, service.ErrTwoFaRequired) {
 		// The password matched and no second factor was attempted, so this is a
-		// prompt rather than a failed login. Counting it would make every real
-		// 2FA login consume one failure before the user can enter a code, cutting
-		// the configured budget roughly in half after any typo or abandoned form.
+		// prompt rather than a failed login: counting it as one would make every
+		// real 2FA login consume a failure before the user can enter a code,
+		// cutting the configured budget roughly in half after any typo or
+		// abandoned form. It is metered on its own far larger budget instead --
+		// it has already paid for a bcrypt comparison, and leaving that unmetered
+		// would let whoever holds a leaked password drive it without limit.
+		a.LoginGuardService.RecordPrompt(remoteIP)
 		// Written out rather than sent through jsonMsg because this is not an
 		// error to report: an empty msg is what keeps httputil.ts from raising
 		// a red "failed" toast over what is really the next step of the form.
