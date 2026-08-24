@@ -2,6 +2,7 @@ FROM --platform=$BUILDPLATFORM node:alpine AS front-builder
 WORKDIR /app
 COPY frontend/ ./
 RUN npm install && npm run build
+RUN cd subscriber && npm install && npm run build
 
 FROM golang:1.26-alpine AS backend-builder
 WORKDIR /app
@@ -33,6 +34,8 @@ RUN CRONET_ARCH="$TARGETARCH" && \
 
 COPY . .
 COPY --from=front-builder /app/dist/ /app/web/html/
+# Overwrites the committed fallback index.html with the real dashboard.
+COPY --from=front-builder /app/subscriber/dist/ /app/sub/dashboard/
 
 RUN if [ "$TARGETARCH" = "arm" ]; then export GOARM=7; [ "$TARGETVARIANT" = "v6" ] && export GOARM=6; fi; \
     go build -ldflags="-w -s" \

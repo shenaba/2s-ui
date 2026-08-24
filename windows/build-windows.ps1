@@ -80,6 +80,33 @@ if (!(Test-Path "web\html")) {
 Write-Host "Copying frontend build files..." -ForegroundColor Yellow
 Copy-Item "frontend\dist\*" "web\html\" -Recurse -Force
 
+# Build the subscriber dashboard and embed it (sub/dashboard is go:embed'ed).
+# Without this the binary ships the committed fallback placeholder page.
+Write-Host "Building subscriber dashboard..." -ForegroundColor Yellow
+Push-Location "frontend\subscriber"
+
+try {
+    npm install
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to install subscriber dependencies"
+    }
+
+    npm run build
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to build subscriber dashboard"
+    }
+} catch {
+    Write-Host "Error: $_" -ForegroundColor Red
+    Pop-Location
+    Read-Host "Press Enter to exit"
+    exit 1
+}
+
+Pop-Location
+
+Write-Host "Copying subscriber build files..." -ForegroundColor Yellow
+Copy-Item "frontend\subscriber\dist\*" "sub\dashboard\" -Recurse -Force
+
 # Build backend
 Write-Host "Building backend..." -ForegroundColor Yellow
 
