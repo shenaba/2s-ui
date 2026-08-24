@@ -28,6 +28,8 @@ RUN CRONET_ARCH="$TARGETARCH" && \
 
 COPY . .
 COPY frontend_dist/ /app/web/html/
+# Overwrites the committed fallback index.html with the real dashboard.
+COPY subscriber_dist/ /app/sub/dashboard/
 
 RUN if [ "$TARGETARCH" = "arm" ]; then export GOARM=7; [ "$TARGETVARIANT" = "v6" ] && export GOARM=6; fi; \
     go build -ldflags="-w -s" \

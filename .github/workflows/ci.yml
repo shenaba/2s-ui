@@ -91,11 +91,24 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            frontend/package-lock.json
+            frontend/subscriber/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
       # `build` is `vue-tsc --noEmit && vite build`, so this gates types and bundle.
       - name: Type-check and build
+        run: npm run build
+
+      # The subscriber dashboard is a second npm project, embedded into the Go
+      # binary by every shipping path. Gate it here too, or a break in it
+      # surfaces only when a release is cut -- and then as a failed release.
+      - name: Install subscriber dependencies
+        working-directory: frontend/subscriber
+        run: npm ci
+
+      - name: Type-check and build subscriber
+        working-directory: frontend/subscriber
         run: npm run build
