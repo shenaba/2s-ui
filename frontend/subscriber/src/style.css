@@ -1,0 +1,251 @@
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  background: radial-gradient(1200px 600px at 50% -10%, #1c2240 0%, #0e1120 55%, #0a0c18 100%);
+  color: #e7eaf6;
+  min-height: 100vh;
+}
+
+.page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  gap: 18px;
+}
+
+.card {
+  width: 100%;
+  max-width: 560px;
+  background: rgba(22, 26, 46, 0.85);
+  border: 1px solid #2a3052;
+  border-radius: 18px;
+  padding: 26px 26px 22px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.logo {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #4f7cff, #7a5cff);
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 18px;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.head > div:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.subtitle {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: #8b93b8;
+}
+
+.pill {
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.pill.active {
+  background: rgba(52, 199, 123, 0.16);
+  color: #38d38a;
+  border: 1px solid rgba(52, 199, 123, 0.4);
+}
+.pill.expired {
+  background: rgba(255, 99, 132, 0.16);
+  color: #ff6b7a;
+  border: 1px solid rgba(255, 99, 132, 0.4);
+}
+.pill.unknown {
+  background: rgba(140, 148, 180, 0.14);
+  color: #aab1cc;
+  border: 1px solid rgba(140, 148, 180, 0.3);
+}
+
+.state {
+  text-align: center;
+  padding: 40px 0;
+  color: #9aa1c0;
+}
+.state.error {
+  color: #ff6b7a;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.stat {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid #262c4a;
+  border-radius: 12px;
+  padding: 12px;
+  text-align: center;
+}
+
+.stat-label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8b93b8;
+  margin-bottom: 6px;
+}
+
+.stat-value {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.usage {
+  margin-top: 20px;
+}
+
+.usage-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #9aa1c0;
+  margin-bottom: 8px;
+}
+.usage-up { color: #ffb86b; }
+.usage-down { color: #4fc3f7; }
+
+.bar {
+  height: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #4f7cff, #7a5cff);
+  transition: width 0.4s ease;
+}
+
+.links {
+  margin-top: 24px;
+}
+
+.links-title {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8b93b8;
+  margin: 0 0 12px;
+}
+
+.link-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.link-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid #262c4a;
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.proto {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 7px;
+  background: rgba(79, 124, 255, 0.15);
+  color: #8cabff;
+}
+
+.uri {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: #c6cbe2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.copy {
+  flex-shrink: 0;
+  border: 1px solid #2a3052;
+  background: rgba(255, 255, 255, 0.04);
+  color: #dde2f5;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 12px;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.copy:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.hint {
+  margin-top: 14px;
+  font-size: 12px;
+  color: #8b93b8;
+  line-height: 1.5;
+}
+
+.foot {
+  font-size: 12px;
+  color: #5b6285;
+}
+
+@media (max-width: 480px) {
+  .stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
