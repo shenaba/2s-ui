@@ -1,0 +1,5 @@
+# Committed: the fallback index.html only. The real build drops the whole
+# subscriber dist (index.html + assets/) into this directory, which must never
+# be tracked.
+*
+!index.html
