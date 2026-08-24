@@ -105,6 +105,11 @@ try {
 Pop-Location
 
 Write-Host "Copying subscriber build files..." -ForegroundColor Yellow
+# Clear the previous build first, the way build.sh does: every emitted file is
+# content-hashed, so copying over the old one leaves unreachable bundles behind
+# and //go:embed compiles all of them into the binary.
+Remove-Item "sub\dashboard\index.html" -Force -ErrorAction SilentlyContinue
+Remove-Item "sub\dashboard\assets" -Recurse -Force -ErrorAction SilentlyContinue
 Copy-Item "frontend\subscriber\dist\*" "sub\dashboard\" -Recurse -Force
 
 # Build backend

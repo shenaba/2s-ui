@@ -12,6 +12,11 @@ tmp
 *.tar.gz
 frontend/node_modules
 frontend/.vite
+# Same reason as above, for the subscriber dashboard's own npm project: its
+# node_modules holds host-platform rolldown/vite bindings, which must not be
+# copied into the alpine build stage that then builds it.
+frontend/subscriber/node_modules
+frontend/subscriber/dist
 
 # local env files
 .env.local

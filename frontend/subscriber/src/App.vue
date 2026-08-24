@@ -117,6 +117,13 @@ onMounted(load)
       <div v-if="loading" class="state">Loading…</div>
       <div v-else-if="error" class="state error">{{ error }}</div>
 
+      <!-- A disabled client is answered with its state and nothing else, so
+           there are no figures to show: rendering the block anyway would put
+           zeroed counters on screen, and volume 0 reads as "unlimited". -->
+      <template v-else-if="info && !info.enable">
+        <section class="hint">This subscription is not active. Contact your provider.</section>
+      </template>
+
       <template v-else-if="info">
         <section class="stats">
           <div class="stat">
@@ -165,9 +172,7 @@ onMounted(load)
           </ul>
           <p class="hint">Copy a link and paste it into your client app, or import the subscription URL directly.</p>
         </section>
-        <section v-else class="hint">
-          {{ info.enable ? 'No config links available.' : 'This subscription is not active. Contact your provider.' }}
-        </section>
+        <section v-else class="hint">No config links available.</section>
       </template>
     </div>
     <footer class="foot">Powered by 2s-ui</footer>

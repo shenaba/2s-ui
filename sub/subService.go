@@ -75,20 +75,39 @@ func (s *SubService) getClientInfoJSON(subId string) (*ClientInfo, error) {
 		return nil, err
 	}
 
+	now := time.Now().Unix()
+
+	// A client that is off gets its state and nothing else. Disabling one is
+	// how a leaked subscription URL is revoked, and a label, a quota, an
+	// expiry date and a set of counters would keep answering that URL for as
+	// long as the client row exists -- so everything but the state stays
+	// behind the enable flag. Links most of all: the page has to explain a
+	// dead subscription, not hand out working configs for one. Name is echoed
+	// straight back from the URL, so it says nothing the caller did not
+	// already type. serveDashboard withholds the matching profile headers.
 	info := &ClientInfo{
-		Name:      client.Name,
-		Remark:    client.Remark,
-		Enable:    client.Enable,
-		Expiry:    client.Expiry,
-		Volume:    client.Volume,
-		Up:        client.Up,
-		Down:      client.Down,
-		Used:      client.Up + client.Down,
-		Title:     client.Remark,
-		Unlimited: client.Volume <= 0,
+		Name:   client.Name,
+		Title:  client.Name,
+		Enable: client.Enable,
+		// Never null: the page's own type says string[].
+		Links: []string{},
 	}
-	if info.Title == "" {
-		info.Title = client.Name
+	if client.Expiry > 0 {
+		info.Expired = client.Expiry <= now
+	}
+	if !client.Enable {
+		return info, nil
+	}
+
+	info.Remark = client.Remark
+	info.Expiry = client.Expiry
+	info.Volume = client.Volume
+	info.Up = client.Up
+	info.Down = client.Down
+	info.Used = client.Up + client.Down
+	info.Unlimited = client.Volume <= 0
+	if client.Remark != "" {
+		info.Title = client.Remark
 	}
 
 	info.RemainingTraffic = client.Volume - info.Used
@@ -96,20 +115,14 @@ func (s *SubService) getClientInfoJSON(subId string) (*ClientInfo, error) {
 		info.RemainingTraffic = 0
 	}
 
-	now := time.Now().Unix()
 	if client.Expiry > 0 {
-		info.Expired = client.Expiry <= now
 		info.RemainingDays = (client.Expiry - now) / 86400
 		if info.RemainingDays < 0 {
 			info.RemainingDays = 0
 		}
 	}
 
-	// Links stay behind the enable flag: the page has to explain a disabled
-	// subscription, not hand out working configs for one.
-	if client.Enable {
-		info.Links = s.LinkService.GetLinks(&client.Links, "all", "")
-	}
+	info.Links = append(info.Links, s.LinkService.GetLinks(&client.Links, "all", "")...)
 
 	return info, nil
 }

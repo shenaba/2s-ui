@@ -22,20 +22,25 @@ type SubHandler struct {
 }
 
 func NewSubHandler(g *gin.RouterGroup) error {
-	a := &SubHandler{}
-	return a.initRouter(g)
-}
-
-func (s *SubHandler) initRouter(g *gin.RouterGroup) error {
-	// The dashboard's index.html references its bundle relatively, so a browser
-	// on /{subPath}/{clientName} asks for /{subPath}/assets/... — without this
-	// route the page loads and then renders blank. Registering a literal path
-	// segment next to :subid is fine for gin's tree; the one cost is that a
-	// client named exactly "assets" becomes unreachable.
 	assets, err := subscriberAssets()
 	if err != nil {
 		return err
 	}
+	a := &SubHandler{}
+	return a.initRouter(g, assets)
+}
+
+// initRouter takes the asset FS rather than reading the embedded one itself so
+// a test can supply a populated fixture: a bare checkout has no dashboard/assets
+// directory, and CI builds from one, so the served-a-real-asset half would
+// otherwise never be exercised anywhere automatic.
+//
+// The dashboard's index.html references its bundle relatively, so a browser on
+// /{subPath}/{clientName} asks for /{subPath}/assets/... — without that route
+// the page loads and then renders blank. Registering a literal path segment
+// next to :subid is fine for gin's tree; the one cost is that a client named
+// exactly "assets" cannot be reached below its own path.
+func (s *SubHandler) initRouter(g *gin.RouterGroup, assets fs.FS) error {
 	// Every emitted filename carries a content hash, so a year is safe and an
 	// upgrade invalidates only what changed — same deal as the panel's own
 	// assets in web.go. The header is set only for a name the embedded FS
@@ -143,9 +148,14 @@ func (s *SubHandler) serveDashboard(c *gin.Context, subId string) {
 		return
 	}
 
-	// Profile headers only. Content-Disposition is deliberately left off: it is
-	// what makes a browser download the page instead of rendering it.
-	s.addProfileHeaders(c, s.SubService.getClientHeaders(client))
+	// Profile headers only, and only for a live client. Content-Disposition is
+	// deliberately left off: it is what makes a browser download the page
+	// instead of rendering it. Subscription-Userinfo carries the same counters
+	// getClientInfoJSON withholds from a disabled client, so sending it here
+	// would hand them straight back on the very URL that was revoked.
+	if client.Enable {
+		s.addProfileHeaders(c, s.SubService.getClientHeaders(client))
+	}
 	c.Data(200, "text/html; charset=utf-8", page)
 }
 

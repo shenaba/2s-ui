@@ -3,10 +3,10 @@ package sub
 import (
 	"bytes"
 	"encoding/json"
-	"io/fs"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/shenaba/2s-ui/database"
@@ -76,56 +76,65 @@ func TestSubscriberIndexAlwaysResolves(t *testing.T) {
 	}
 }
 
-// Assets carry a year of cache only when the embedded FS actually holds them.
-// A 404 with explicit freshness is cacheable, so a request that lands while
-// the binary is being swapped would otherwise pin a blank dashboard for a year.
+// Assets carry a year of cache only when the FS actually holds them. A 404
+// with explicit freshness is cacheable, so a request that lands while the
+// binary is being swapped would otherwise pin a blank dashboard for a year.
+// The fixture FS is what lets both halves run on a bare checkout, which is
+// what CI builds from.
 func TestAssetCacheHeaderOnlyOnHits(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	if err := NewSubHandler(engine.Group("/sub/")); err != nil {
-		t.Fatalf("NewSubHandler: %v", err)
+	assets := fstest.MapFS{
+		"index-abc123.js": &fstest.MapFile{Data: []byte("console.log(1)")},
+	}
+	if err := (&SubHandler{}).initRouter(engine.Group("/sub/"), assets); err != nil {
+		t.Fatalf("initRouter: %v", err)
 	}
 
-	name, ok := embeddedAssetName(t)
-	if ok {
-		w := httptest.NewRecorder()
-		engine.ServeHTTP(w, httptest.NewRequest("GET", "/sub/assets/"+name, nil))
-		if w.Code != 200 {
-			t.Errorf("GET %s = %d, want 200", name, w.Code)
-		}
-		if got := w.Header().Get("Cache-Control"); got != "max-age=31536000" {
-			t.Errorf("hit Cache-Control = %q, want the year", got)
-		}
+	hit := httptest.NewRecorder()
+	engine.ServeHTTP(hit, httptest.NewRequest("GET", "/sub/assets/index-abc123.js", nil))
+	if hit.Code != 200 {
+		t.Errorf("GET a present asset = %d, want 200", hit.Code)
+	}
+	if got := hit.Header().Get("Cache-Control"); got != "max-age=31536000" {
+		t.Errorf("hit Cache-Control = %q, want max-age=31536000", got)
 	}
 
-	w := httptest.NewRecorder()
-	engine.ServeHTTP(w, httptest.NewRequest("GET", "/sub/assets/does-not-exist.js", nil))
-	if w.Code != 404 {
-		t.Fatalf("missing asset = %d, want 404", w.Code)
+	miss := httptest.NewRecorder()
+	engine.ServeHTTP(miss, httptest.NewRequest("GET", "/sub/assets/does-not-exist.js", nil))
+	if miss.Code != 404 {
+		t.Fatalf("missing asset = %d, want 404", miss.Code)
 	}
-	if got := w.Header().Get("Cache-Control"); got != "" {
+	if got := miss.Header().Get("Cache-Control"); got != "" {
 		t.Errorf("404 must not be cacheable, got Cache-Control %q", got)
 	}
 }
 
-// embeddedAssetName picks one file out of the built dashboard, or reports that
-// this is a bare checkout serving the fallback page.
-func embeddedAssetName(t *testing.T) (string, bool) {
-	t.Helper()
-	assets, err := subscriberAssets()
-	if err != nil {
-		t.Fatalf("subscriberAssets: %v", err)
+// A traversal attempt is not a name the FS holds, so it must not be marked
+// cacheable either -- fs.Stat rejects the path before the static handler,
+// which does its own rejecting, ever sees it.
+func TestAssetCacheHeaderRejectsTraversal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	assets := fstest.MapFS{"index-abc123.js": &fstest.MapFile{Data: []byte("x")}}
+	if err := (&SubHandler{}).initRouter(engine.Group("/sub/"), assets); err != nil {
+		t.Fatalf("initRouter: %v", err)
 	}
-	entries, err := fs.ReadDir(assets, ".")
-	if err != nil || len(entries) == 0 {
-		return "", false
+
+	for _, p := range []string{"/sub/assets/../../etc/passwd", "/sub/assets/", "/sub/assets//index-abc123.js"} {
+		w := httptest.NewRecorder()
+		engine.ServeHTTP(w, httptest.NewRequest("GET", p, nil))
+		if got := w.Header().Get("Cache-Control"); got != "" {
+			t.Errorf("GET %s set Cache-Control %q", p, got)
+		}
 	}
-	return entries[0].Name(), true
 }
 
 // The dashboard's whole point is telling a subscriber why their subscription
 // stopped working, so a disabled client has to resolve -- getClientBySubId's
-// enable filter would answer it with a bare 400 instead.
+// enable filter would answer it with a bare 400 instead. It gets the state and
+// nothing else: disabling is how a leaked subscription URL is revoked, so the
+// label, the quota and the counters must not keep answering that URL.
 func TestClientInfoResolvesDisabledClientWithoutLinks(t *testing.T) {
 	dir := t.TempDir()
 	if err := database.InitDB(filepath.Join(dir, "sub.db")); err != nil {
@@ -141,6 +150,7 @@ func TestClientInfoResolvesDisabledClientWithoutLinks(t *testing.T) {
 	expired := time.Now().Add(-2 * time.Hour).Unix()
 	if err := database.GetDB().Create(&model.Client{
 		Name: "alice", Remark: "Alice", Enable: false, Expiry: expired, Links: links,
+		Volume: 100 << 30, Up: 60 << 30, Down: 50 << 30,
 	}).Error; err != nil {
 		t.Fatalf("insert client: %v", err)
 	}
@@ -158,6 +168,22 @@ func TestClientInfoResolvesDisabledClientWithoutLinks(t *testing.T) {
 	}
 	if len(info.Links) != 0 {
 		t.Errorf("a disabled client was handed %d working config links", len(info.Links))
+	}
+	if info.Remark != "" || info.Title != "alice" {
+		t.Errorf("the operator's label leaked: remark %q, title %q", info.Remark, info.Title)
+	}
+	if info.Volume != 0 || info.Up != 0 || info.Down != 0 || info.Used != 0 || info.Expiry != 0 {
+		t.Errorf("counters leaked on a revoked URL: %+v", info)
+	}
+
+	// Marshalled, not just present: the page's type says string[], and Go
+	// turns a nil slice into null.
+	payload, err := json.Marshal(info)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !bytes.Contains(payload, []byte(`"links":[]`)) {
+		t.Errorf("links must marshal as an empty array, got %s", payload)
 	}
 }
 
@@ -190,5 +216,52 @@ func TestClientInfoNotExpiredOnItsLastDay(t *testing.T) {
 	}
 	if info.Expired {
 		t.Error("Expired = true six hours before expiry")
+	}
+}
+
+// Subscription-Userinfo carries the same counters getClientInfoJSON withholds
+// from a disabled client, so the dashboard response must not set it either --
+// otherwise trimming the JSON just moves the leak into a header.
+func TestDashboardWithholdsProfileHeadersWhenDisabled(t *testing.T) {
+	dir := t.TempDir()
+	if err := database.InitDB(filepath.Join(dir, "sub.db")); err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.CloseDBForTest(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	})
+
+	rows := []model.Client{
+		{Name: "off", Remark: "Paying customer", Enable: false, Volume: 100 << 30, Up: 99 << 30},
+		{Name: "on", Remark: "Paying customer", Enable: true, Volume: 100 << 30, Up: 1 << 30},
+	}
+	if err := database.GetDB().Create(&rows).Error; err != nil {
+		t.Fatalf("insert clients: %v", err)
+	}
+
+	serve := func(name string) *httptest.ResponseRecorder {
+		w, c := newTestContext()
+		(&SubHandler{}).serveDashboard(c, name)
+		return w
+	}
+
+	off := serve("off")
+	if off.Code != 200 {
+		t.Fatalf("a disabled client must still get the page, got %d", off.Code)
+	}
+	for _, h := range []string{"Subscription-Userinfo", "Profile-Title", "Profile-Update-Interval"} {
+		if got := off.Header().Get(h); got != "" {
+			t.Errorf("disabled client leaked %s: %q", h, got)
+		}
+	}
+
+	on := serve("on")
+	if got := on.Header().Get("Subscription-Userinfo"); got == "" {
+		t.Error("a live client lost its Subscription-Userinfo header")
+	}
+	if got := on.Header().Get("Profile-Title"); got != "Paying customer" {
+		t.Errorf("Profile-Title = %q, want the remark", got)
 	}
 }
