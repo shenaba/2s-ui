@@ -3,6 +3,7 @@ package sub
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"path"
 	"strings"
@@ -37,10 +38,16 @@ func (s *SubHandler) initRouter(g *gin.RouterGroup) error {
 	}
 	// Every emitted filename carries a content hash, so a year is safe and an
 	// upgrade invalidates only what changed — same deal as the panel's own
-	// assets in web.go.
+	// assets in web.go. The header is set only for a name the embedded FS
+	// actually holds: a miss is answered 404 by the static handler below, and
+	// a 404 carrying explicit freshness is cacheable, so a request that lands
+	// mid-upgrade would otherwise pin an empty dashboard for a year.
 	assetsPrefix := path.Join(g.BasePath(), "assets") + "/"
 	g.Use(func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, assetsPrefix) {
+		if !strings.HasPrefix(c.Request.URL.Path, assetsPrefix) {
+			return
+		}
+		if _, err := fs.Stat(assets, strings.TrimPrefix(c.Request.URL.Path, assetsPrefix)); err == nil {
 			c.Header("Cache-Control", "max-age=31536000")
 		}
 	})
@@ -118,10 +125,11 @@ func (s *SubHandler) serveClientInfo(c *gin.Context, subId string) {
 // serveDashboard answers ?format=page with the embedded Vue subscriber
 // dashboard.
 func (s *SubHandler) serveDashboard(c *gin.Context, subId string) {
-	// Resolve the client first: an unknown or disabled sub id must stay a 400,
-	// the way it is for every other client, rather than becoming a 200 that
-	// renders a dashboard which then fails to load its own data.
-	client, err := s.SubService.getClientBySubId(subId)
+	// Resolve the client first: an unknown sub id must stay a 400, rather than
+	// becoming a 200 that renders a dashboard which then fails to load its own
+	// data. A disabled one does resolve -- explaining that is the page's job,
+	// and getAnyClientBySubId is what the info endpoint answers with too.
+	client, err := s.SubService.getAnyClientBySubId(subId)
 	if err != nil {
 		logger.Error(err)
 		c.String(400, "Error!")

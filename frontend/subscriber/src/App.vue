@@ -14,6 +14,7 @@ interface ClientInfo {
   used: number
   remainingTraffic: number
   unlimited: boolean
+  expired: boolean
   links: string[]
 }
 
@@ -71,8 +72,11 @@ const usagePercent = computed(() => {
 const status = computed(() => {
   if (error.value) return { label: 'Unknown', klass: 'unknown' }
   if (!info.value) return { label: '…', klass: 'unknown' }
+  // expired comes from the panel, not from remainingDays: that one is an
+  // integer division, so it reads 0 for the whole final day of a subscription
+  // that still works.
+  if (info.value.expired) return { label: 'Expired', klass: 'expired' }
   if (!info.value.enable) return { label: 'Disabled', klass: 'expired' }
-  if (info.value.remainingDays === 0 && info.value.expiry > 0) return { label: 'Expired', klass: 'expired' }
   return { label: 'Active', klass: 'active' }
 })
 
@@ -105,7 +109,7 @@ onMounted(load)
         <div class="logo">2s</div>
         <div>
           <h1 class="title">{{ info?.title || 'Subscription' }}</h1>
-          <p class="subtitle" v-if="info && info.remark && info.remark !== info.title">{{ info.name }}</p>
+          <p class="subtitle" v-if="info && info.title !== info.name">{{ info.name }}</p>
         </div>
         <span class="pill" :class="status.klass">{{ status.label }}</span>
       </header>
@@ -117,8 +121,11 @@ onMounted(load)
         <section class="stats">
           <div class="stat">
             <span class="stat-label">Remaining</span>
+            <!-- Keyed on expiry, not on unlimited: that flag is about traffic
+                 volume, so an unmetered client with an expiry date used to be
+                 shown as never expiring. -->
             <span class="stat-value">
-              {{ info.unlimited ? '♾ Unlimited' : info.expiry > 0 ? info.remainingDays + ' days' : '—' }}
+              {{ info.expiry > 0 ? info.remainingDays + ' days' : '♾ Unlimited' }}
             </span>
           </div>
           <div class="stat">
@@ -158,7 +165,9 @@ onMounted(load)
           </ul>
           <p class="hint">Copy a link and paste it into your client app, or import the subscription URL directly.</p>
         </section>
-        <section v-else class="hint">No config links available.</section>
+        <section v-else class="hint">
+          {{ info.enable ? 'No config links available.' : 'This subscription is not active. Contact your provider.' }}
+        </section>
       </template>
     </div>
     <footer class="foot">Powered by 2s-ui</footer>
