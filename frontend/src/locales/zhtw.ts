@@ -330,6 +330,7 @@ export default {
     subUri: "訂閱 URL",
     subUriPathMismatch: "路徑與「默認路徑」不一致,要換路徑請改後者。",
     subUriPathBlocked: "儲存失敗:訂閱 URL 的路徑與默認路徑不一致",
+    pageSub: "訂閱頁",
     jsonSub: "JSON 訂閱",
     toDirect: "路由到直連",
     toBlock: "路由到阻止",

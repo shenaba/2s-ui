@@ -58,36 +58,20 @@ func (s *SubHandler) subs(c *gin.Context) {
 	subId := c.Param("subid")
 	format, isFormat := c.GetQuery("format")
 
-	// JSON info endpoint backing the subscriber dashboard. It is a new,
-	// opt-in format (`?format=info`) distinct from the existing `?format=json`
-	// (JsonService) and `?format=clash` (ClashService).
-	if isFormat && format == "info" {
-		info, err := s.getClientInfoJSON(subId)
-		if err != nil {
-			logger.Error(err)
-			c.String(400, "Error!")
-			return
-		}
-		jsonInfo, err := json.Marshal(info)
-		if err != nil {
-			logger.Error(err)
-			c.String(500, "Error!")
-			return
-		}
-		c.Data(200, "application/json; charset=utf-8", jsonInfo)
-		return
-	}
-
-	// A browser opening the subscription URL gets the Vue dashboard page
-	// instead of raw config text. Proxy clients and tools (non-browser UAs)
-	// fall through to the unchanged raw-config path below.
-	if !isFormat && isBrowserUA(c.Request.UserAgent()) {
-		s.serveDashboard(c, subId)
-		return
-	}
-
 	if isFormat {
 		switch format {
+		// The dashboard and the JSON behind it are two more formats of this
+		// endpoint, next to json and clash. Keeping them behind an explicit
+		// ?format is what leaves the bare subscription URL byte-identical for
+		// every client: deciding by User-Agent instead would eventually hand a
+		// proxy client an HTML page instead of its config, and the user would
+		// see that as a broken subscription rather than a cosmetic glitch.
+		case "page":
+			s.serveDashboard(c, subId)
+			return
+		case "info":
+			s.serveClientInfo(c, subId)
+			return
 		case "json":
 			result, headers, err = s.JsonService.GetJson(subId, format)
 		case "clash":
@@ -112,8 +96,27 @@ func (s *SubHandler) subs(c *gin.Context) {
 	c.String(200, *result)
 }
 
-// serveDashboard answers a browser request to the subscription URL with the
-// embedded Vue subscriber dashboard.
+// serveClientInfo answers with the live figures the dashboard renders.
+func (s *SubHandler) serveClientInfo(c *gin.Context, subId string) {
+	info, err := s.getClientInfoJSON(subId)
+	if err != nil {
+		logger.Error(err)
+		c.String(400, "Error!")
+		return
+	}
+
+	jsonInfo, err := json.Marshal(info)
+	if err != nil {
+		logger.Error(err)
+		c.String(500, "Error!")
+		return
+	}
+
+	c.Data(200, "application/json; charset=utf-8", jsonInfo)
+}
+
+// serveDashboard answers ?format=page with the embedded Vue subscriber
+// dashboard.
 func (s *SubHandler) serveDashboard(c *gin.Context, subId string) {
 	// Resolve the client first: an unknown or disabled sub id must stay a 400,
 	// the way it is for every other client, rather than becoming a 200 that

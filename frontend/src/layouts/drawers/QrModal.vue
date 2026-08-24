@@ -64,6 +64,7 @@ const singbox = computed(() => {
 })
 const subQrs = computed(() => [
   { label: t('setting.sub'), value: clientSub.value, copy: true },
+  { label: t('setting.pageSub'), value: clientSub.value + '?format=page', copy: true },
   { label: t('setting.jsonSub'), value: clientSub.value + '?format=json', copy: true },
   { label: t('setting.clashSub'), value: clientSub.value + '?format=clash', copy: true },
   { label: 'SING-BOX', value: singbox.value, copy: false },

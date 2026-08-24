@@ -332,6 +332,7 @@ export default {
     subUri: "Subscription URI",
     subUriPathMismatch: "Path differs from Default Path; edit that one to move it.",
     subUriPathBlocked: "Save failed: Subscription URI path does not match Default Path",
+    pageSub: "Subscription Page",
     jsonSub: "JSON Subscription",
     toDirect: "Route to Direct",
     toBlock: "Route to Block",

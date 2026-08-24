@@ -331,6 +331,7 @@ export default {
     subUri: "URI подписки",
     subUriPathMismatch: "Путь отличается от «Пути по умолчанию» — чтобы перенести подписку, измените его.",
     subUriPathBlocked: "Не сохранено: путь «URI подписки» не совпадает с «Путём по умолчанию»",
+    pageSub: "Страница подписки",
     jsonSub: "JSON подписка",
     toDirect: "Маршрутизация на Direct",
     toBlock: "Маршрутизация на Block",

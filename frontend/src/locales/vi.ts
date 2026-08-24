@@ -330,6 +330,7 @@ export default {
     subUri: "URI đăng ký",
     subUriPathMismatch: "Đường dẫn khác «Đường dẫn mặc định»; muốn đổi, hãy sửa mục đó.",
     subUriPathBlocked: "Lưu thất bại: đường dẫn «URI đăng ký» không khớp «Đường dẫn mặc định»",
+    pageSub: "Trang đăng ký",
     jsonSub: "Đăng ký JSON",
     toDirect: "Chuyển hướng tới Trực tiếp",
     toBlock: "Chuyển hướng tới Chặn",
