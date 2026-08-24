@@ -3,7 +3,8 @@ package sub
 import (
 	"encoding/json"
 	"fmt"
-	"io/fs"
+	"net/http"
+	"path"
 	"strings"
 
 	"github.com/shenaba/2s-ui/logger"
@@ -19,14 +20,35 @@ type SubHandler struct {
 	ClashService
 }
 
-func NewSubHandler(g *gin.RouterGroup) {
+func NewSubHandler(g *gin.RouterGroup) error {
 	a := &SubHandler{}
-	a.initRouter(g)
+	return a.initRouter(g)
 }
 
-func (s *SubHandler) initRouter(g *gin.RouterGroup) {
+func (s *SubHandler) initRouter(g *gin.RouterGroup) error {
+	// The dashboard's index.html references its bundle relatively, so a browser
+	// on /{subPath}/{clientName} asks for /{subPath}/assets/... — without this
+	// route the page loads and then renders blank. Registering a literal path
+	// segment next to :subid is fine for gin's tree; the one cost is that a
+	// client named exactly "assets" becomes unreachable.
+	assets, err := subscriberAssets()
+	if err != nil {
+		return err
+	}
+	// Every emitted filename carries a content hash, so a year is safe and an
+	// upgrade invalidates only what changed — same deal as the panel's own
+	// assets in web.go.
+	assetsPrefix := path.Join(g.BasePath(), "assets") + "/"
+	g.Use(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, assetsPrefix) {
+			c.Header("Cache-Control", "max-age=31536000")
+		}
+	})
+	g.StaticFS("/assets", http.FS(assets))
+
 	g.GET("/:subid", s.subs)
 	g.HEAD("/:subid", s.subHeaders)
+	return nil
 }
 
 func (s *SubHandler) subs(c *gin.Context) {
@@ -91,28 +113,28 @@ func (s *SubHandler) subs(c *gin.Context) {
 }
 
 // serveDashboard answers a browser request to the subscription URL with the
-// embedded Vue subscriber dashboard. The usual profile headers are still set
-// so the page is self-describing alongside the raw endpoint.
+// embedded Vue subscriber dashboard.
 func (s *SubHandler) serveDashboard(c *gin.Context, subId string) {
-	subContent, err := subscriberContent()
+	// Resolve the client first: an unknown or disabled sub id must stay a 400,
+	// the way it is for every other client, rather than becoming a 200 that
+	// renders a dashboard which then fails to load its own data.
+	client, err := s.SubService.getClientBySubId(subId)
 	if err != nil {
-		logger.Error("sub: error opening embedded dashboard:", err)
-		c.String(500, "Error!")
+		logger.Error(err)
+		c.String(400, "Error!")
 		return
 	}
 
-	// Set the subscription profile headers for completeness.
-	if client, err := s.SubService.getClientBySubId(subId); err == nil {
-		headers := s.SubService.getClientHeaders(client)
-		s.addHeaders(c, headers)
-	}
-
-	page, err := fs.ReadFile(subContent, "index.html")
+	page, err := subscriberIndex()
 	if err != nil {
 		logger.Error("sub: error reading dashboard index.html:", err)
 		c.String(500, "Error!")
 		return
 	}
+
+	// Profile headers only. Content-Disposition is deliberately left off: it is
+	// what makes a browser download the page instead of rendering it.
+	s.addProfileHeaders(c, s.SubService.getClientHeaders(client))
 	c.Data(200, "text/html; charset=utf-8", page)
 }
 
@@ -131,11 +153,19 @@ func (s *SubHandler) subHeaders(c *gin.Context) {
 	c.Status(200)
 }
 
+// addHeaders is the raw-subscription set: the profile headers plus the
+// Content-Disposition that makes a proxy client save the payload to a file.
 func (s *SubHandler) addHeaders(c *gin.Context, headers []string) {
+	s.addProfileHeaders(c, headers)
+	c.Writer.Header().Set("Content-Disposition", contentDispositionHeader(headers[2]))
+}
+
+// addProfileHeaders sets only the descriptive headers, for responses that are
+// meant to be rendered rather than downloaded.
+func (s *SubHandler) addProfileHeaders(c *gin.Context, headers []string) {
 	c.Writer.Header().Set("Subscription-Userinfo", headers[0])
 	c.Writer.Header().Set("Profile-Update-Interval", headers[1])
 	c.Writer.Header().Set("Profile-Title", headers[2])
-	c.Writer.Header().Set("Content-Disposition", contentDispositionHeader(headers[2]))
 }
 
 func contentDispositionHeader(name string) string {

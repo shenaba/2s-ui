@@ -1,5 +1,5 @@
-# Committed: the fallback index.html only. The real build drops the whole
-# subscriber dist (index.html + assets/) into this directory, which must never
-# be tracked.
+# Committed: the fallback page only. The real build drops the subscriber dist
+# (index.html + assets/) into this directory, which must never be tracked --
+# otherwise every run of build.sh leaves a modified file behind.
 *
-!index.html
+!fallback.html

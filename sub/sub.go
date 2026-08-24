@@ -62,7 +62,9 @@ func (s *Server) initRouter() (*gin.Engine, error) {
 	}
 
 	g := engine.Group(subPath)
-	NewSubHandler(g)
+	if err := NewSubHandler(g); err != nil {
+		return nil, err
+	}
 
 	return engine, nil
 }
