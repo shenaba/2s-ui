@@ -6,7 +6,6 @@ import (
 	"io"
 	"mime/multipart"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -32,11 +31,23 @@ func GetDb(exclude string) ([]byte, error) {
 		}
 	}
 
-	dir, err := filepath.Abs(filepath.Dir(os.Args[0]))
+	// A unique scratch path rather than a timestamped one: two exports entering
+	// the same second would otherwise share it, and whichever finished first
+	// would delete the file out from under the other.
+	scratch, err := os.CreateTemp(config.GetDBFolderPath(), config.GetName()+"_*.db")
 	if err != nil {
 		return nil, err
 	}
-	dbPath := dir + config.GetName() + "_" + time.Now().Format("20060102-200203") + ".db"
+	dbPath := scratch.Name()
+	// Only the name was wanted; SQLite opens the path itself, and on Windows it
+	// cannot while this handle is still on it.
+	scratch.Close()
+	// Registered here rather than after the open below: CreateTemp has already
+	// made the file, so a failing open would return above the registration and
+	// leave it behind. Still registered before the close for the reason it
+	// always was -- defers are LIFO, so this one runs last, and Windows refuses
+	// to delete a file that is still open.
+	defer os.Remove(dbPath)
 
 	backupDb, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	if err != nil {
@@ -47,7 +58,6 @@ func GetDb(exclude string) ([]byte, error) {
 			_ = sqlDB.Close()
 		}
 	}()
-	defer os.Remove(dbPath)
 
 	err = backupDb.AutoMigrate(
 		&model.Setting{},
@@ -221,9 +231,51 @@ func ImportDB(file multipart.File) error {
 	old_db, _ := db.DB()
 	old_db.Close()
 
+	// The package-level handle outlives that Close, so any path returning from
+	// here on without reopening leaves GetDB serving a *gorm.DB whose pool is
+	// shut: every later query fails with "sql: database is closed" and the
+	// panel stays up but unusable until someone restarts it by hand. Reopen on
+	// the way out unless the success path below already did.
+	dbReopened := false
+	// Whether config.GetDBPath() still holds the panel's own database. It stops
+	// doing so the moment the upload is moved into place, and only a successful
+	// rollback puts it back -- reopening in between would bring the panel up on
+	// the uploaded data, whose users table is not the operator's.
+	dbPathIsOriginal := true
+	defer func() {
+		if dbReopened {
+			return
+		}
+		if !dbPathIsOriginal {
+			logger.Error("import left the uploaded database in place and could not roll back, not reopening")
+			return
+		}
+		// Only reopen a database that is still there. InitDB creates the file
+		// when it is missing and initUser then seeds admin/admin, so on the path
+		// that leaves nothing behind -- the move below failing and the rollback
+		// failing with it -- reopening would swap the operator's data for an
+		// empty panel anyone can log into. Their database is kept at
+		// fallbackPath there; putting it back is not this defer's job.
+		if _, statErr := os.Stat(config.GetDBPath()); statErr != nil {
+			logger.Error("import left no database in place, not reopening: ", statErr)
+			return
+		}
+		if err := InitDB(config.GetDBPath()); err != nil {
+			logger.Warning("import aborted and reopening the database failed: ", err)
+		}
+	}()
+
 	// Save uploaded file to temporary file
 	_, err = io.Copy(tempFile, file)
 	if err != nil {
+		return common.NewErrorf("Error saving db: %v", err)
+	}
+	// Close before the renames below rather than leaving it to the deferred
+	// Close, which only runs once this function returns: Windows refuses to
+	// rename a file that is still open, so every import on that platform used
+	// to die at "Error moving db file". The defer stays as a safety net for
+	// the early returns above.
+	if err = tempFile.Close(); err != nil {
 		return common.NewErrorf("Error saving db: %v", err)
 	}
 
@@ -239,13 +291,18 @@ func ImportDB(file multipart.File) error {
 
 	// Backup the current database for fallback
 	fallbackPath := fmt.Sprintf("%s.backup", config.GetDBPath())
-	// Remove the existing fallback file (if any)
-	_, err = os.Stat(fallbackPath)
-	if err == nil {
-		errRemove := os.Remove(fallbackPath)
-		if errRemove != nil {
-			return common.NewErrorf("Error removing existing fallback db file: %v", errRemove)
+	// An existing one here is not stale scratch. An earlier import that could
+	// not roll back deliberately leaves the operator's database at this path and
+	// names it in the error it returns, and retrying the import is the natural
+	// reaction to that failure -- so deleting it, which is what this used to do,
+	// would destroy the last copy on exactly the path that was trying to save
+	// it. Archive it under a dated name instead and say where it went.
+	if _, statErr := os.Stat(fallbackPath); statErr == nil {
+		archived := fallbackPath + "." + time.Now().Format("20060102-150405")
+		if errRename := os.Rename(fallbackPath, archived); errRename != nil {
+			return common.NewErrorf("Error archiving the database an earlier failed import left at %s: %v", fallbackPath, errRename)
 		}
+		logger.Warning("a database preserved by an earlier failed import was archived at ", archived)
 	}
 	// Move the current database to the fallback location
 	err = os.Rename(config.GetDBPath(), fallbackPath)
@@ -253,29 +310,51 @@ func ImportDB(file multipart.File) error {
 		return common.NewErrorf("Error backing up temporary db file: %v", err)
 	}
 
-	// Remove the temporary file before returning
-	defer os.Remove(fallbackPath)
+	// Removed only once the import has actually taken. On the two paths below
+	// where restoring it failed, this file is the operator's last copy of their
+	// data, and deleting it here would turn a failed rename into an
+	// unrecoverable one.
+	importDone := false
+	defer func() {
+		if importDone {
+			os.Remove(fallbackPath)
+		}
+	}()
 
 	// Move temp to DB path
 	err = os.Rename(tempPath, config.GetDBPath())
 	if err != nil {
 		errRename := os.Rename(fallbackPath, config.GetDBPath())
 		if errRename != nil {
-			return common.NewErrorf("Error moving db file and restoring fallback: %v", errRename)
+			return common.NewErrorf("Error moving db file and restoring fallback: %v -- the original database is kept at %s", errRename, fallbackPath)
 		}
 		return common.NewErrorf("Error moving db file: %v", err)
 	}
+	dbPathIsOriginal = false
 
-	// Migrate DB
-	migration.MigrateDb()
-	err = InitDB(config.GetDBPath())
+	// Migrate DB. A failed migration leaves the imported file half-repaired,
+	// so restore the fallback instead of booting on it.
+	err = migration.MigrateDb()
+	if err == nil {
+		err = InitDB(config.GetDBPath())
+	}
 	if err != nil {
+		// InitDB opens the pool before it can fail in AutoMigrate or initUser,
+		// and the rollback below renames over that very path -- which Windows
+		// refuses while this process still holds it open, making the rollback
+		// impossible rather than merely unlikely. Release it first.
+		if sqlDB, e := db.DB(); e == nil {
+			_ = sqlDB.Close()
+		}
 		errRename := os.Rename(fallbackPath, config.GetDBPath())
 		if errRename != nil {
-			return common.NewErrorf("Error migrating db and restoring fallback: %v", errRename)
+			return common.NewErrorf("Error migrating db and restoring fallback: %v -- the original database is kept at %s", errRename, fallbackPath)
 		}
+		dbPathIsOriginal = true
 		return common.NewErrorf("Error migrating db: %v", err)
 	}
+	dbReopened = true
+	importDone = true
 
 	// Restart app
 	err = SendSighup()
