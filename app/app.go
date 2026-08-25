@@ -3,6 +3,7 @@ package app
 import (
 	"log"
 
+	"github.com/shenaba/2s-ui/cmd/migration"
 	"github.com/shenaba/2s-ui/config"
 	"github.com/shenaba/2s-ui/core"
 	"github.com/shenaba/2s-ui/cronjob"
@@ -33,6 +34,18 @@ func (a *APP) Init() error {
 	log.Printf("%v %v", config.GetName(), config.GetVersion())
 
 	a.initLog()
+
+	// Data repairs from older releases run here, before the panel opens the
+	// database, on every start-up. The in-panel update button swaps the binary
+	// and restarts the service without ever calling `sui migrate`, so leaving
+	// this to the install script left every panel-updated instance unmigrated.
+	// Each restart path — self-update, systemd, Docker, manual — ends up
+	// executing this binary, so this one call covers all of them. A failure is
+	// logged and start-up continues: a data repair that cannot be applied must
+	// not keep the panel from booting.
+	if err := migration.MigrateDbQuietly(); err != nil {
+		logger.Warning("database migration failed: ", err)
+	}
 
 	err := database.InitDB(config.GetDBPath())
 	if err != nil {

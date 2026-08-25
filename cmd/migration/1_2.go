@@ -259,6 +259,9 @@ func migrateTls(db *gorm.DB) error {
 		tlsConfig[index].Client, _ = json.MarshalIndent(tlsClient, "", "  ")
 	}
 
+	if len(tlsConfig) == 0 {
+		return nil
+	}
 	return db.Save(&tlsConfig).Error
 }
 
@@ -288,6 +291,9 @@ func migrateClients(db *gorm.DB) error {
 			return err
 		}
 		oldClients[index].Inbounds, _ = json.Marshal(inbound_ids)
+	}
+	if len(oldClients) == 0 {
+		return nil
 	}
 	return db.Save(oldClients).Error
 }
