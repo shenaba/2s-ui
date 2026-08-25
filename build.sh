@@ -1,5 +1,12 @@
 #!/bin/sh
 
+# Abort on the first failure. Both copy steps below clear their target
+# before writing it, so a build that failed and was not noticed does not
+# just skip an update -- it removes the previous one and then links a
+# binary around whatever is left. For the subscriber dashboard that is the
+# committed fallback page, which ships looking like a finished feature.
+set -e
+
 cd frontend
 npm i
 npm run build

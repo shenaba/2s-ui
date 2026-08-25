@@ -265,3 +265,27 @@ func TestDashboardWithholdsProfileHeadersWhenDisabled(t *testing.T) {
 		t.Errorf("Profile-Title = %q, want the remark", got)
 	}
 }
+
+// NewSubHandler is the production entry point, and the only caller that reads
+// the embedded FS rather than a fixture. A bare checkout has no
+// dashboard/assets directory at all -- which is what CI and any from-source
+// build start from -- so registering against a missing one has to keep
+// working, and the fixture-driven tests above no longer touch that path.
+func TestNewSubHandlerRegistersOnABareCheckout(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	if err := NewSubHandler(engine.Group("/sub/")); err != nil {
+		t.Fatalf("NewSubHandler: %v", err)
+	}
+
+	// A name the FS cannot hold either way, so the assertion holds whether or
+	// not the dashboard happens to have been built into this tree.
+	w := httptest.NewRecorder()
+	engine.ServeHTTP(w, httptest.NewRequest("GET", "/sub/assets/not-a-real-bundle.js", nil))
+	if w.Code != 404 {
+		t.Errorf("missing asset over the embedded FS = %d, want 404", w.Code)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "" {
+		t.Errorf("404 must not be cacheable, got Cache-Control %q", got)
+	}
+}
