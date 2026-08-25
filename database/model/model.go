@@ -35,20 +35,8 @@ type User struct {
 	TwoFa bool `json:"twoFa" gorm:"->;-:migration"`
 }
 
-// LoginAttempt is the rate limiter's record for one identity -- a source IP or
-// a username, told apart by Scope. It lives in the DB rather than in memory
-// because a restart must not hand an attacker a fresh window, and a restart is
-// not rare here: operators do it on upgrade, and checkCoreJob can do it on its
-// own.
-//
-// One row per identity, updated in place, rather than one row per failure: the
-// window this enforces is the fixed one 3x-ui also settled on, and counting
-// rows would mean an unbounded table plus a COUNT on every login attempt.
 type LoginAttempt struct {
-	Id uint `json:"id" gorm:"primaryKey;autoIncrement"`
-	// "ip" or "user". Both are counted, so a spray across many usernames from
-	// one address and a spray from many addresses at one username each trip a
-	// limit on their own.
+	Id    uint   `json:"id" gorm:"primaryKey;autoIncrement"`
 	Scope string `json:"scope" gorm:"uniqueIndex:idx_login_attempt,priority:1"`
 	Key   string `json:"key" gorm:"uniqueIndex:idx_login_attempt,priority:2"`
 	// Failures counted since WindowStart. After a username ban is served,
