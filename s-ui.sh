@@ -1060,10 +1060,9 @@ ssl_cert_issue_CF() {
             
             LOGD "******Instructions for use******"
             LOGI "This Acme script requires the following data:"
-            LOGI "1.Cloudflare Registered e-mail"
-            LOGI "2.Cloudflare Global API Key"
-            LOGI "3.The domain name that has been resolved DNS to the current server by Cloudflare"
-            LOGI "4.The script applies for a certificate. The default installation path is /root/cert "
+            LOGI "1.Cloudflare API Token, or the legacy Global API Key together with its account e-mail"
+            LOGI "2.The domain name that has been resolved DNS to the current server by Cloudflare"
+            LOGI "3.The script applies for a certificate. The default installation path is ${certPath} "
             confirm "Confirmed?[y/n]" "y"
             if [ $? -eq 0 ]; then
                 if ! command -v ~/.acme.sh/acme.sh &>/dev/null; then
@@ -1087,15 +1086,39 @@ ssl_cert_issue_CF() {
                 read -p "Input your domain here: " CF_Domain
                 LOGD "Your domain name is set to: ${CF_Domain}"
 
+                CF_APIToken=""
                 CF_GlobalKey=""
                 CF_AccountEmail=""
-                LOGD "Please set the API key:"
-                read -p "Input your key here: " CF_GlobalKey
-                LOGD "Your API key is: ${CF_GlobalKey}"
+                LOGD "Please choose the Cloudflare authentication method:"
+                echo -e "${green}\t1.${plain} API Token (*recommended*)"
+                echo -e "${green}\t2.${plain} Global API Key + account e-mail (legacy)"
+                read -p "Enter your choice [1-2, default 1]: " cfAuthChoice
 
-                LOGD "Please set up registered email:"
-                read -p "Input your email here: " CF_AccountEmail
-                LOGD "Your registered email address is: ${CF_AccountEmail}"
+                if [[ $cfAuthChoice == "2" ]]; then
+                    LOGD "Please set the API key:"
+                    read -p "Input your key here: " CF_GlobalKey
+                    LOGD "Your API key is: ${CF_GlobalKey}"
+
+                    LOGD "Please set up registered email:"
+                    read -p "Input your email here: " CF_AccountEmail
+                    LOGD "Your registered email address is: ${CF_AccountEmail}"
+
+                    if [[ -z "${CF_GlobalKey}" || -z "${CF_AccountEmail}" ]]; then
+                        LOGE "API key and e-mail are both required, script exiting..."
+                        exit 1
+                    fi
+                else
+                    LOGI "Create the token at https://dash.cloudflare.com/profile/api-tokens with"
+                    LOGI "Zone -> DNS -> Edit and Zone -> Zone -> Read, restricted to this zone."
+                    LOGD "Please set the API token (input is hidden):"
+                    read -s -p "Input your token here: " CF_APIToken
+                    echo ""
+                    if [ -z "${CF_APIToken}" ]; then
+                        LOGE "API token is empty, script exiting..."
+                        exit 1
+                    fi
+                    LOGD "API token received."
+                fi
 
                 ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
                 if [ $? -ne 0 ]; then
@@ -1103,10 +1126,42 @@ ssl_cert_issue_CF() {
                     exit 1
                 fi
 
-                export CF_Key="${CF_GlobalKey}"
-                export CF_Email="${CF_AccountEmail}"
+                # acme.sh sources account.conf on every run, so an un-prefixed CF_Token line in
+                # there is a plain assignment landing on top of whatever we export, whichever
+                # method was picked. Nothing we can set here wins against it.
+                if grep -q "^CF_Token *=" ~/.acme.sh/account.conf 2>/dev/null; then
+                    LOGE "~/.acme.sh/account.conf assigns CF_Token directly. acme.sh sources that"
+                    LOGE "file, so that value would override the credential entered here. Remove"
+                    LOGE "the line and re-run."
+                    exit 1
+                fi
 
-                ~/.acme.sh/acme.sh --issue --dns dns_cf -d ${CF_Domain} -d *.${CF_Domain} $force_flag --log
+                # The menu loops in-process (this function ends in show_menu), so credentials
+                # exported by an earlier pass -- or by the operator's own shell -- are still set
+                # here. dns_cf.sh branches on whichever pair it finds first, so the unused one
+                # has to go, or it silently overrides the method just chosen.
+                if [ -n "${CF_APIToken}" ]; then
+                    unset CF_Key CF_Email
+                    export CF_Token="${CF_APIToken}"
+                else
+                    unset CF_Token
+                    # acme.sh keeps one account-wide Cloudflare credential and prefers a saved
+                    # token over any key, so a token from an earlier run would quietly be used
+                    # instead of the key just entered. Deleting it is not ours to do -- it is what
+                    # renews the certs already on this host, and an issuance that fails before
+                    # reaching the DNS API would leave no credential at all. Say so and stop.
+                    if grep -qE "^(SAVED_)?CF_Token *=" ~/.acme.sh/account.conf 2>/dev/null; then
+                        LOGE "acme.sh already has a Cloudflare API Token saved, and it takes"
+                        LOGE "precedence over the Global API Key. Re-run and pick the API Token"
+                        LOGE "method, or remove the CF_Token lines from ~/.acme.sh/account.conf"
+                        LOGE "-- that also re-points renewal of every Cloudflare cert on this host."
+                        exit 1
+                    fi
+                    export CF_Key="${CF_GlobalKey}"
+                    export CF_Email="${CF_AccountEmail}"
+                fi
+
+                ~/.acme.sh/acme.sh --issue --dns dns_cf -d "${CF_Domain}" -d "*.${CF_Domain}" $force_flag --log
                 if [ $? -ne 0 ]; then
                     LOGE "Certificate issuance failed, script exiting..."
                     exit 1
@@ -1120,7 +1175,7 @@ ssl_cert_issue_CF() {
                     exit 1
                 fi
 
-                ~/.acme.sh/acme.sh --installcert -d ${CF_Domain} -d *.${CF_Domain} \
+                ~/.acme.sh/acme.sh --installcert -d "${CF_Domain}" -d "*.${CF_Domain}" \
                     --fullchain-file ${certPath}/${CF_Domain}/fullchain.pem \
                     --key-file ${certPath}/${CF_Domain}/privkey.pem
 
