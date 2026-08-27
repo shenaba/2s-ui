@@ -9,6 +9,7 @@ import (
 	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/database/model"
 	"github.com/shenaba/2s-ui/logger"
+	"github.com/shenaba/2s-ui/service/notify"
 	"github.com/shenaba/2s-ui/util"
 	"github.com/shenaba/2s-ui/util/common"
 
@@ -706,6 +707,11 @@ func (s *ClientService) DepleteClients() ([]uint, []string, error) {
 	// settings pages but not saved yet. Both write paths below already mark
 	// LastUpdate exactly when they wrote something -- follow that same
 	// condition instead of announcing an idle round.
+	// Collected inside the transaction, published after it commits: an alert
+	// about a client that a rollback left enabled would simply be false.
+	var depleted []string
+	var expiring []expiringClient
+
 	seqBefore := lastUpdateSeq.Load()
 	tx := db.Begin()
 	defer func() {
@@ -718,6 +724,7 @@ func (s *ClientService) DepleteClients() ([]uint, []string, error) {
 			if err1 := db.Exec("PRAGMA wal_checkpoint(FULL)").Error; err1 != nil {
 				logger.Error("Error checkpointing WAL: ", err1.Error())
 			}
+			publishClientEvents(depleted, expiring)
 		} else {
 			tx.Rollback()
 		}
@@ -738,6 +745,7 @@ func (s *ClientService) DepleteClients() ([]uint, []string, error) {
 	for _, client := range clients {
 		logger.Debug("Client ", client.Name, " is going to be disabled")
 		enableChanged = append(enableChanged, client.Name)
+		depleted = append(depleted, client.Name)
 		var userInbounds []uint
 		json.Unmarshal(client.Inbounds, &userInbounds)
 		// Find changed inbounds
@@ -749,6 +757,15 @@ func (s *ClientService) DepleteClients() ([]uint, []string, error) {
 			Action:   "disable",
 			Obj:      json.RawMessage("\"" + client.Name + "\""),
 		})
+	}
+
+	// Warning about a client that has already run out is an obituary -- by then
+	// it is disconnected and the operator hears about it from the customer.
+	// This is the half that is actually actionable, and it reads the same rows
+	// one step earlier.
+	expiring, err = s.findExpiringClients(tx, dt)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Save changes
@@ -765,6 +782,87 @@ func (s *ClientService) DepleteClients() ([]uint, []string, error) {
 	}
 
 	return inboundIds, enableChanged, nil
+}
+
+// expiringClient is one client close to a limit, carrying whichever margin
+// tripped. Only the relevant one is set.
+type expiringClient struct {
+	Name      string
+	DaysLeft  int
+	BytesLeft int64
+}
+
+// findExpiringClients selects the clients approaching either limit, using the
+// thresholds from the notification settings. Both at zero disables the warning
+// entirely and skips the query.
+func (s *ClientService) findExpiringClients(tx *gorm.DB, dt int64) ([]expiringClient, error) {
+	var settingService SettingService
+	th := settingService.GetNotifyThresholds()
+
+	var conds []string
+	// Anything already over a limit belongs to the depletion pass above;
+	// without these two guards a client that expired days ago but still has
+	// traffic left would be reported as "expiring soon" every day forever.
+	args := []any{dt}
+	if th.ExpireDays > 0 {
+		conds = append(conds, "(expiry > 0 AND expiry < ?)")
+		args = append(args, dt+int64(th.ExpireDays)*86400)
+	}
+	if th.VolumeBytes > 0 {
+		conds = append(conds, "(volume > 0 AND up+down > volume - ?)")
+		args = append(args, th.VolumeBytes)
+	}
+	if len(conds) == 0 {
+		return nil, nil
+	}
+
+	where := "enable = true AND (expiry = 0 OR expiry > ?) AND (volume = 0 OR up+down < volume) AND (" +
+		strings.Join(conds, " OR ") + ")"
+
+	var rows []model.Client
+	if err := tx.Model(model.Client{}).Where(where, args...).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	out := make([]expiringClient, 0, len(rows))
+	for _, c := range rows {
+		e := expiringClient{Name: c.Name}
+		if c.Expiry > dt {
+			// Rounded up, so a client with six hours left reads "1 day" rather
+			// than "0 days", which would look like a bug.
+			e.DaysLeft = int((c.Expiry - dt + 86399) / 86400)
+		}
+		if c.Volume > 0 && c.Up+c.Down < c.Volume {
+			e.BytesLeft = c.Volume - c.Up - c.Down
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+// publishClientEvents reports one depletion pass.
+func publishClientEvents(depleted []string, expiring []expiringClient) {
+	if len(depleted) > 0 {
+		// One event for the whole pass: disabling fifty clients at once is one
+		// thing that happened, not fifty. A disabled client is not selected by
+		// the next pass, so there is nothing to repeat.
+		notify.Publish(notify.Event{
+			Kind:    notify.ClientDepleted,
+			Subject: "batch",
+			Data:    &notify.ClientData{Names: depleted},
+		})
+	}
+	// Warnings stay per client, because the useful part of the message is how
+	// much a *particular* client has left, which a combined list cannot say.
+	// The suppressor keys its 24h cooldown on the name, so a client sitting
+	// near its limit is reported once a day rather than once a minute.
+	for _, c := range expiring {
+		notify.Publish(notify.Event{
+			Kind:    notify.ClientExpiring,
+			Subject: c.Name,
+			Data:    &notify.ClientData{DaysLeft: c.DaysLeft, BytesLeft: c.BytesLeft},
+		})
+	}
 }
 
 // ResetClients applies the per-client periodic reset. It returns the affected

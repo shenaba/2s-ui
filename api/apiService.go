@@ -14,6 +14,7 @@ import (
 	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/logger"
 	"github.com/shenaba/2s-ui/service"
+	"github.com/shenaba/2s-ui/service/notify"
 	"github.com/shenaba/2s-ui/util"
 	"github.com/shenaba/2s-ui/util/common"
 
@@ -334,10 +335,38 @@ func (a *ApiService) Login(c *gin.Context) {
 	}
 	if err != nil {
 		a.LoginGuardService.RecordFailure(remoteIP, username)
+		// Asked again after recording rather than before: this request already
+		// cleared the ban check at the top of the function, so a ban standing
+		// now is one this very attempt triggered. That distinction is what
+		// separates "someone mistyped" from "someone is working through a
+		// list", and it costs one indexed lookup on a path the limiter already
+		// caps.
+		if wait := a.LoginGuardService.BanRemaining(remoteIP, username); wait > 0 {
+			notify.Publish(notify.Event{
+				Kind:    notify.LoginBanned,
+				Subject: remoteIP,
+				Data: &notify.LoginData{
+					Username:   username,
+					IP:         remoteIP,
+					BanMinutes: int((wait + time.Minute - 1) / time.Minute),
+				},
+			})
+		} else {
+			notify.Publish(notify.Event{
+				Kind:    notify.LoginFailed,
+				Subject: remoteIP,
+				Data:    &notify.LoginData{Username: username, IP: remoteIP, Failures: 1},
+			})
+		}
 		jsonMsg(c, "", err)
 		return
 	}
 	a.LoginGuardService.RecordSuccess(remoteIP, username)
+	notify.Publish(notify.Event{
+		Kind:    notify.LoginSuccess,
+		Subject: username,
+		Data:    &notify.LoginData{Username: username, IP: remoteIP},
+	})
 
 	sessionMaxAge, err := a.SettingService.GetSessionMaxAge()
 	if err != nil {
@@ -559,6 +588,22 @@ func (a *ApiService) TestAcme(c *gin.Context) {
 	domain := c.Request.FormValue("domain")
 	email := c.Request.FormValue("email")
 	if err := a.ConfigService.TestAcme(domain, email); err != nil {
+		pureJsonMsg(c, false, err.Error())
+		return
+	}
+	pureJsonMsg(c, true, "")
+}
+
+// TestNotify sends one message through every configured notification channel.
+//
+// It answers with the failure text rather than a translated action name,
+// following TestAcme: "telegram: chat not found" is the entire value of
+// pressing the button, and an i18n key cannot carry it.
+//
+// It tests what is saved, not what is on screen. The credentials are write-only
+// (GetAllSetting strips them), so the form has no token to submit.
+func (a *ApiService) TestNotify(c *gin.Context) {
+	if err := notify.TestDeliver(a.SettingService.GetNotifyConfig()); err != nil {
 		pureJsonMsg(c, false, err.Error())
 		return
 	}

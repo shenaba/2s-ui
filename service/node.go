@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/database/model"
 	"github.com/shenaba/2s-ui/logger"
+	"github.com/shenaba/2s-ui/service/notify"
 	"github.com/shenaba/2s-ui/util/common"
 
 	"gorm.io/gorm"
@@ -283,6 +285,74 @@ func (s *NodeService) RefreshAll() {
 				logger.Warning("nodes: persist last_seen failed: ", err)
 			}
 		}
+	}
+
+	s.notifyStatuses(nodes, newStatuses)
+}
+
+// nodeFailStreak counts consecutive non-online probes per node.
+//
+// Debouncing has to happen here rather than in the notifier, which sees events
+// but not the probe cadence behind them: at 5s a single dropped packet turns
+// into a down alert and an up alert a few seconds later, and a node on a
+// lossy link would do that all day. Guarded by nodeStatusMu, the same lock the
+// snapshot uses -- RefreshAll is the only writer, and NodesJob's TryLock keeps
+// two passes from overlapping anyway.
+var nodeFailStreak = map[uint]int{}
+
+// notifyStatuses turns this pass's probe results into node events.
+//
+// It publishes unconditionally on the up side and past the streak threshold on
+// the down side; deciding whether either is *new* is the suppressor's job, so
+// the two layers do not have to agree on what "already reported" means.
+func (s *NodeService) notifyStatuses(nodes []*model.Node, statuses map[uint]NodeStatus) {
+	if len(statuses) == 0 {
+		return
+	}
+	var settingService SettingService
+	flap := settingService.GetNotifyThresholds().NodeFlap
+	if flap < 1 {
+		flap = 1
+	}
+
+	names := make(map[uint]string, len(nodes))
+	for _, n := range nodes {
+		names[n.Id] = n.Name
+	}
+
+	nodeStatusMu.Lock()
+	defer nodeStatusMu.Unlock()
+	// Drop streaks for nodes that are gone or disabled, so the map cannot grow
+	// past the node count.
+	for id := range nodeFailStreak {
+		if _, live := statuses[id]; !live {
+			delete(nodeFailStreak, id)
+		}
+	}
+
+	for id, status := range statuses {
+		name := names[id]
+		if name == "" {
+			name = "#" + strconv.FormatUint(uint64(id), 10)
+		}
+		if status.State == "online" {
+			delete(nodeFailStreak, id)
+			notify.Publish(notify.Event{
+				Kind:    notify.NodeUp,
+				Subject: name,
+				Data:    &notify.NodeData{LatencyMs: status.Latency},
+			})
+			continue
+		}
+		nodeFailStreak[id]++
+		if nodeFailStreak[id] < flap {
+			continue
+		}
+		notify.Publish(notify.Event{
+			Kind:    notify.NodeDown,
+			Subject: name,
+			Data:    &notify.NodeData{Err: status.Error},
+		})
 	}
 }
 

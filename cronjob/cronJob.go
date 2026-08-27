@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/shenaba/2s-ui/logger"
+	"github.com/shenaba/2s-ui/service"
 
 	"github.com/robfig/cron/v3"
 )
@@ -55,6 +56,22 @@ func (c *CronJob) Start(loc *time.Location, trafficAge int, statsBucketSeconds i
 		c.cron.AddJob("@every 1m", NewNodeTrafficJob())
 		// Safety net: reconcile every online node to repair silent node-side drift
 		c.cron.AddJob("@every 1h", NewNodeReconcileJob())
+		// Sample CPU/memory for threshold alerts (no-op unless a threshold is set)
+		c.cron.AddJob("@every 1m", NewCheckSystemJob())
+		// Daily database backup to Telegram (no-op unless switched on)
+		c.cron.AddJob("@daily", NewNotifyBackupJob())
+		// Periodic status digest, only when a valid cron spec is configured.
+		// Read here rather than passed in: it is a notification setting, and
+		// like globalReset a cron entry's schedule is fixed at registration, so
+		// changing it needs a panel restart either way.
+		var settingService service.SettingService
+		if spec := settingService.GetNotifyReportSpec(); spec != "" && spec != "off" {
+			if _, err := cronParser.Parse(spec); err != nil {
+				logger.Warning("invalid notifyReport cron spec <", spec, ">: ", err)
+			} else {
+				c.cron.AddJob(spec, NewNotifyReportJob())
+			}
+		}
 		// database WAL checkpoint
 		c.cron.AddJob("@every 10m", NewWALCheckpointJob())
 	}()

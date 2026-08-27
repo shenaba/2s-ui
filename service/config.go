@@ -13,6 +13,7 @@ import (
 	"github.com/shenaba/2s-ui/database/model"
 	"github.com/shenaba/2s-ui/logger"
 	"github.com/shenaba/2s-ui/network"
+	"github.com/shenaba/2s-ui/service/notify"
 	"github.com/shenaba/2s-ui/util/common"
 )
 
@@ -127,6 +128,9 @@ func (s *ConfigService) StartCore() error {
 	logger.Info("starting core")
 	rawConfig, err := s.GetConfig("")
 	if err != nil {
+		// A config that cannot even be assembled fails the same way as one the
+		// core rejects, and looks identical from outside the panel.
+		notify.Publish(notify.Event{Kind: notify.CoreCrash, Data: &notify.CoreData{Err: err.Error()}})
 		return err
 	}
 	err = corePtr.Start(*rawConfig)
@@ -135,10 +139,25 @@ func (s *ConfigService) StartCore() error {
 		lastStartFailTime = time.Now()
 		startCoreMu.Unlock()
 		logger.Error("start sing-box err:", err.Error())
+		// checkCoreJob retries every 5s, so this is published on every attempt
+		// for as long as the core stays down. The suppressor only lets the
+		// first one through, and only lets the next one through after a
+		// recovery has been reported in between.
+		notify.Publish(notify.Event{Kind: notify.CoreCrash, Data: &notify.CoreData{Err: err.Error()}})
 		return err
 	}
 	logger.Info("sing-box started")
+	// Reached only on an actual start: the guard at the top of this function
+	// returns early when the core is already running, so a healthy panel does
+	// not publish this every 5s.
+	notify.Publish(notify.Event{Kind: notify.CoreUp})
 	return nil
+}
+
+// CoreRunning reports whether the embedded sing-box is up. corePtr is package
+// state, so callers outside service (the scheduled report) need this.
+func (s *ConfigService) CoreRunning() bool {
+	return corePtr != nil && corePtr.IsRunning()
 }
 
 func (s *ConfigService) RestartCore() error {

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/database/model"
@@ -316,5 +317,108 @@ func TestDepleteClientsMarksOnlyRealChanges(t *testing.T) {
 	}
 	if stillEnabled {
 		t.Error("over-quota client was not disabled")
+	}
+}
+
+// findExpiringClients decides who gets a warning before they are cut off, and
+// its selection is all boundary conditions: one sign wrong and it either warns
+// about clients that already ran out (the depletion pass owns those) or misses
+// the ones that are about to.
+func TestFindExpiringClients(t *testing.T) {
+	logger.InitLogger(logging.CRITICAL)
+
+	dir := t.TempDir()
+	if err := database.InitDB(filepath.Join(dir, "expiring.db")); err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.CloseDBForTest(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	})
+	db := database.GetDB()
+
+	// Warn 3 days ahead and with 5 GiB left.
+	for key, value := range map[string]string{
+		"notifyExpireDays": "3",
+		"notifyVolumeGB":   "5",
+	} {
+		if err := db.Create(&model.Setting{Key: key, Value: value}).Error; err != nil {
+			t.Fatalf("seed setting %s: %v", key, err)
+		}
+	}
+
+	const gib = int64(1) << 30
+	now := time.Now().Unix()
+	day := int64(86400)
+
+	seed := func(c model.Client) {
+		t.Helper()
+		c.Enable = c.Enable || c.Name == ""
+		c.Inbounds = json.RawMessage(`[]`)
+		c.Links = json.RawMessage(`[]`)
+		c.Config = json.RawMessage(`{}`)
+		if err := db.Create(&c).Error; err != nil {
+			t.Fatalf("seed %s: %v", c.Name, err)
+		}
+	}
+
+	seed(model.Client{Name: "expires-tomorrow", Enable: true, Expiry: now + day})
+	seed(model.Client{Name: "expires-in-two-days", Enable: true, Expiry: now + 2*day})
+	seed(model.Client{Name: "low-traffic", Enable: true, Volume: 100 * gib, Up: 96 * gib, Down: 0})
+	// Excluded: the depletion pass owns everything already over a limit.
+	seed(model.Client{Name: "already-expired", Enable: true, Expiry: now - day})
+	seed(model.Client{Name: "already-over-quota", Enable: true, Volume: 10 * gib, Up: 11 * gib})
+	// Excluded: outside both windows, unlimited, or switched off.
+	seed(model.Client{Name: "expires-next-month", Enable: true, Expiry: now + 30*day})
+	seed(model.Client{Name: "plenty-of-traffic", Enable: true, Volume: 100 * gib, Up: gib})
+	seed(model.Client{Name: "unlimited", Enable: true})
+	seed(model.Client{Name: "disabled", Enable: false, Expiry: now + day})
+
+	var svc ClientService
+	got, err := svc.findExpiringClients(db, now)
+	if err != nil {
+		t.Fatalf("findExpiringClients: %v", err)
+	}
+
+	byName := make(map[string]expiringClient, len(got))
+	for _, c := range got {
+		byName[c.Name] = c
+	}
+	want := []string{"expires-tomorrow", "expires-in-two-days", "low-traffic"}
+	for _, name := range want {
+		if _, ok := byName[name]; !ok {
+			t.Errorf("%s should have been warned about", name)
+		}
+	}
+	if len(byName) != len(want) {
+		t.Errorf("warned about %d clients, want %d: %v", len(byName), len(want), byName)
+	}
+
+	// A client with just under a full day left has to read as 1 day, not 0 --
+	// "expires in 0 days" looks like a bug rather than a warning.
+	seed(model.Client{Name: "expires-in-six-hours", Enable: true, Expiry: now + 6*3600})
+	got, err = svc.findExpiringClients(db, now)
+	if err != nil {
+		t.Fatalf("findExpiringClients (rounding): %v", err)
+	}
+	for _, c := range got {
+		if c.Name == "expires-in-six-hours" && c.DaysLeft != 1 {
+			t.Errorf("six hours left rendered as %d days, want 1", c.DaysLeft)
+		}
+	}
+
+	// Both thresholds at zero turns the warning off rather than selecting
+	// everything.
+	if err := db.Model(model.Setting{}).Where("key IN ?", []string{"notifyExpireDays", "notifyVolumeGB"}).
+		Update("value", "0").Error; err != nil {
+		t.Fatalf("zero the thresholds: %v", err)
+	}
+	got, err = svc.findExpiringClients(db, now)
+	if err != nil {
+		t.Fatalf("findExpiringClients (disabled): %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("thresholds at zero still warned about %d clients", len(got))
 	}
 }

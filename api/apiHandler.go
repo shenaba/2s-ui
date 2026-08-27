@@ -71,6 +71,8 @@ func (a *APIHandler) postHandler(c *gin.Context) {
 		a.ApiService.SubConvert(c)
 	case "testAcme":
 		a.ApiService.TestAcme(c)
+	case "testNotify":
+		a.ApiService.TestNotify(c)
 	case "issueCert":
 		a.ApiService.IssueCert(c)
 	case "syncNginxProxy":

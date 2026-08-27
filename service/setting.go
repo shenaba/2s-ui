@@ -85,7 +85,46 @@ var defaultValueMap = map[string]string{
 	"globalResetLast":    "0",
 	"config":             defaultConfig,
 	"version":            config.GetVersion(),
+
+	// Notifications. notifyEvents is a comma-separated list of notify.Kind
+	// values -- the kinds themselves are documented in service/notify/event.go,
+	// and renaming one there silently turns it off for everyone who had it on.
+	//
+	// The default set covers what an operator cannot find out any other way
+	// without watching the panel: a node or the core going down, a client
+	// running out, and someone getting locked out of the login. Successful
+	// logins are on too, because a sign-in the operator did not perform is the
+	// single most useful thing this can tell them. The chatty ones (every
+	// individual failed login, CPU and memory thresholds) are off by default.
+	"notifyEnable":       "false",
+	"notifyProxy":        "",
+	"notifyLang":         "en",
+	"notifyEvents":       "node.down,node.up,core.crash,core.up,client.depleted,client.expiring,login.success,login.banned",
+	"notifyExpireDays":   "3",
+	"notifyVolumeGB":     "5",
+	"notifyCpu":          "80",
+	"notifyMemory":       "80",
+	"notifyNodeFlap":     "3",
+	"notifyTgToken":      "",
+	"notifyTgChatId":     "",
+	"notifyTgApiServer":  "",
+	"notifyWebhookUrl":   "",
+	"notifySmtpHost":     "",
+	"notifySmtpPort":     "587",
+	"notifySmtpUser":     "",
+	"notifySmtpPass":     "",
+	"notifySmtpFrom":     "",
+	"notifySmtpTo":       "",
+	"notifySmtpSecurity": "starttls",
+	"notifyBackup":       "false",
+	"notifyReport":       "",
 }
+
+// notifySecrets are the notification settings that must never be read back out
+// of the panel, following the same rule as `secret`. Both are write-only in the
+// UI: GetAllSetting strips them and reports a has* boolean instead, and Save
+// skips them when they arrive empty so a plain save cannot wipe one.
+var notifySecrets = []string{"notifyTgToken", "notifySmtpPass"}
 
 type SettingService struct {
 }
@@ -120,7 +159,27 @@ func (s *SettingService) GetAllSetting() (*map[string]string, error) {
 	// Internal bookkeeping, advanced automatically by the reset job
 	delete(allSetting, "globalResetLast")
 
+	// Notification credentials go the same way, but silently dropping them
+	// would leave the settings page showing an empty field, which reads as "not
+	// configured" and invites the operator to retype a token they still have.
+	// Report whether one is set instead.
+	for _, key := range notifySecrets {
+		if allSetting[key] != "" {
+			allSetting[hasKey(key)] = "true"
+		}
+		delete(allSetting, key)
+	}
+
 	return &allSetting, nil
+}
+
+// hasKey is the companion flag for a write-only setting: notifyTgToken ->
+// hasNotifyTgToken.
+func hasKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	return "has" + strings.ToUpper(key[:1]) + key[1:]
 }
 
 func (s *SettingService) ResetSettings() error {
@@ -584,6 +643,18 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 	webNginx := settings["webNginx"] == "true"
 	subNginx := settings["subNginx"] == "true"
 	for key, obj := range settings {
+		// A write-only credential arrives empty on every save that did not
+		// retype it -- GetAllSetting never sent the stored value out, so the
+		// form has nothing to send back. Writing that through would clear the
+		// token the first time the operator changed any other field on the
+		// page. Empty means "leave it alone"; to change one, type the new
+		// value.
+		if obj == "" && isNotifySecret(key) {
+			continue
+		}
+		if isNotifySecretFlag(key) {
+			continue
+		}
 		if key == "webTrustedProxies" {
 			if _, err = parseTrustedProxies(obj); err != nil {
 				return err
