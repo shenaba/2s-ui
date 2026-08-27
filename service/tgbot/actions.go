@@ -321,13 +321,16 @@ func clientDetail(c model.Client) string {
 	var b strings.Builder
 	b.WriteString(clientLine(c))
 	if c.Expiry > 0 {
-		b.WriteString("\nExpires: " + time.Unix(c.Expiry, 0).Format("2006-01-02 15:04"))
+		b.WriteString("\n" + t("client.expires", p("when", timeText(c.Expiry))))
 	} else {
 		b.WriteString("\n" + t("client.never", nil))
 	}
 	b.WriteString("\n" + t("client.upDown", p("up", humanBytes(c.Up), "down", humanBytes(c.Down))))
 	if c.Group != "" {
 		b.WriteString("\n" + t("client.group", p("group", c.Group)))
+	}
+	if c.TgId != 0 {
+		b.WriteString("\n" + t("client.telegram", p("id", strconv.FormatInt(c.TgId, 10))))
 	}
 	if c.Desc != "" {
 		b.WriteString("\n" + c.Desc)

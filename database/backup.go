@@ -21,6 +21,19 @@ import (
 	"gorm.io/gorm"
 )
 
+// backupBatchSize bounds how many rows go into one INSERT.
+//
+// SQLite caps a statement at SQLITE_MAX_VARIABLE_NUMBER bindings -- 32766 on
+// 3.32 and later, 999 before that. GORM's Save binds every column of every
+// row in one statement, so a table with a few thousand rows blows past it and
+// the whole export fails with "too many SQL variables". stats is the table
+// that gets there: at six columns and a row per resource per bucket, a panel
+// running for a few months has tens of thousands.
+//
+// 500 rows leaves room for the widest table here (Client, ~24 columns) even on
+// the old 999 limit
+const backupBatchSize = 500
+
 func GetDb(exclude string) ([]byte, error) {
 	exclude_changes, exclude_stats := false, false
 	for _, table := range strings.Split(exclude, ",") {
@@ -103,49 +116,49 @@ func GetDb(exclude string) ([]byte, error) {
 	if err := db.Model(&model.Setting{}).Scan(&settings).Error; err != nil {
 		return nil, err
 	} else if len(settings) > 0 {
-		if err := backupDb.Save(settings).Error; err != nil {
+		if err := backupDb.CreateInBatches(settings, backupBatchSize).Error; err != nil {
 			return nil, err
 		}
 	}
 	if err := db.Model(&model.Tls{}).Scan(&tls).Error; err != nil {
 		return nil, err
 	} else if len(tls) > 0 {
-		if err := backupDb.Save(tls).Error; err != nil {
+		if err := backupDb.CreateInBatches(tls, backupBatchSize).Error; err != nil {
 			return nil, err
 		}
 	}
 	if err := db.Model(&model.Inbound{}).Scan(&inbound).Error; err != nil {
 		return nil, err
 	} else if len(inbound) > 0 {
-		if err := backupDb.Save(inbound).Error; err != nil {
+		if err := backupDb.CreateInBatches(inbound, backupBatchSize).Error; err != nil {
 			return nil, err
 		}
 	}
 	if err := db.Model(&model.Outbound{}).Scan(&outbound).Error; err != nil {
 		return nil, err
 	} else if len(outbound) > 0 {
-		if err := backupDb.Save(outbound).Error; err != nil {
+		if err := backupDb.CreateInBatches(outbound, backupBatchSize).Error; err != nil {
 			return nil, err
 		}
 	}
 	if err := db.Model(&model.Service{}).Scan(&services).Error; err != nil {
 		return nil, err
 	} else if len(services) > 0 {
-		if err := backupDb.Save(services).Error; err != nil {
+		if err := backupDb.CreateInBatches(services, backupBatchSize).Error; err != nil {
 			return nil, err
 		}
 	}
 	if err := db.Model(&model.Endpoint{}).Scan(&endpoint).Error; err != nil {
 		return nil, err
 	} else if len(endpoint) > 0 {
-		if err := backupDb.Save(endpoint).Error; err != nil {
+		if err := backupDb.CreateInBatches(endpoint, backupBatchSize).Error; err != nil {
 			return nil, err
 		}
 	}
 	if err := db.Model(&model.User{}).Scan(&users).Error; err != nil {
 		return nil, err
 	} else if len(users) > 0 {
-		if err := backupDb.Save(users).Error; err != nil {
+		if err := backupDb.CreateInBatches(users, backupBatchSize).Error; err != nil {
 			return nil, err
 		}
 	}
@@ -155,14 +168,14 @@ func GetDb(exclude string) ([]byte, error) {
 	if err := db.Model(&model.Tokens{}).Scan(&tokens).Error; err != nil {
 		return nil, err
 	} else if len(tokens) > 0 {
-		if err := backupDb.Save(tokens).Error; err != nil {
+		if err := backupDb.CreateInBatches(tokens, backupBatchSize).Error; err != nil {
 			return nil, err
 		}
 	}
 	if err := db.Model(&model.Client{}).Scan(&clients).Error; err != nil {
 		return nil, err
 	} else if len(clients) > 0 {
-		if err := backupDb.Save(clients).Error; err != nil {
+		if err := backupDb.CreateInBatches(clients, backupBatchSize).Error; err != nil {
 			return nil, err
 		}
 	}
@@ -174,7 +187,7 @@ func GetDb(exclude string) ([]byte, error) {
 	if err := db.Model(&model.Node{}).Scan(&nodes).Error; err != nil {
 		return nil, err
 	} else if len(nodes) > 0 {
-		if err := backupDb.Save(nodes).Error; err != nil {
+		if err := backupDb.CreateInBatches(nodes, backupBatchSize).Error; err != nil {
 			return nil, err
 		}
 	}
@@ -182,7 +195,7 @@ func GetDb(exclude string) ([]byte, error) {
 	if err := db.Model(&model.Cert{}).Scan(&certs).Error; err != nil {
 		return nil, err
 	} else if len(certs) > 0 {
-		if err := backupDb.Save(certs).Error; err != nil {
+		if err := backupDb.CreateInBatches(certs, backupBatchSize).Error; err != nil {
 			return nil, err
 		}
 	}
@@ -192,7 +205,7 @@ func GetDb(exclude string) ([]byte, error) {
 			return nil, err
 		}
 		if len(stats) > 0 {
-			if err := backupDb.Save(stats).Error; err != nil {
+			if err := backupDb.CreateInBatches(stats, backupBatchSize).Error; err != nil {
 				return nil, err
 			}
 		}
@@ -202,7 +215,7 @@ func GetDb(exclude string) ([]byte, error) {
 			return nil, err
 		}
 		if len(changes) > 0 {
-			if err := backupDb.Save(changes).Error; err != nil {
+			if err := backupDb.CreateInBatches(changes, backupBatchSize).Error; err != nil {
 				return nil, err
 			}
 		}

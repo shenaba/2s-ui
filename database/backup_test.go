@@ -216,3 +216,101 @@ func seedEveryTable(t *testing.T) {
 		}
 	}
 }
+
+// GORM's Save binds every column of every row in a single INSERT, so a table
+// past SQLITE_MAX_VARIABLE_NUMBER / columns rows fails the whole export with
+// "too many SQL variables". stats reaches that on its own: six columns and a
+// row per resource per bucket, so a panel running a few months has tens of
+// thousands. A real one had 10475 rows and could not back up at all -- the CLI,
+// the panel button and the bot all hit it.
+//
+// The count here is deliberately above 32766/6 so it fails on a modern SQLite,
+// not just on the pre-3.32 limit of 999.
+func TestGetDbHandlesTablesPastTheVariableLimit(t *testing.T) {
+	logger.InitLogger(logging.ERROR)
+	dir := t.TempDir()
+	t.Setenv("SUI_DB_FOLDER", dir)
+
+	if err := InitDB(config.GetDBPath()); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := CloseDBForTest(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	})
+
+	const rows = 6000
+	stats := make([]model.Stats, 0, rows)
+	now := time.Now().Unix()
+	for i := 0; i < rows; i++ {
+		stats = append(stats, model.Stats{
+			// The unique index is (resource, tag, date_time, direction), so vary
+			// the timestamp to keep every row distinct.
+			DateTime: now + int64(i),
+			Resource: "user",
+			Tag:      "client-1",
+			Traffic:  int64(i),
+		})
+	}
+	if err := GetDB().CreateInBatches(stats, 500).Error; err != nil {
+		t.Fatalf("seed stats: %v", err)
+	}
+
+	raw, err := GetDb("")
+	if err != nil {
+		t.Fatalf("GetDb with %d stats rows: %v", rows, err)
+	}
+
+	path := filepath.Join(dir, "big.db")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write backup: %v", err)
+	}
+	backupDb, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open backup: %v", err)
+	}
+	defer func() {
+		if sqlDB, e := backupDb.DB(); e == nil {
+			sqlDB.Close()
+		}
+	}()
+
+	var got int64
+	if err := backupDb.Raw("SELECT COUNT(*) FROM stats").Scan(&got).Error; err != nil {
+		t.Fatalf("count stats in the backup: %v", err)
+	}
+	if got != rows {
+		t.Errorf("backup has %d stats rows, want %d", got, rows)
+	}
+
+	// exclude=stats is the documented escape hatch; it must still work, and it
+	// must not take anything else with it.
+	raw, err = GetDb("stats")
+	if err != nil {
+		t.Fatalf("GetDb(exclude=stats): %v", err)
+	}
+	path2 := filepath.Join(dir, "nostats.db")
+	if err := os.WriteFile(path2, raw, 0o600); err != nil {
+		t.Fatalf("write second backup: %v", err)
+	}
+	db2, err := gorm.Open(sqlite.Open(path2), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open second backup: %v", err)
+	}
+	defer func() {
+		if sqlDB, e := db2.DB(); e == nil {
+			sqlDB.Close()
+		}
+	}()
+	if err := db2.Raw("SELECT COUNT(*) FROM stats").Scan(&got).Error; err != nil {
+		t.Fatalf("count stats in the excluded backup: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("exclude=stats still copied %d rows", got)
+	}
+	var users int64
+	if err := db2.Raw("SELECT COUNT(*) FROM users").Scan(&users).Error; err != nil || users == 0 {
+		t.Errorf("exclude=stats dropped the users table too (count=%d, err=%v)", users, err)
+	}
+}
