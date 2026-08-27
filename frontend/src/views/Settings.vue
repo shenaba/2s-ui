@@ -224,6 +224,96 @@
       </div>
     </SettingsGroup>
 
+    <!-- ===================== 通知 ===================== -->
+    <SettingsGroup v-else-if="tab === 'notify'" grid>
+      <ToggleRow class="sg-span" v-model="notifyEnable"
+                 :label="$t('setting.notifyEnable')" :desc="$t('setting.notifyEnableDesc')" />
+
+      <template v-if="notifyEnable">
+        <SectionLabel class="sg-span notify-section">{{ $t('setting.notifyEvents') }}</SectionLabel>
+        <div class="sg-span notify-kinds">
+          <label v-for="k in notifyKinds" :key="k.value" class="notify-kind"
+                 @click.prevent="toggleNotifyEvent(k.value)">
+            <Toggle :model-value="hasNotifyEvent(k.value)" style="pointer-events: none;" />
+            <span>{{ k.title }}</span>
+          </label>
+        </div>
+
+        <SRow :label="$t('setting.notifyLang')" :hint="$t('setting.notifyLangHint')">
+          <Select v-model="settings.notifyLang">
+            <option v-for="l in notifyLangs" :key="l.value" :value="l.value">{{ l.title }}</option>
+          </Select>
+        </SRow>
+        <SRow :label="$t('setting.notifyProxy')" :hint="$t('setting.notifyProxyHint')">
+          <input class="input mono" v-model="settings.notifyProxy" placeholder="socks5://127.0.0.1:1080" />
+        </SRow>
+
+        <SectionLabel class="sg-span notify-section">{{ $t('setting.notifyThresholds') }}</SectionLabel>
+        <SRow :label="$t('setting.notifyExpireDays')" :hint="$t('setting.notifyZeroOff')">
+          <input class="input mono" type="number" min="0" v-model.number="notifyExpireDays" />
+        </SRow>
+        <SRow :label="$t('setting.notifyVolumeGB')" :hint="$t('setting.notifyZeroOff')">
+          <input class="input mono" type="number" min="0" v-model.number="notifyVolumeGB" />
+        </SRow>
+        <SRow :label="$t('setting.notifyCpu')" :hint="$t('setting.notifyZeroOff')">
+          <input class="input mono" type="number" min="0" max="100" v-model.number="notifyCpu" />
+        </SRow>
+        <SRow :label="$t('setting.notifyMemory')" :hint="$t('setting.notifyZeroOff')">
+          <input class="input mono" type="number" min="0" max="100" v-model.number="notifyMemory" />
+        </SRow>
+        <SRow :label="$t('setting.notifyNodeFlap')" :hint="$t('setting.notifyNodeFlapHint')">
+          <input class="input mono" type="number" min="1" v-model.number="notifyNodeFlap" />
+        </SRow>
+
+        <SectionLabel class="sg-span notify-section">Telegram</SectionLabel>
+        <SRow :label="$t('setting.notifyTgToken')" :hint="tgTokenHint">
+          <input class="input mono" type="password" autocomplete="new-password"
+                 v-model="settings.notifyTgToken" placeholder="123456:ABC-DEF…" />
+        </SRow>
+        <SRow :label="$t('setting.notifyTgChatId')" :hint="$t('setting.notifyListHint')">
+          <input class="input mono" v-model="settings.notifyTgChatId" placeholder="123456789,987654321" />
+        </SRow>
+        <SRow :label="$t('setting.notifyTgApiServer')" :hint="$t('setting.notifyTgApiServerHint')">
+          <input class="input mono" v-model="settings.notifyTgApiServer" placeholder="https://api.telegram.org" />
+        </SRow>
+
+        <SectionLabel class="sg-span notify-section">Webhook</SectionLabel>
+        <SRow :label="$t('setting.notifyWebhookUrl')" :hint="$t('setting.notifyWebhookHint')">
+          <input class="input mono" v-model="settings.notifyWebhookUrl" placeholder="https://example.com/hook" />
+        </SRow>
+
+        <SectionLabel class="sg-span notify-section">SMTP</SectionLabel>
+        <SRow :label="$t('setting.notifySmtpHost')">
+          <input class="input mono" v-model="settings.notifySmtpHost" placeholder="smtp.example.com" />
+        </SRow>
+        <SRow :label="$t('setting.port')">
+          <input class="input mono" type="number" min="1" max="65535" v-model.number="notifySmtpPort" />
+        </SRow>
+        <SRow :label="$t('setting.notifySmtpSecurity')">
+          <Select v-model="settings.notifySmtpSecurity">
+            <option v-for="s in smtpSecurities" :key="s" :value="s">{{ s }}</option>
+          </Select>
+        </SRow>
+        <SRow :label="$t('setting.notifySmtpUser')">
+          <input class="input mono" v-model="settings.notifySmtpUser" autocomplete="off" />
+        </SRow>
+        <SRow :label="$t('setting.notifySmtpPass')" :hint="smtpPassHint">
+          <input class="input mono" type="password" autocomplete="new-password" v-model="settings.notifySmtpPass" />
+        </SRow>
+        <SRow :label="$t('setting.notifySmtpFrom')">
+          <input class="input mono" v-model="settings.notifySmtpFrom" placeholder="2s-ui@example.com" />
+        </SRow>
+        <SRow :label="$t('setting.notifySmtpTo')" :hint="$t('setting.notifyListHint')">
+          <input class="input mono" v-model="settings.notifySmtpTo" placeholder="admin@example.com" />
+        </SRow>
+
+        <div class="sg-span notify-test">
+          <Btn sm :disabled="notifyTesting" @click="testNotify">{{ $t('setting.notifyTest') }}</Btn>
+          <span class="notify-test-hint">{{ $t('setting.notifyTestHint') }}</span>
+        </div>
+      </template>
+    </SettingsGroup>
+
     <!-- ===================== Clash sub ===================== -->
     <SettingsGroup v-else>
       <div style="font-size: 12.5px; color: var(--text-3); padding: 12px 0 14px;">{{ $t('ui.clashExtDesc') }}</div>
@@ -300,6 +390,7 @@ import Field from '@/components/ui/Field.vue'
 import ChipSelect from '@/components/ui/ChipSelect.vue'
 import SettingsGroup from '@/components/ui/SettingsGroup.vue'
 import SRow from '@/components/ui/SRow.vue'
+import SectionLabel from '@/components/ui/SectionLabel.vue'
 import ToggleRow from '@/components/ui/ToggleRow.vue'
 import DomainInput from '@/components/ui/DomainInput.vue'
 import CertsPanel from '@/components/settings/CertsPanel.vue'
@@ -318,6 +409,7 @@ const tabItems = computed((): [string, string][] => [
   ['sub', i18n.global.t('setting.sub')],
   ['jsonSub', i18n.global.t('setting.jsonSub')],
   ['clashSub', i18n.global.t('setting.clashSub')],
+  ['notify', i18n.global.t('setting.notify')],
 ])
 
 const settings = ref({
@@ -356,6 +448,31 @@ const settings = ref({
   subClashExt: "",
   subClashNoDefGrp: "false",
   subClashSprtAll: "false",
+  // 通知。凭据(notifyTgToken / notifySmtpPass)后端只写不读:GetAllSetting 把值抹掉,
+  // 改成回一个 hasNotifyTgToken / hasNotifySmtpPass 布尔,所以这里两个输入框永远是空的,
+  // 留空保存 = 不改动已存的凭据(后端 Save 跳过空值),要换就填新的。
+  notifyEnable: "false",
+  notifyProxy: "",
+  notifyLang: "en",
+  notifyEvents: "",
+  notifyExpireDays: "3",
+  notifyVolumeGB: "5",
+  notifyCpu: "80",
+  notifyMemory: "80",
+  notifyNodeFlap: "3",
+  notifyTgToken: "",
+  notifyTgChatId: "",
+  notifyTgApiServer: "",
+  notifyWebhookUrl: "",
+  notifySmtpHost: "",
+  notifySmtpPort: "587",
+  notifySmtpUser: "",
+  notifySmtpPass: "",
+  notifySmtpFrom: "",
+  notifySmtpTo: "",
+  notifySmtpSecurity: "starttls",
+  hasNotifyTgToken: "",
+  hasNotifySmtpPass: "",
 })
 
 onMounted(async () => {
@@ -879,6 +996,81 @@ const loginBanDuration = computed({
   get: () => { return settings.value.loginBanDuration.length > 0 ? parseInt(settings.value.loginBanDuration) : 0 },
   set: (v: number) => { settings.value.loginBanDuration = v > 0 ? v.toString() : "0" }
 })
+
+// ===================== 通知 =====================
+
+const notifyEnable = computed({
+  get: () => settings.value.notifyEnable == "true",
+  set: (v: boolean) => { settings.value.notifyEnable = v.toString() },
+})
+
+const notifyNum = (key: 'notifyExpireDays' | 'notifyVolumeGB' | 'notifyCpu' | 'notifyMemory' | 'notifyNodeFlap' | 'notifySmtpPort', fallback: number) => computed({
+  get: () => { const s = settings.value[key]; return s && s.length > 0 ? parseInt(s) : fallback },
+  set: (v: number) => { settings.value[key] = (v > 0 ? v : 0).toString() },
+})
+const notifyExpireDays = notifyNum('notifyExpireDays', 3)
+const notifyVolumeGB = notifyNum('notifyVolumeGB', 5)
+const notifyCpu = notifyNum('notifyCpu', 80)
+const notifyMemory = notifyNum('notifyMemory', 80)
+const notifyNodeFlap = notifyNum('notifyNodeFlap', 3)
+const notifySmtpPort = notifyNum('notifySmtpPort', 587)
+
+// 事件种类。value 是后端 service/notify/event.go 里的 Kind 常量,逗号拼进 notifyEvents;
+// 改这里的字符串等于把用户已开的事件悄悄关掉。
+const notifyKinds = computed(() => [
+  { value: 'node.down', title: i18n.global.t('setting.notifyKindNodeDown') },
+  { value: 'node.up', title: i18n.global.t('setting.notifyKindNodeUp') },
+  { value: 'core.crash', title: i18n.global.t('setting.notifyKindCoreCrash') },
+  { value: 'core.up', title: i18n.global.t('setting.notifyKindCoreUp') },
+  { value: 'client.depleted', title: i18n.global.t('setting.notifyKindClientDepleted') },
+  { value: 'client.expiring', title: i18n.global.t('setting.notifyKindClientExpiring') },
+  { value: 'cpu.high', title: i18n.global.t('setting.notifyKindCpuHigh') },
+  { value: 'memory.high', title: i18n.global.t('setting.notifyKindMemoryHigh') },
+  { value: 'login.success', title: i18n.global.t('setting.notifyKindLoginSuccess') },
+  { value: 'login.failed', title: i18n.global.t('setting.notifyKindLoginFailed') },
+  { value: 'login.banned', title: i18n.global.t('setting.notifyKindLoginBanned') },
+])
+
+const notifyEventSet = computed(() => new Set(
+  (settings.value.notifyEvents ?? '').split(',').map(s => s.trim()).filter(s => s.length > 0)
+))
+const hasNotifyEvent = (kind: string) => notifyEventSet.value.has(kind)
+const toggleNotifyEvent = (kind: string) => {
+  const set = new Set(notifyEventSet.value)
+  if (set.has(kind)) set.delete(kind)
+  else set.add(kind)
+  // 按 notifyKinds 的顺序重排,免得开关顺序把设置值搅成随机排列、diff 起来一片红
+  settings.value.notifyEvents = notifyKinds.value
+    .map(k => k.value).filter(v => set.has(v)).join(',')
+}
+
+// 通知语言独立于面板语言:告警常常是转发给别人看的。取值与 locales/index.ts 的键一致。
+const notifyLangs = computed(() => [
+  { value: 'en', title: 'English' },
+  { value: 'fa', title: 'فارسی' },
+  { value: 'ru', title: 'Русский' },
+  { value: 'vi', title: 'Tiếng Việt' },
+  { value: 'zhHans', title: '简体中文' },
+  { value: 'zhHant', title: '繁體中文' },
+])
+
+const smtpSecurities = ['none', 'starttls', 'tls']
+
+// 凭据是只写的:后端 GetAllSetting 抹掉值、只回一个 has* 布尔,所以输入框永远是空的。
+// 提示语要说清「留空 = 不改」,否则用户会以为自己没配过、又填一遍。
+const tgTokenHint = computed(() => settings.value.hasNotifyTgToken == 'true'
+  ? i18n.global.t('setting.notifySecretSet') : i18n.global.t('setting.notifySecretUnset'))
+const smtpPassHint = computed(() => settings.value.hasNotifySmtpPass == 'true'
+  ? i18n.global.t('setting.notifySecretSet') : i18n.global.t('setting.notifySecretUnset'))
+
+const notifyTesting = ref(false)
+// 测的是【已保存】的配置,不是屏幕上的:凭据只写,表单里根本没有 token 可交。
+const testNotify = async () => {
+  notifyTesting.value = true
+  const msg = await HttpUtils.post('api/testNotify', {})
+  notifyTesting.value = false
+  if (msg.success) push.success({ title: i18n.global.t('setting.notifyTestOk') })
+}
 
 const trafficAge = computed({
   get: () => { return settings.value.trafficAge.length > 0 ? parseInt(settings.value.trafficAge) : 0 },
@@ -1525,4 +1717,31 @@ const saveClashEditor = (data: string) => {
   margin-top: 18px; padding-top: 14px;
   border-top: 1px solid var(--line);
 }
+
+/* 通知：分组标题在双列网格里独占一行，上方留白把它和上一组分开 */
+.notify-section {
+  margin: 20px 0 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.notify-section:first-of-type { border-top: none; padding-top: 0; }
+
+/* 事件开关：自适应铺开，窄屏自然掉成一列 */
+.notify-kinds {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 10px 20px;
+  padding: 8px 0 14px;
+}
+.notify-kind {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px; cursor: pointer; user-select: none;
+}
+
+.notify-test {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-top: 20px; padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.notify-test-hint { font-size: 12px; color: var(--text-3); }
 </style>
