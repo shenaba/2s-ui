@@ -1,10 +1,12 @@
 package database
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shenaba/2s-ui/config"
 	"github.com/shenaba/2s-ui/database/model"
@@ -95,5 +97,122 @@ func TestImportDBKeepsPoolUsableWhenImportFails(t *testing.T) {
 	}
 	if marker != "original" {
 		t.Fatalf("expected the original database back, marker = %q", marker)
+	}
+}
+
+// loginAttemptsTable is the one table GetDb deliberately leaves out; see the
+// comment on its AutoMigrate list.
+const loginAttemptsTable = "login_attempts"
+
+// GetDb names the tables it copies twice over -- once in AutoMigrate, once in
+// the scan/Save pairs -- and a table missing from either list is dropped from
+// the backup with no error anywhere. Three were missing this way (services,
+// tokens, nodes), which only showed up when someone restored a backup and found
+// their cluster gone.
+//
+// Rather than pin the three, this seeds every table the live schema has and
+// compares row counts against the backup, so the next table added to db.go and
+// forgotten here fails the same way.
+func TestGetDbBacksUpEveryTable(t *testing.T) {
+	logger.InitLogger(logging.ERROR)
+	dir := t.TempDir()
+	t.Setenv("SUI_DB_FOLDER", dir)
+
+	if err := InitDB(config.GetDBPath()); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	defer CloseDBForTest()
+
+	seedEveryTable(t)
+
+	raw, err := GetDb("")
+	if err != nil {
+		t.Fatalf("GetDb: %v", err)
+	}
+	backupPath := filepath.Join(dir, "backup.db")
+	if err := os.WriteFile(backupPath, raw, 0o600); err != nil {
+		t.Fatalf("write backup: %v", err)
+	}
+	backupDb, err := gorm.Open(sqlite.Open(backupPath), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open backup: %v", err)
+	}
+	defer func() {
+		if sqlDB, e := backupDb.DB(); e == nil {
+			sqlDB.Close()
+		}
+	}()
+
+	// The live schema is the authority on what a complete backup contains --
+	// not a list repeated here, which would rot exactly like the two in GetDb.
+	var liveTables []string
+	if err := GetDB().Raw(
+		"SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+	).Scan(&liveTables).Error; err != nil {
+		t.Fatalf("list live tables: %v", err)
+	}
+	if len(liveTables) < 10 {
+		t.Fatalf("expected the live schema to have every table, got %d: %v", len(liveTables), liveTables)
+	}
+
+	for _, table := range liveTables {
+		if table == loginAttemptsTable {
+			continue
+		}
+		var live int64
+		if err := GetDB().Raw("SELECT COUNT(*) FROM " + table).Scan(&live).Error; err != nil {
+			t.Fatalf("count %s in the live db: %v", table, err)
+		}
+		// A table nothing seeded would pass 0 == 0 without proving anything.
+		if live == 0 {
+			t.Fatalf("table %q has no seeded rows, so this test cannot tell whether GetDb copies it -- add it to seedEveryTable", table)
+		}
+
+		var backed int64
+		if err := backupDb.Raw("SELECT COUNT(*) FROM " + table).Scan(&backed).Error; err != nil {
+			t.Errorf("table %q is missing from the backup: %v", table, err)
+			continue
+		}
+		if backed != live {
+			t.Errorf("table %q: backup has %d rows, live db has %d", table, backed, live)
+		}
+	}
+
+	// The exemption is deliberate, so assert it rather than leaving it implied.
+	// Asked as HasTable rather than a COUNT so a correct run does not log a
+	// "no such table" error that reads like a failure.
+	if backupDb.Migrator().HasTable(loginAttemptsTable) {
+		t.Errorf("%s was copied into the backup; restoring stale bans is not wanted", loginAttemptsTable)
+	}
+}
+
+// seedEveryTable puts at least one row in every table InitDB does not already
+// populate. That is only users and outbounds -- the settings defaults are
+// written by SettingService.GetAllSetting, which app.Init calls after InitDB,
+// so the table is still empty here.
+func seedEveryTable(t *testing.T) {
+	t.Helper()
+	now := time.Now().Unix()
+	obj := json.RawMessage(`{}`)
+	arr := json.RawMessage(`[]`)
+
+	rows := []any{
+		&model.Setting{Key: "webPort", Value: "2095"},
+		&model.Tls{Name: "tls-1", Server: obj, Client: obj},
+		&model.Inbound{Type: "vless", Tag: "in-1", Addrs: arr, OutJson: obj, Options: obj},
+		&model.Service{Type: "derp", Tag: "svc-1", Options: obj},
+		&model.Endpoint{Type: "wireguard", Tag: "ep-1", Options: obj, Ext: obj},
+		&model.Tokens{Desc: "token-1", Token: "t0ken", UserId: 1},
+		&model.Stats{DateTime: now, Resource: "user", Tag: "client-1", Direction: true, Traffic: 1024},
+		&model.Client{Name: "client-1", Enable: true, Config: obj, Inbounds: arr, Links: arr, CreatedAt: now},
+		&model.Changes{DateTime: now, Actor: "test", Key: "clients", Action: "new", Obj: json.RawMessage(`"client-1"`)},
+		&model.Node{Name: "node-1", BaseUrl: "https://node.example", WebPath: "/app/", Token: "n0de", Baselines: obj},
+		&model.Cert{Domain: "example.com", CertFile: "/etc/cert.pem", KeyFile: "/etc/key.pem"},
+		&model.LoginAttempt{Scope: "ip", Key: "1.2.3.4", Failures: 1, WindowStart: now},
+	}
+	for _, row := range rows {
+		if err := GetDB().Create(row).Error; err != nil {
+			t.Fatalf("seed %T: %v", row, err)
+		}
 	}
 }

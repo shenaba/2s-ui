@@ -59,16 +59,26 @@ func GetDb(exclude string) ([]byte, error) {
 		}
 	}()
 
+	// Mirrors db.go's AutoMigrate list, minus model.LoginAttempt. That one is
+	// deliberately left out: it holds the login limiter's in-flight failure
+	// tallies and bans, so restoring a stale copy would either resurrect a ban
+	// the operator has already waited out or hand an attacker back a spent
+	// budget. Everything else has to be here -- a table missing from this list
+	// is silently dropped on restore. Keep the order in step with db.go so the
+	// two lists stay diffable.
 	err = backupDb.AutoMigrate(
 		&model.Setting{},
 		&model.Tls{},
 		&model.Inbound{},
 		&model.Outbound{},
+		&model.Service{},
 		&model.Endpoint{},
 		&model.User{},
+		&model.Tokens{},
 		&model.Stats{},
 		&model.Client{},
 		&model.Changes{},
+		&model.Node{},
 		&model.Cert{},
 	)
 	if err != nil {
@@ -80,9 +90,12 @@ func GetDb(exclude string) ([]byte, error) {
 	var certs []model.Cert
 	var inbound []model.Inbound
 	var outbound []model.Outbound
+	var services []model.Service
 	var endpoint []model.Endpoint
 	var users []model.User
+	var tokens []model.Tokens
 	var clients []model.Client
+	var nodes []model.Node
 	var stats []model.Stats
 	var changes []model.Changes
 
@@ -115,6 +128,13 @@ func GetDb(exclude string) ([]byte, error) {
 			return nil, err
 		}
 	}
+	if err := db.Model(&model.Service{}).Scan(&services).Error; err != nil {
+		return nil, err
+	} else if len(services) > 0 {
+		if err := backupDb.Save(services).Error; err != nil {
+			return nil, err
+		}
+	}
 	if err := db.Model(&model.Endpoint{}).Scan(&endpoint).Error; err != nil {
 		return nil, err
 	} else if len(endpoint) > 0 {
@@ -129,10 +149,32 @@ func GetDb(exclude string) ([]byte, error) {
 			return nil, err
 		}
 	}
+	// apiv2 tokens. Dropping them logs out every integration that talks to this
+	// panel, and the token values cannot be read back out of the UI to restore
+	// them by hand -- addToken only ever shows a token once.
+	if err := db.Model(&model.Tokens{}).Scan(&tokens).Error; err != nil {
+		return nil, err
+	} else if len(tokens) > 0 {
+		if err := backupDb.Save(tokens).Error; err != nil {
+			return nil, err
+		}
+	}
 	if err := db.Model(&model.Client{}).Scan(&clients).Error; err != nil {
 		return nil, err
 	} else if len(clients) > 0 {
 		if err := backupDb.Save(clients).Error; err != nil {
+			return nil, err
+		}
+	}
+	// Node rows carry the apiv2 token this panel authenticates to each node
+	// with, and it is write-only in the UI (service/node.go redacts it on read),
+	// so a backup without them cannot rebuild a cluster. That the backup file
+	// therefore holds live credentials is not new -- it already carries the
+	// users table's password hashes and the settings table's session secret.
+	if err := db.Model(&model.Node{}).Scan(&nodes).Error; err != nil {
+		return nil, err
+	} else if len(nodes) > 0 {
+		if err := backupDb.Save(nodes).Error; err != nil {
 			return nil, err
 		}
 	}
