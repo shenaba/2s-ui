@@ -24,6 +24,15 @@ func onFormInput(ctx context.Context, b *bot.Bot, chatID int64, form formState, 
 	draft := form.Draft
 
 	switch form.Step {
+	case stepBindTgId:
+		id, err := strconv.ParseInt(strings.TrimSpace(text), 10, 64)
+		if err != nil || id < 0 {
+			reply(ctx, b, chatID, "Send a numeric Telegram user id, or 0 to unbind.", nil)
+			return
+		}
+		forms.clear(chatID)
+		bindClient(ctx, b, chatID, draft.Name, id)
+
 	case stepClientName:
 		name := strings.TrimSpace(text)
 		if name == "" {

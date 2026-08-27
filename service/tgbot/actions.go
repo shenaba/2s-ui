@@ -26,7 +26,8 @@ const clientListLimit = 20
 
 func onCallback(ctx context.Context, b *bot.Bot, q *models.CallbackQuery) {
 	chatID := callbackChat(q)
-	if chatID == 0 || roleOf(chatID) != roleAdmin {
+	r, boundClient := roleOf(chatID)
+	if chatID == 0 || r == roleNone {
 		logger.Warning("tgbot: ignoring a callback from unauthorised chat ", chatID)
 		return
 	}
@@ -39,6 +40,14 @@ func onCallback(ctx context.Context, b *bot.Bot, q *models.CallbackQuery) {
 	}()
 
 	data := q.Data
+	if r == roleClient {
+		// The only button an end user is ever sent.
+		if data == staticPrefix+"self" {
+			sendSelfUsage(ctx, b, chatID, boundClient)
+		}
+		return
+	}
+
 	switch {
 	case strings.HasPrefix(data, staticPrefix):
 		onStaticCallback(ctx, b, chatID, strings.TrimPrefix(data, staticPrefix))
@@ -123,6 +132,13 @@ func onPayloadCallback(ctx context.Context, b *bot.Bot, chatID int64, payload st
 			c.Up, c.Down = 0, 0
 			return "traffic reset"
 		})
+
+	case "bind":
+		// Stored on the draft's Name because that is the field the next
+		// message resolves against; nothing else about the draft is used here.
+		forms.set(chatID, stepBindTgId, clientDraft{Name: arg})
+		reply(ctx, b, chatID,
+			"Send the Telegram user id to bind to "+arg+".\nSend 0 to unbind. /start cancels.", nil)
 
 	case "client.create!":
 		createClient(ctx, b, chatID)
@@ -279,6 +295,7 @@ func sendClientCard(ctx context.Context, b *bot.Bot, chatID int64, name string) 
 			{Text: toggle, CallbackData: payloadPrefix + payloads.put("toggle|"+c.Name)},
 			{Text: "Reset traffic", CallbackData: payloadPrefix + payloads.put("reset|"+c.Name)},
 		},
+		{{Text: bindLabel(c.TgId), CallbackData: payloadPrefix + payloads.put("bind|"+c.Name)}},
 		{{Text: "Back", CallbackData: staticPrefix + "clients"}},
 	}}
 	reply(ctx, b, chatID, clientDetail(*c), markup)
@@ -325,4 +342,15 @@ func humanBytes(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTP"[exp])
+}
+
+func timeText(unix int64) string {
+	return time.Unix(unix, 0).Format("2006-01-02 15:04")
+}
+
+func bindLabel(tgID int64) string {
+	if tgID == 0 {
+		return "Bind Telegram"
+	}
+	return "Rebind Telegram"
 }

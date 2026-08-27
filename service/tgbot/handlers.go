@@ -45,9 +45,19 @@ func dispatch(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 func onMessage(ctx context.Context, b *bot.Bot, msg *models.Message) {
 	chatID := msg.Chat.ID
-	// Unknown chats get no reply at all. Answering, even to refuse, confirms
-	// that a panel bot is reachable at this token to anyone who found it.
-	if roleOf(chatID) != roleAdmin {
+	r, boundClient := roleOf(chatID)
+	switch r {
+	case roleClient:
+		// End users get one thing regardless of what they typed: their own
+		// usage. No command here takes a name, so there is no argument to aim
+		// at somebody else's account.
+		onClientMessage(ctx, b, chatID, boundClient)
+		return
+	case roleAdmin:
+	default:
+		// Unknown chats get no reply at all. Answering, even to refuse,
+		// confirms that a panel bot is reachable at this token to anyone who
+		// found it.
 		logger.Warning("tgbot: ignoring a message from unauthorised chat ", chatID)
 		return
 	}

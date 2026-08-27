@@ -80,6 +80,9 @@ const (
 	stepClientName   formStep = "client:name"
 	stepClientVolume formStep = "client:volume"
 	stepClientExpiry formStep = "client:expiry"
+	// stepBindTgId reuses clientDraft.Name for the client being bound; nothing
+	// else on the draft applies to it.
+	stepBindTgId formStep = "client:bind"
 )
 
 // clientDraft is a client being assembled across several messages.

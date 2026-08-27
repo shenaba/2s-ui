@@ -76,6 +76,13 @@ type Client struct {
 	// which are the rare ones -- exactly the shape an index answers cheaply.
 	LimitIp int `json:"limitIp" form:"limitIp" gorm:"default:0;not null;index"`
 
+	// Telegram user allowed to look this client up in the bot; 0 = nobody.
+	// Bound through the bot, so the panel's own client form does not carry it
+	// and ClientService.preserveServerManagedFields keeps an edit from writing
+	// it back to zero. Indexed because every incoming bot message resolves the
+	// sender through it.
+	TgId int64 `json:"tgId" form:"tgId" gorm:"default:0;not null;index"`
+
 	// Delay start and periodic reset
 	DelayStart bool  `json:"delayStart" form:"delayStart" gorm:"default:false;not null"`
 	AutoReset  bool  `json:"autoReset" form:"autoReset" gorm:"default:false;not null"`

@@ -335,7 +335,7 @@ func (s *ClientService) ensureNameAvailable(tx *gorm.DB, name string, excludeId 
 // payloadHas nil means "carried nothing", i.e. preserve every counter.
 func (s *ClientService) preserveServerManagedFields(tx *gorm.DB, client *model.Client, payloadHas map[string]bool) error {
 	var existing model.Client
-	err := tx.Model(model.Client{}).Select("created_at", "online_at", "up", "down", "total_up", "total_down").
+	err := tx.Model(model.Client{}).Select("created_at", "online_at", "up", "down", "total_up", "total_down", "tg_id").
 		Where("id = ?", client.Id).First(&existing).Error
 	if err != nil {
 		// ErrRecordNotFound included, deliberately: failing open here would write
@@ -358,6 +358,12 @@ func (s *ClientService) preserveServerManagedFields(tx *gorm.DB, client *model.C
 	}
 	if !payloadHas["totalDown"] {
 		client.TotalDown = existing.TotalDown
+	}
+	// The panel's client form has no field for the Telegram binding -- it is
+	// set through the bot -- so without this every save from the panel would
+	// silently unbind whoever was watching their own usage.
+	if !payloadHas["tgId"] {
+		client.TgId = existing.TgId
 	}
 	return nil
 }
