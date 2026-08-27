@@ -118,6 +118,11 @@ var defaultValueMap = map[string]string{
 	"notifySmtpSecurity": "starttls",
 	"notifyBackup":       "false",
 	"notifyReport":       "",
+	// Every notify* key the code reads must have a default here: notifySettings
+	// seeds its map from this one and ignores DB rows for keys it does not know,
+	// so a missing entry reads as the zero value forever -- and Save's UPDATE
+	// touches no row, which means the settings page cannot store it either.
+	"notifyBotEnable": "false",
 }
 
 // notifySecrets are the notification settings that must never be read back out
