@@ -276,6 +276,8 @@
         <SRow :label="$t('setting.notifyTgApiServer')" :hint="$t('setting.notifyTgApiServerHint')">
           <input class="input mono" v-model="settings.notifyTgApiServer" placeholder="https://api.telegram.org" />
         </SRow>
+        <ToggleRow class="sg-span" v-model="notifyBotEnable"
+                   :label="$t('setting.notifyBot')" :desc="$t('setting.notifyBotDesc')" />
 
         <SectionLabel class="sg-span notify-section">Webhook</SectionLabel>
         <SRow :label="$t('setting.notifyWebhookUrl')" :hint="$t('setting.notifyWebhookHint')">
@@ -463,6 +465,7 @@ const settings = ref({
   notifyTgToken: "",
   notifyTgChatId: "",
   notifyTgApiServer: "",
+  notifyBotEnable: "false",
   notifyWebhookUrl: "",
   notifySmtpHost: "",
   notifySmtpPort: "587",
@@ -1002,6 +1005,11 @@ const loginBanDuration = computed({
 const notifyEnable = computed({
   get: () => settings.value.notifyEnable == "true",
   set: (v: boolean) => { settings.value.notifyEnable = v.toString() },
+})
+
+const notifyBotEnable = computed({
+  get: () => settings.value.notifyBotEnable == "true",
+  set: (v: boolean) => { settings.value.notifyBotEnable = v.toString() },
 })
 
 const notifyNum = (key: 'notifyExpireDays' | 'notifyVolumeGB' | 'notifyCpu' | 'notifyMemory' | 'notifyNodeFlap' | 'notifySmtpPort', fallback: number) => computed({

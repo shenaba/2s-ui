@@ -11,6 +11,7 @@ import (
 	"github.com/shenaba/2s-ui/logger"
 	"github.com/shenaba/2s-ui/service"
 	"github.com/shenaba/2s-ui/service/notify"
+	"github.com/shenaba/2s-ui/service/tgbot"
 	"github.com/shenaba/2s-ui/sub"
 	"github.com/shenaba/2s-ui/web"
 
@@ -104,6 +105,11 @@ func (a *APP) Start() error {
 	// without a restart.
 	notify.Start(a.SettingService.GetNotifyConfig)
 
+	// The interactive bot supervises itself: it stays idle while switched off
+	// and reconnects on its own when the token changes, so there is nothing to
+	// re-read here on a settings save.
+	tgbot.Start()
+
 	err = a.cronJob.Start(loc, trafficAge, statsBucketSeconds, globalReset)
 	if err != nil {
 		return err
@@ -181,6 +187,7 @@ func (a *APP) Stop() {
 	service.StopHub()
 	// After the servers and before the core: a core teardown that reports a
 	// failure should still find the notifier up.
+	tgbot.Stop()
 	notify.Stop()
 	err = a.configService.StopCore()
 	if err != nil {
