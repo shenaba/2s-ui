@@ -3,6 +3,7 @@ package tgbot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -57,7 +58,7 @@ func onCallback(ctx context.Context, b *bot.Bot, q *models.CallbackQuery) {
 			// The store is in memory, so a panel restart invalidates every
 			// button already on someone's screen. Say so rather than doing
 			// nothing, which is indistinguishable from a broken bot.
-			reply(ctx, b, chatID, "That button has expired. Open the menu again with /start.", mainMenu())
+			reply(ctx, b, chatID, t("expired", nil), mainMenu())
 			return
 		}
 		onPayloadCallback(ctx, b, chatID, payload)
@@ -67,7 +68,7 @@ func onCallback(ctx context.Context, b *bot.Bot, q *models.CallbackQuery) {
 func onStaticCallback(ctx context.Context, b *bot.Bot, chatID int64, action string) {
 	switch action {
 	case "status":
-		reply(ctx, b, chatID, service.StatusDigest(), mainMenu())
+		reply(ctx, b, chatID, service.StatusDigest(botLang()), mainMenu())
 	case "nodes":
 		reply(ctx, b, chatID, nodesText(), mainMenu())
 	case "clients":
@@ -77,21 +78,21 @@ func onStaticCallback(ctx context.Context, b *bot.Bot, chatID int64, action stri
 	case "backup":
 		sendBackup(ctx, b, chatID)
 	case "core.confirm":
-		reply(ctx, b, chatID, "Restart the sing-box core? Connected clients will be dropped.",
+		reply(ctx, b, chatID, t("core.confirm", nil),
 			confirmKeyboard(staticPrefix+"core.restart"))
 	case "core.restart":
 		var configService service.ConfigService
 		if err := configService.RestartCore(); err != nil {
-			reply(ctx, b, chatID, "Core restart failed: "+err.Error(), mainMenu())
+			reply(ctx, b, chatID, t("core.failed", p("detail", err.Error())), mainMenu())
 			return
 		}
-		reply(ctx, b, chatID, "Core restarted.", mainMenu())
+		reply(ctx, b, chatID, t("core.restarted", nil), mainMenu())
 	case "client.new":
 		forms.set(chatID, stepClientName, clientDraft{})
-		reply(ctx, b, chatID, "New client -- send a name.\nSend /start at any point to cancel.", nil)
+		reply(ctx, b, chatID, t("form.name", nil), nil)
 	case "cancel":
 		forms.clear(chatID)
-		reply(ctx, b, chatID, "Cancelled.", mainMenu())
+		reply(ctx, b, chatID, t("cancelled", nil), mainMenu())
 	}
 }
 
@@ -109,36 +110,35 @@ func onPayloadCallback(ctx context.Context, b *bot.Bot, chatID int64, payload st
 			reply(ctx, b, chatID, err.Error(), mainMenu())
 			return
 		}
-		word := "Disable"
+		key := "client.confirmToggleOff"
 		if !c.Enable {
-			word = "Enable"
+			key = "client.confirmToggleOn"
 		}
-		reply(ctx, b, chatID, fmt.Sprintf("%s client %s?", word, c.Name),
+		reply(ctx, b, chatID, t(key, p("name", c.Name)),
 			confirmKeyboard(payloadPrefix+payloads.put("toggle!|"+arg)))
 	case "toggle!":
-		applyClient(ctx, b, chatID, arg, func(c *model.Client) string {
+		applyClient(ctx, b, chatID, arg, func(c *model.Client) (string, map[string]string) {
 			c.Enable = !c.Enable
 			if c.Enable {
-				return "enabled"
+				return "client.doneEnabled", nil
 			}
-			return "disabled"
+			return "client.doneDisabled", nil
 		})
 
 	case "reset":
-		reply(ctx, b, chatID, "Reset the traffic counters for "+arg+"?",
+		reply(ctx, b, chatID, t("client.confirmReset", p("name", arg)),
 			confirmKeyboard(payloadPrefix+payloads.put("reset!|"+arg)))
 	case "reset!":
-		applyClient(ctx, b, chatID, arg, func(c *model.Client) string {
+		applyClient(ctx, b, chatID, arg, func(c *model.Client) (string, map[string]string) {
 			c.Up, c.Down = 0, 0
-			return "traffic reset"
+			return "client.doneReset", nil
 		})
 
 	case "bind":
 		// Stored on the draft's Name because that is the field the next
 		// message resolves against; nothing else about the draft is used here.
 		forms.set(chatID, stepBindTgId, clientDraft{Name: arg})
-		reply(ctx, b, chatID,
-			"Send the Telegram user id to bind to "+arg+".\nSend 0 to unbind. /start cancels.", nil)
+		reply(ctx, b, chatID, t("bind.prompt", p("name", arg)), nil)
 
 	case "client.create!":
 		createClient(ctx, b, chatID)
@@ -148,8 +148,8 @@ func onPayloadCallback(ctx context.Context, b *bot.Bot, chatID int64, payload st
 func confirmKeyboard(confirmData string) models.ReplyMarkup {
 	return &models.InlineKeyboardMarkup{
 		InlineKeyboard: [][]models.InlineKeyboardButton{{
-			{Text: "Confirm", CallbackData: confirmData},
-			{Text: "Cancel", CallbackData: staticPrefix + "cancel"},
+			{Text: t("btn.confirm", nil), CallbackData: confirmData},
+			{Text: t("btn.cancel", nil), CallbackData: staticPrefix + "cancel"},
 		}},
 	}
 }
@@ -167,7 +167,7 @@ func callbackChat(q *models.CallbackQuery) int64 {
 func findClient(name string) (*model.Client, error) {
 	var c model.Client
 	if err := database.GetDB().Model(model.Client{}).Where("name = ?", name).First(&c).Error; err != nil {
-		return nil, fmt.Errorf("no client named %s", name)
+		return nil, errors.New(t("client.notFound", p("name", name)))
 	}
 	return &c, nil
 }
@@ -179,24 +179,28 @@ func findClient(name string) (*model.Client, error) {
 // LastUpdate bump that pushes the new state to every open panel over the
 // websocket, and skip the inbound reload -- leaving the panel showing one thing
 // while the core enforces another.
-func applyClient(ctx context.Context, b *bot.Bot, chatID int64, name string, mutate func(*model.Client) string) {
+func applyClient(ctx context.Context, b *bot.Bot, chatID int64, name string, mutate func(*model.Client) (string, map[string]string)) {
 	c, err := findClient(name)
 	if err != nil {
 		reply(ctx, b, chatID, err.Error(), mainMenu())
 		return
 	}
-	what := mutate(c)
+	doneKey, extra := mutate(c)
 
 	data, err := json.Marshal(c)
 	if err != nil {
-		reply(ctx, b, chatID, "Could not encode the client: "+err.Error(), mainMenu())
+		reply(ctx, b, chatID, t("err.save", p("detail", err.Error())), mainMenu())
 		return
 	}
 	if err := save(chatID, "clients", "edit", data); err != nil {
-		reply(ctx, b, chatID, "Save failed: "+err.Error(), mainMenu())
+		reply(ctx, b, chatID, t("err.save", p("detail", err.Error())), mainMenu())
 		return
 	}
-	reply(ctx, b, chatID, c.Name+": "+what+".", mainMenu())
+	params := p("name", c.Name)
+	for k, v := range extra {
+		params[k] = v
+	}
+	reply(ctx, b, chatID, t(doneKey, params), mainMenu())
 }
 
 // save is the bot's single write path. actor records which Telegram chat asked,
@@ -244,11 +248,11 @@ func sendClientList(ctx context.Context, b *bot.Bot, chatID int64) {
 		Order("enable ASC, CASE WHEN expiry > 0 THEN expiry ELSE 9223372036854775807 END ASC").
 		Limit(clientListLimit + 1).Find(&clients).Error
 	if err != nil {
-		reply(ctx, b, chatID, "Could not read the client list: "+err.Error(), mainMenu())
+		reply(ctx, b, chatID, t("err.read", p("detail", err.Error())), mainMenu())
 		return
 	}
 	if len(clients) == 0 {
-		reply(ctx, b, chatID, "No clients yet.", mainMenu())
+		reply(ctx, b, chatID, t("client.listEmpty", nil), mainMenu())
 		return
 	}
 
@@ -260,7 +264,7 @@ func sendClientList(ctx context.Context, b *bot.Bot, chatID int64) {
 
 	var rows [][]models.InlineKeyboardButton
 	var text strings.Builder
-	text.WriteString("Clients")
+	text.WriteString(t("client.listTitle", nil))
 	for _, c := range clients {
 		text.WriteString("\n" + clientLine(c))
 		rows = append(rows, []models.InlineKeyboardButton{{
@@ -273,10 +277,10 @@ func sendClientList(ctx context.Context, b *bot.Bot, chatID int64) {
 		if err := database.GetDB().Model(model.Client{}).Count(&total).Error; err != nil {
 			logger.Warning("tgbot: client count: ", err)
 		}
-		text.WriteString(fmt.Sprintf("\n\nShowing %d of %d -- open the panel for the rest.",
-			clientListLimit, total))
+		text.WriteString("\n\n" + t("client.truncated", p(
+			"shown", strconv.Itoa(clientListLimit), "total", strconv.FormatInt(total, 10))))
 	}
-	rows = append(rows, []models.InlineKeyboardButton{{Text: "Menu", CallbackData: staticPrefix + "status"}})
+	rows = append(rows, []models.InlineKeyboardButton{{Text: t("btn.menu", nil), CallbackData: staticPrefix + "status"}})
 	reply(ctx, b, chatID, text.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows})
 }
 
@@ -286,27 +290,27 @@ func sendClientCard(ctx context.Context, b *bot.Bot, chatID int64, name string) 
 		reply(ctx, b, chatID, err.Error(), mainMenu())
 		return
 	}
-	toggle := "Disable"
+	toggle := t("btn.disable", nil)
 	if !c.Enable {
-		toggle = "Enable"
+		toggle = t("btn.enable", nil)
 	}
 	markup := &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
 		{
 			{Text: toggle, CallbackData: payloadPrefix + payloads.put("toggle|"+c.Name)},
-			{Text: "Reset traffic", CallbackData: payloadPrefix + payloads.put("reset|"+c.Name)},
+			{Text: t("btn.reset", nil), CallbackData: payloadPrefix + payloads.put("reset|"+c.Name)},
 		},
 		{{Text: bindLabel(c.TgId), CallbackData: payloadPrefix + payloads.put("bind|"+c.Name)}},
-		{{Text: "Back", CallbackData: staticPrefix + "clients"}},
+		{{Text: t("btn.back", nil), CallbackData: staticPrefix + "clients"}},
 	}}
 	reply(ctx, b, chatID, clientDetail(*c), markup)
 }
 
 func clientLine(c model.Client) string {
-	state := "on"
+	state := t("client.on", nil)
 	if !c.Enable {
-		state = "OFF"
+		state = t("client.off", nil)
 	}
-	quota := "unlimited"
+	quota := t("client.unlimited", nil)
 	if c.Volume > 0 {
 		quota = humanBytes(c.Up+c.Down) + "/" + humanBytes(c.Volume)
 	}
@@ -319,11 +323,11 @@ func clientDetail(c model.Client) string {
 	if c.Expiry > 0 {
 		b.WriteString("\nExpires: " + time.Unix(c.Expiry, 0).Format("2006-01-02 15:04"))
 	} else {
-		b.WriteString("\nExpires: never")
+		b.WriteString("\n" + t("client.never", nil))
 	}
-	b.WriteString("\nUp " + humanBytes(c.Up) + " · Down " + humanBytes(c.Down))
+	b.WriteString("\n" + t("client.upDown", p("up", humanBytes(c.Up), "down", humanBytes(c.Down))))
 	if c.Group != "" {
-		b.WriteString("\nGroup: " + c.Group)
+		b.WriteString("\n" + t("client.group", p("group", c.Group)))
 	}
 	if c.Desc != "" {
 		b.WriteString("\n" + c.Desc)
@@ -350,7 +354,7 @@ func timeText(unix int64) string {
 
 func bindLabel(tgID int64) string {
 	if tgID == 0 {
-		return "Bind Telegram"
+		return t("btn.bind", nil)
 	}
-	return "Rebind Telegram"
+	return t("btn.rebind", nil)
 }

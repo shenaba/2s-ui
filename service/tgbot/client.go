@@ -24,11 +24,11 @@ func onClientMessage(ctx context.Context, b *bot.Bot, chatID int64, name string)
 func sendSelfUsage(ctx context.Context, b *bot.Bot, chatID int64, name string) {
 	c, err := findClient(name)
 	if err != nil {
-		reply(ctx, b, chatID, "Your account is no longer available. Contact your provider.", nil)
+		reply(ctx, b, chatID, t("self.unavailable", nil), nil)
 		return
 	}
 	markup := &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
-		{Text: "Refresh", CallbackData: staticPrefix + "self"},
+		{Text: t("btn.refresh", nil), CallbackData: staticPrefix + "self"},
 	}}}
 	reply(ctx, b, chatID, selfUsageText(*c), markup)
 }
@@ -41,31 +41,32 @@ func selfUsageText(c model.Client) string {
 	b.WriteString(c.Name)
 
 	used := c.Up + c.Down
-	if c.Volume > 0 {
-		b.WriteString("\nTraffic: " + humanBytes(used) + " / " + humanBytes(c.Volume))
-		if left := c.Volume - used; left > 0 {
-			b.WriteString(" (" + humanBytes(left) + " left)")
-		} else {
-			b.WriteString(" (exhausted)")
-		}
-	} else {
-		b.WriteString("\nTraffic: " + humanBytes(used) + " / unlimited")
+	switch {
+	case c.Volume <= 0:
+		b.WriteString("\n" + t("self.unlimited", p("used", humanBytes(used))))
+	case c.Volume-used > 0:
+		b.WriteString("\n" + t("self.left", p(
+			"used", humanBytes(used), "total", humanBytes(c.Volume),
+			"left", humanBytes(c.Volume-used))))
+	default:
+		b.WriteString("\n" + t("self.exhausted", p(
+			"used", humanBytes(used), "total", humanBytes(c.Volume))))
 	}
 
 	if c.Expiry > 0 {
-		b.WriteString("\nExpires: " + timeText(c.Expiry))
+		b.WriteString("\n" + t("client.expires", p("when", timeText(c.Expiry))))
 	} else {
-		b.WriteString("\nExpires: never")
+		b.WriteString("\n" + t("client.never", nil))
 	}
 	if !c.Enable {
-		b.WriteString("\nStatus: disabled")
+		b.WriteString("\n" + t("self.disabled", nil))
 	}
 
 	// The subscription id is the client name (sub/subService.go), so the link
 	// is the configured subscription URI with the name appended.
 	var settingService service.SettingService
 	if uri, err := settingService.GetFinalSubURI(botHostname()); err == nil && uri != "" {
-		b.WriteString("\n\nSubscription:\n" + uri + c.Name)
+		b.WriteString("\n\n" + t("self.sub", nil) + "\n" + uri + c.Name)
 	}
 	return b.String()
 }
@@ -75,11 +76,11 @@ func selfUsageText(c model.Client) string {
 // Admin-only, and it goes through the same save path as every other write so
 // the change is audited like one.
 func bindClient(ctx context.Context, b *bot.Bot, chatID int64, name string, tgID int64) {
-	applyClient(ctx, b, chatID, name, func(c *model.Client) string {
+	applyClient(ctx, b, chatID, name, func(c *model.Client) (string, map[string]string) {
 		c.TgId = tgID
 		if tgID == 0 {
-			return "Telegram binding removed"
+			return "bind.removed", nil
 		}
-		return "bound to Telegram id " + strconv.FormatInt(tgID, 10)
+		return "bind.done", p("id", strconv.FormatInt(tgID, 10))
 	})
 }

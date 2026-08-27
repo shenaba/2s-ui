@@ -43,8 +43,13 @@ func roleOf(chatID int64) (role, string) {
 	if chatID == 0 {
 		return roleNone, ""
 	}
+	db := database.GetDB()
+	if db == nil {
+		// No database, no way to prove anyone is who they claim: refuse.
+		return roleNone, ""
+	}
 	var name string
-	err := database.GetDB().Model(model.Client{}).
+	err := db.Model(model.Client{}).
 		Where("tg_id = ? AND enable = ?", chatID, true).
 		Limit(1).Pluck("name", &name).Error
 	if err != nil {

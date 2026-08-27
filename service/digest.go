@@ -16,12 +16,11 @@ import (
 // same figures -- keeping two copies would let them drift into disagreeing
 // about the state of the same panel.
 //
-// The labels are left in English rather than translated. They are numbers with
-// short technical tags (CPU, MEM, DISK) that read the same in every locale this
-// panel ships, and routing them through the message table would mean a
-// translation round-trip for every future line of something whose whole point
-// is being skimmable.
-func StatusDigest() string {
+// CPU, MEM and DISK are left untranslated on purpose -- they read the same in
+// every locale this panel ships, and a percentage beside them needs no help.
+// The words around the counts do get translated, because "Clients 5 (3 enabled,
+// 0 online)" does not.
+func StatusDigest(lang string) string {
 	var serverService ServerService
 	var statsService StatsService
 	var nodeService NodeService
@@ -53,7 +52,10 @@ func StatusDigest() string {
 	if o, err := statsService.GetOnlines(); err == nil {
 		online = len(o.User)
 	}
-	b.WriteString(fmt.Sprintf("\nClients %d (%d enabled, %d online)", total, enabled, online))
+	b.WriteString(fmt.Sprintf("\n%s %d (%d %s, %d %s)",
+		notify.Label(lang, "digest.clients"), total,
+		enabled, notify.Label(lang, "digest.enabled"),
+		online, notify.Label(lang, "digest.online")))
 
 	// Only when this panel actually manages nodes -- on a single-panel install
 	// the line would always read "Nodes 0/0" and train the reader to skip it.
@@ -64,14 +66,16 @@ func StatusDigest() string {
 				up++
 			}
 		}
-		b.WriteString(fmt.Sprintf("\nNodes %d/%d online", up, len(statuses)))
+		b.WriteString(fmt.Sprintf("\n%s %d/%d %s",
+			notify.Label(lang, "digest.nodes"), up, len(statuses),
+			notify.Label(lang, "digest.nodesOnline")))
 	}
 
-	core := "stopped"
+	core := notify.Label(lang, "digest.stopped")
 	if configService.CoreRunning() {
-		core = "running"
+		core = notify.Label(lang, "digest.running")
 	}
-	b.WriteString("\nCore " + core)
+	b.WriteString("\n" + notify.Label(lang, "digest.core") + " " + core)
 
 	return b.String()
 }

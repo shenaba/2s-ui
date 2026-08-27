@@ -3,6 +3,7 @@ package tgbot
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/shenaba/2s-ui/database"
@@ -15,16 +16,9 @@ import (
 	"github.com/go-telegram/bot/models"
 )
 
-// commands is what the in-app command menu offers. Descriptions are English
-// for the same reason the digest labels are -- see service.StatusDigest.
-var commands = []struct{ name, desc string }{
-	{"start", "Show the menu"},
-	{"status", "Panel and system status"},
-	{"nodes", "Managed nodes"},
-	{"clients", "Clients close to a limit"},
-	{"online", "Clients online right now"},
-	{"backup", "Send a database backup"},
-}
+// commandNames is what the in-app command menu offers. The descriptions come
+// from the message table at call time, because the language is a setting.
+var commandNames = []string{"start", "status", "nodes", "clients", "online", "backup"}
 
 // callback_data prefixes. Telegram caps that field at 64 bytes, so anything
 // carrying an argument stores it in payloads and sends the key instead.
@@ -82,9 +76,9 @@ func onMessage(ctx context.Context, b *bot.Bot, msg *models.Message) {
 
 	switch cmd {
 	case "start", "help", "menu":
-		reply(ctx, b, chatID, "2S-UI\n"+service.StatusDigest(), mainMenu())
+		reply(ctx, b, chatID, "2S-UI\n"+service.StatusDigest(botLang()), mainMenu())
 	case "status":
-		reply(ctx, b, chatID, service.StatusDigest(), mainMenu())
+		reply(ctx, b, chatID, service.StatusDigest(botLang()), mainMenu())
 	case "nodes":
 		reply(ctx, b, chatID, nodesText(), mainMenu())
 	case "clients":
@@ -94,7 +88,7 @@ func onMessage(ctx context.Context, b *bot.Bot, msg *models.Message) {
 	case "backup":
 		sendBackup(ctx, b, chatID)
 	default:
-		reply(ctx, b, chatID, "Unknown command.", mainMenu())
+		reply(ctx, b, chatID, t("unknownCmd", nil), mainMenu())
 	}
 }
 
@@ -102,19 +96,19 @@ func mainMenu() models.ReplyMarkup {
 	return &models.InlineKeyboardMarkup{
 		InlineKeyboard: [][]models.InlineKeyboardButton{
 			{
-				{Text: "Status", CallbackData: staticPrefix + "status"},
-				{Text: "Nodes", CallbackData: staticPrefix + "nodes"},
+				{Text: t("btn.status", nil), CallbackData: staticPrefix + "status"},
+				{Text: t("btn.nodes", nil), CallbackData: staticPrefix + "nodes"},
 			},
 			{
-				{Text: "Clients", CallbackData: staticPrefix + "clients"},
-				{Text: "Online", CallbackData: staticPrefix + "online"},
+				{Text: t("btn.clients", nil), CallbackData: staticPrefix + "clients"},
+				{Text: t("btn.online", nil), CallbackData: staticPrefix + "online"},
 			},
 			{
-				{Text: "Backup", CallbackData: staticPrefix + "backup"},
-				{Text: "Restart core", CallbackData: staticPrefix + "core.confirm"},
+				{Text: t("btn.backup", nil), CallbackData: staticPrefix + "backup"},
+				{Text: t("btn.restart", nil), CallbackData: staticPrefix + "core.confirm"},
 			},
 			{
-				{Text: "+ New client", CallbackData: staticPrefix + "client.new"},
+				{Text: t("btn.new", nil), CallbackData: staticPrefix + "client.new"},
 			},
 		},
 	}
@@ -140,26 +134,26 @@ func nodesText() string {
 	var nodeService service.NodeService
 	statuses := nodeService.GetStatuses()
 	if len(statuses) == 0 {
-		return "No managed nodes."
+		return t("nodes.none", nil)
 	}
 	var nodes []model.Node
 	if err := database.GetDB().Model(model.Node{}).Find(&nodes).Error; err != nil {
-		return "Could not read the node list: " + err.Error()
+		return t("err.read", p("detail", err.Error()))
 	}
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Nodes (%d)", len(nodes)))
+	b.WriteString(t("nodes.title", p("count", strconv.Itoa(len(nodes)))))
 	for _, n := range nodes {
 		s, known := statuses[n.Id]
-		state := "disabled"
+		state := t("nodes.disabled", nil)
 		switch {
 		case !n.Enable:
 		case !known:
-			state = "unknown"
+			state = t("nodes.unknown", nil)
 		default:
-			state = s.State
+			state = nodeStateText(s.State)
 		}
 		b.WriteString("\n" + n.Name + " — " + state)
-		if state == "online" && s.Latency > 0 {
+		if s.State == "online" && s.Latency > 0 {
 			b.WriteString(fmt.Sprintf(" (%d ms)", s.Latency))
 		}
 		if s.Error != "" {
@@ -173,18 +167,18 @@ func onlineText() string {
 	var statsService service.StatsService
 	o, err := statsService.GetOnlines()
 	if err != nil {
-		return "Could not read the online list: " + err.Error()
+		return t("err.read", p("detail", err.Error()))
 	}
 	if len(o.User) == 0 {
-		return "No clients are online."
+		return t("online.none", nil)
 	}
-	return fmt.Sprintf("Online clients (%d)\n%s", len(o.User), strings.Join(o.User, "\n"))
+	return t("online.title", p("count", strconv.Itoa(len(o.User)))) + "\n" + strings.Join(o.User, "\n")
 }
 
 func sendBackup(ctx context.Context, b *bot.Bot, chatID int64) {
 	data, err := database.GetDb("")
 	if err != nil {
-		reply(ctx, b, chatID, "Backup failed: "+err.Error(), mainMenu())
+		reply(ctx, b, chatID, t("backup.failed", p("detail", err.Error())), mainMenu())
 		return
 	}
 	name := "2s-ui-" + notify.Host() + ".db"
@@ -192,6 +186,6 @@ func sendBackup(ctx context.Context, b *bot.Bot, chatID int64) {
 		ChatID:   chatID,
 		Document: &models.InputFileUpload{Filename: name, Data: strings.NewReader(string(data))},
 	}); err != nil {
-		reply(ctx, b, chatID, "Backup upload failed: "+err.Error(), mainMenu())
+		reply(ctx, b, chatID, t("backup.failed", p("detail", err.Error())), mainMenu())
 	}
 }

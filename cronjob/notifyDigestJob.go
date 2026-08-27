@@ -55,7 +55,7 @@ func (j *NotifyReportJob) Run() {
 	if !j.settingService.NotifyEnabled() {
 		return
 	}
-	if err := notify.DeliverNow(service.StatusDigest()); err != nil {
+	if err := notify.DeliverNow(service.StatusDigest(j.settingService.GetNotifyConfig().Lang)); err != nil {
 		logger.Warning("notify: report failed: ", err)
 	}
 }

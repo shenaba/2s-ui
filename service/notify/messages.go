@@ -26,6 +26,15 @@ var Langs = []string{"en", "fa", "ru", "vi", "zhHans", "zhHant"}
 // reorder or drop them freely.
 var messages = map[string]map[string]string{
 	"en": {
+		"digest.clients":     "Clients",
+		"digest.enabled":     "enabled",
+		"digest.online":      "online",
+		"digest.nodes":       "Nodes",
+		"digest.nodesOnline": "online",
+		"digest.core":        "Core",
+		"digest.running":     "running",
+		"digest.stopped":     "stopped",
+
 		"node.down":              "\U0001F534 Node {subject} is down",
 		"node.down.err":          "\U0001F534 Node {subject} is down\n{error}",
 		"node.up":                "\U0001F7E2 Node {subject} is back online",
@@ -45,6 +54,15 @@ var messages = map[string]map[string]string{
 		"login.banned":           "\U0001F6AB {ip} blocked for {minutes} minute(s) after repeated failed logins",
 	},
 	"zhHans": {
+		"digest.clients":     "客户端",
+		"digest.enabled":     "启用",
+		"digest.online":      "在线",
+		"digest.nodes":       "节点",
+		"digest.nodesOnline": "在线",
+		"digest.core":        "核心",
+		"digest.running":     "运行中",
+		"digest.stopped":     "已停止",
+
 		"node.down":              "\U0001F534 节点 {subject} 已离线",
 		"node.down.err":          "\U0001F534 节点 {subject} 已离线\n{error}",
 		"node.up":                "\U0001F7E2 节点 {subject} 已恢复",
@@ -64,6 +82,15 @@ var messages = map[string]map[string]string{
 		"login.banned":           "\U0001F6AB {ip} 因多次登录失败被封禁 {minutes} 分钟",
 	},
 	"zhHant": {
+		"digest.clients":     "客戶端",
+		"digest.enabled":     "啟用",
+		"digest.online":      "線上",
+		"digest.nodes":       "節點",
+		"digest.nodesOnline": "線上",
+		"digest.core":        "核心",
+		"digest.running":     "運行中",
+		"digest.stopped":     "已停止",
+
 		"node.down":              "\U0001F534 節點 {subject} 已離線",
 		"node.down.err":          "\U0001F534 節點 {subject} 已離線\n{error}",
 		"node.up":                "\U0001F7E2 節點 {subject} 已恢復",
@@ -83,6 +110,15 @@ var messages = map[string]map[string]string{
 		"login.banned":           "\U0001F6AB {ip} 因多次登入失敗被封鎖 {minutes} 分鐘",
 	},
 	"ru": {
+		"digest.clients":     "Клиенты",
+		"digest.enabled":     "включено",
+		"digest.online":      "онлайн",
+		"digest.nodes":       "Узлы",
+		"digest.nodesOnline": "онлайн",
+		"digest.core":        "Ядро",
+		"digest.running":     "работает",
+		"digest.stopped":     "остановлено",
+
 		"node.down":              "\U0001F534 Узел {subject} недоступен",
 		"node.down.err":          "\U0001F534 Узел {subject} недоступен\n{error}",
 		"node.up":                "\U0001F7E2 Узел {subject} снова в сети",
@@ -102,6 +138,15 @@ var messages = map[string]map[string]string{
 		"login.banned":           "\U0001F6AB {ip} заблокирован на {minutes} мин. после серии неудачных входов",
 	},
 	"fa": {
+		"digest.clients":     "کاربران",
+		"digest.enabled":     "فعال",
+		"digest.online":      "آنلاین",
+		"digest.nodes":       "نودها",
+		"digest.nodesOnline": "آنلاین",
+		"digest.core":        "هسته",
+		"digest.running":     "در حال اجرا",
+		"digest.stopped":     "متوقف",
+
 		"node.down":              "\U0001F534 نود {subject} از دسترس خارج شد",
 		"node.down.err":          "\U0001F534 نود {subject} از دسترس خارج شد\n{error}",
 		"node.up":                "\U0001F7E2 نود {subject} دوباره آنلاین شد",
@@ -121,6 +166,15 @@ var messages = map[string]map[string]string{
 		"login.banned":           "\U0001F6AB {ip} به دلیل ورودهای ناموفق برای {minutes} دقیقه مسدود شد",
 	},
 	"vi": {
+		"digest.clients":     "Client",
+		"digest.enabled":     "bật",
+		"digest.online":      "trực tuyến",
+		"digest.nodes":       "Node",
+		"digest.nodesOnline": "trực tuyến",
+		"digest.core":        "Lõi",
+		"digest.running":     "đang chạy",
+		"digest.stopped":     "đã dừng",
+
 		"node.down":              "\U0001F534 Node {subject} đã ngoại tuyến",
 		"node.down.err":          "\U0001F534 Node {subject} đã ngoại tuyến\n{error}",
 		"node.up":                "\U0001F7E2 Node {subject} đã trực tuyến trở lại",
@@ -141,19 +195,35 @@ var messages = map[string]map[string]string{
 	},
 }
 
-// translate looks key up in lang, falling back to English and finally to the
-// key itself, then substitutes the placeholders.
-//
-// Falling back per key rather than per language matters: a key added here in
-// English but not yet translated should render in English everywhere, not turn
-// the whole message into a bare identifier.
+// Label translates one alert-table key. The digest labels live in this table
+// rather than the bot's because the scheduled report is an alert, and the two
+// callers (that report and the bot's /status) must not word it differently.
+func Label(lang, key string) string {
+	return translate(lang, key, nil)
+}
+
 func translate(lang, key string, params map[string]string) string {
+	return Translate(messages, lang, key, params)
+}
+
+// Translate looks key up in table[lang], falling back to English and finally to
+// the key itself, then substitutes the {name} placeholders.
+//
+// Exported because service/tgbot keeps its own table: the bot's wording is not
+// the alert wording, and neither package should carry the other's strings. What
+// should not be written twice is this -- the fallback rules and the placeholder
+// syntax.
+//
+// Falling back per key rather than per language matters: a key added in English
+// but not yet translated should render in English everywhere, not turn the whole
+// message into a bare identifier.
+func Translate(table map[string]map[string]string, lang, key string, params map[string]string) string {
 	text := ""
-	if table, ok := messages[lang]; ok {
-		text = table[key]
+	if entries, ok := table[lang]; ok {
+		text = entries[key]
 	}
 	if text == "" {
-		text = messages[DefaultLang][key]
+		text = table[DefaultLang][key]
 	}
 	if text == "" {
 		text = key

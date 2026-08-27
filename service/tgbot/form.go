@@ -27,7 +27,7 @@ func onFormInput(ctx context.Context, b *bot.Bot, chatID int64, form formState, 
 	case stepBindTgId:
 		id, err := strconv.ParseInt(strings.TrimSpace(text), 10, 64)
 		if err != nil || id < 0 {
-			reply(ctx, b, chatID, "Send a numeric Telegram user id, or 0 to unbind.", nil)
+			reply(ctx, b, chatID, t("bind.invalid", nil), nil)
 			return
 		}
 		forms.clear(chatID)
@@ -36,33 +36,33 @@ func onFormInput(ctx context.Context, b *bot.Bot, chatID int64, form formState, 
 	case stepClientName:
 		name := strings.TrimSpace(text)
 		if name == "" {
-			reply(ctx, b, chatID, "The name cannot be empty. Send a name.", nil)
+			reply(ctx, b, chatID, t("form.nameEmpty", nil), nil)
 			return
 		}
 		// Checked here as well as in ClientService.Save. Save would reject it
 		// too, but only after the operator had answered every other question.
 		if _, err := findClient(name); err == nil {
-			reply(ctx, b, chatID, "A client named "+name+" already exists. Send a different name.", nil)
+			reply(ctx, b, chatID, t("form.nameTaken", p("name", name)), nil)
 			return
 		}
 		draft.Name = name
 		forms.set(chatID, stepClientVolume, draft)
-		reply(ctx, b, chatID, "Traffic limit in GB. Send 0 for unlimited.", nil)
+		reply(ctx, b, chatID, t("form.volume", nil), nil)
 
 	case stepClientVolume:
 		gb, err := strconv.ParseInt(strings.TrimSpace(text), 10, 64)
 		if err != nil || gb < 0 {
-			reply(ctx, b, chatID, "Send a whole number of GB, or 0 for unlimited.", nil)
+			reply(ctx, b, chatID, t("form.volumeBad", nil), nil)
 			return
 		}
 		draft.VolumeGB = gb
 		forms.set(chatID, stepClientExpiry, draft)
-		reply(ctx, b, chatID, "Days until expiry. Send 0 for no expiry.", nil)
+		reply(ctx, b, chatID, t("form.expiry", nil), nil)
 
 	case stepClientExpiry:
 		days, err := strconv.Atoi(strings.TrimSpace(text))
 		if err != nil || days < 0 {
-			reply(ctx, b, chatID, "Send a whole number of days, or 0 for no expiry.", nil)
+			reply(ctx, b, chatID, t("form.expiryBad", nil), nil)
 			return
 		}
 		draft.ExpiryDays = days
@@ -74,22 +74,22 @@ func onFormInput(ctx context.Context, b *bot.Bot, chatID int64, form formState, 
 
 func draftSummary(d clientDraft) string {
 	var b strings.Builder
-	b.WriteString("Create this client?\n")
-	b.WriteString("Name: " + d.Name)
+	b.WriteString(t("form.summary", nil) + "\n")
+	b.WriteString(t("form.sumName", p("name", d.Name)))
 	if d.VolumeGB > 0 {
-		b.WriteString("\nTraffic: " + strconv.FormatInt(d.VolumeGB, 10) + " GB")
+		b.WriteString("\n" + t("form.sumTraffic", p("volume", strconv.FormatInt(d.VolumeGB, 10))))
 	} else {
-		b.WriteString("\nTraffic: unlimited")
+		b.WriteString("\n" + t("form.sumUnlim", nil))
 	}
 	if d.ExpiryDays > 0 {
-		b.WriteString("\nExpires in: " + strconv.Itoa(d.ExpiryDays) + " day(s)")
+		b.WriteString("\n" + t("form.sumExpiry", p("days", strconv.Itoa(d.ExpiryDays))))
 	} else {
-		b.WriteString("\nExpires: never")
+		b.WriteString("\n" + t("form.sumNever", nil))
 	}
 	// Said out loud because it is a decision the form did not ask about: a
 	// client attached to nothing is inert, and picking inbounds over chat would
 	// be several more questions for what is almost always the same answer.
-	b.WriteString("\nInbounds: all local inbounds")
+	b.WriteString("\n" + t("form.sumInbound", nil))
 	return b.String()
 }
 
@@ -97,7 +97,7 @@ func draftSummary(d clientDraft) string {
 func createClient(ctx context.Context, b *bot.Bot, chatID int64) {
 	form, ok := forms.get(chatID)
 	if !ok || form.Draft.Name == "" {
-		reply(ctx, b, chatID, "That form has expired. Start again from the menu.", mainMenu())
+		reply(ctx, b, chatID, t("form.expiredMsg", nil), mainMenu())
 		return
 	}
 	d := form.Draft
@@ -105,17 +105,17 @@ func createClient(ctx context.Context, b *bot.Bot, chatID int64) {
 
 	config, err := service.NewClientConfig(d.Name)
 	if err != nil {
-		reply(ctx, b, chatID, "Could not generate credentials: "+err.Error(), mainMenu())
+		reply(ctx, b, chatID, t("err.save", p("detail", err.Error())), mainMenu())
 		return
 	}
 	inbounds, err := service.LocalInboundIDs()
 	if err != nil {
-		reply(ctx, b, chatID, "Could not read the inbound list: "+err.Error(), mainMenu())
+		reply(ctx, b, chatID, t("err.read", p("detail", err.Error())), mainMenu())
 		return
 	}
 	inboundsJSON, err := json.Marshal(inbounds)
 	if err != nil {
-		reply(ctx, b, chatID, "Could not encode the inbound list: "+err.Error(), mainMenu())
+		reply(ctx, b, chatID, t("err.save", p("detail", err.Error())), mainMenu())
 		return
 	}
 
@@ -133,11 +133,11 @@ func createClient(ctx context.Context, b *bot.Bot, chatID int64) {
 
 	data, err := json.Marshal(client)
 	if err != nil {
-		reply(ctx, b, chatID, "Could not encode the client: "+err.Error(), mainMenu())
+		reply(ctx, b, chatID, t("err.save", p("detail", err.Error())), mainMenu())
 		return
 	}
 	if err := save(chatID, "clients", "new", data); err != nil {
-		reply(ctx, b, chatID, "Save failed: "+err.Error(), mainMenu())
+		reply(ctx, b, chatID, t("err.save", p("detail", err.Error())), mainMenu())
 		return
 	}
 
@@ -145,12 +145,12 @@ func createClient(ctx context.Context, b *bot.Bot, chatID int64) {
 	if err != nil {
 		// Saved but not readable back: report the success rather than an error,
 		// since the client does exist.
-		reply(ctx, b, chatID, "Created "+d.Name+".", mainMenu())
+		reply(ctx, b, chatID, t("form.created", nil), mainMenu())
 		return
 	}
 	markup := &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
-		{Text: "Open", CallbackData: payloadPrefix + payloads.put("client|"+d.Name)},
-		{Text: "Menu", CallbackData: staticPrefix + "status"},
+		{Text: t("btn.open", nil), CallbackData: payloadPrefix + payloads.put("client|"+d.Name)},
+		{Text: t("btn.menu", nil), CallbackData: staticPrefix + "status"},
 	}}}
-	reply(ctx, b, chatID, "Created.\n"+clientDetail(*created), markup)
+	reply(ctx, b, chatID, t("form.created", nil)+"\n"+clientDetail(*created), markup)
 }

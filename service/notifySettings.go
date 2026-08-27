@@ -57,8 +57,16 @@ func (s *SettingService) notifySettings() map[string]string {
 			out[key] = def
 		}
 	}
+	// Nil before InitDB and after CloseDBForTest. Every production caller runs
+	// after app.Init, but degrading to the defaults is the right answer either
+	// way -- a settings read is not worth a panic, and the defaults are what an
+	// unconfigured panel would report anyway.
+	db := database.GetDB()
+	if db == nil {
+		return out
+	}
 	var rows []model.Setting
-	if err := database.GetDB().Model(model.Setting{}).
+	if err := db.Model(model.Setting{}).
 		Where("key LIKE ?", "notify%").Find(&rows).Error; err != nil {
 		logger.Warning("notify: read settings:", err)
 		return out
@@ -156,6 +164,10 @@ type BotConfig struct {
 	// chats the panel already reports to are the chats allowed to command it,
 	// and two lists would only ever drift apart.
 	Admins []string
+	// Lang is notifyLang, shared with the alerts for the same reason: an
+	// operator who set their alerts to Chinese did not ask for an English
+	// console.
+	Lang string
 }
 
 // Connection reports the fields a reconnect has to react to. The supervisor
@@ -169,7 +181,12 @@ func (c BotConfig) Runnable() bool { return c.Enable && c.Token != "" }
 
 func (s *SettingService) GetBotConfig() BotConfig {
 	m := s.notifySettings()
+	lang := m["notifyLang"]
+	if lang == "" {
+		lang = notify.DefaultLang
+	}
 	return BotConfig{
+		Lang: lang,
 		// Gated on the master switch as well: turning notifications off should
 		// not leave a bot answering commands.
 		Enable:    m["notifyEnable"] == "true" && m["notifyBotEnable"] == "true",

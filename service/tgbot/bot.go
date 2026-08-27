@@ -148,9 +148,9 @@ func watchConfig(ctx context.Context, stop context.CancelFunc, connected string)
 }
 
 func setCommands(ctx context.Context, b *bot.Bot) {
-	cmds := make([]models.BotCommand, 0, len(commands))
-	for _, c := range commands {
-		cmds = append(cmds, models.BotCommand{Command: c.name, Description: c.desc})
+	cmds := make([]models.BotCommand, 0, len(commandNames))
+	for _, name := range commandNames {
+		cmds = append(cmds, models.BotCommand{Command: name, Description: t("cmd."+name, nil)})
 	}
 	if _, err := b.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: cmds}); err != nil {
 		// Cosmetic only -- it populates the in-app command menu. The commands
