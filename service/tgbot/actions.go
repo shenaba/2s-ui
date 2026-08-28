@@ -43,10 +43,7 @@ func onCallback(ctx context.Context, b *bot.Bot, q *models.CallbackQuery) {
 
 	data := q.Data
 	if r == roleClient {
-		// The only button an end user is ever sent.
-		if data == staticPrefix+"self" {
-			sendSelfUsage(ctx, b, chatID, boundClient)
-		}
+		onClientCallback(ctx, b, chatID, boundClient, data)
 		return
 	}
 
@@ -63,6 +60,36 @@ func onCallback(ctx context.Context, b *bot.Bot, q *models.CallbackQuery) {
 			return
 		}
 		onPayloadCallback(ctx, b, chatID, payload)
+	}
+}
+
+// onClientCallback handles the buttons an end user is sent.
+//
+// None of them carries a client name: every one acts on the client roleOf
+// resolved from the chat. That is the same rule the message path follows -- with
+// no name in the input there is nothing to point at somebody else's account --
+// and it is why the link buttons here carry only an index.
+func onClientCallback(ctx context.Context, b *bot.Bot, chatID int64, name, data string) {
+	switch {
+	case data == staticPrefix+"self":
+		sendSelfUsage(ctx, b, chatID, name)
+	case data == staticPrefix+"self.links":
+		sendClientLinks(ctx, b, chatID, name, true)
+	case strings.HasPrefix(data, payloadPrefix):
+		payload, ok := payloads.get(strings.TrimPrefix(data, payloadPrefix))
+		if !ok {
+			reply(ctx, b, chatID, t("expired", nil), nil)
+			return
+		}
+		verb, arg, _ := strings.Cut(payload, "|")
+		if verb != "selflink" {
+			return
+		}
+		index, err := strconv.Atoi(arg)
+		if err != nil {
+			return
+		}
+		sendClientLink(ctx, b, chatID, name, index, true)
 	}
 }
 
@@ -162,6 +189,19 @@ func onPayloadCallback(ctx context.Context, b *bot.Bot, chatID int64, payload st
 			c.Up, c.Down = 0, 0
 			return "client.doneReset", nil
 		})
+
+	case "links":
+		sendClientLinks(ctx, b, chatID, arg, false)
+	case "link":
+		// index|name, and the name goes last because it is the part that may
+		// itself contain the separator.
+		indexText, name, _ := strings.Cut(arg, "|")
+		index, err := strconv.Atoi(indexText)
+		if err != nil {
+			reply(ctx, b, chatID, t("expired", nil), mainMenu())
+			return
+		}
+		sendClientLink(ctx, b, chatID, name, index, false)
 
 	case "bind":
 		// Stored on the draft's Name because that is the field the next
@@ -393,7 +433,10 @@ func sendClientCard(ctx context.Context, b *bot.Bot, chatID int64, name string) 
 			{Text: toggle, CallbackData: payloadPrefix + payloads.put("toggle|"+c.Name)},
 			{Text: t("btn.reset", nil), CallbackData: payloadPrefix + payloads.put("reset|"+c.Name)},
 		},
-		{{Text: bindLabel(c.TgId), CallbackData: payloadPrefix + payloads.put("bind|"+c.Name)}},
+		{
+			{Text: t("btn.links", nil), CallbackData: payloadPrefix + payloads.put("links|"+c.Name)},
+			{Text: bindLabel(c.TgId), CallbackData: payloadPrefix + payloads.put("bind|"+c.Name)},
+		},
 		{{Text: t("btn.back", nil), CallbackData: staticPrefix + "clients"}},
 	}}
 	reply(ctx, b, chatID, clientDetail(*c), markup)

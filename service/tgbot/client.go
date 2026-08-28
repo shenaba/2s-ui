@@ -28,6 +28,7 @@ func sendSelfUsage(ctx context.Context, b *bot.Bot, chatID int64, name string) {
 		return
 	}
 	markup := &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
+		{Text: t("btn.links", nil), CallbackData: staticPrefix + "self.links"},
 		{Text: t("btn.refresh", nil), CallbackData: staticPrefix + "self"},
 	}}}
 	reply(ctx, b, chatID, selfUsageText(*c), markup)

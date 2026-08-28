@@ -87,7 +87,7 @@ func TestKeysUsedByTheCodeExist(t *testing.T) {
 		"btn.new", "btn.confirm", "btn.cancel", "btn.back", "btn.menu", "btn.open",
 		"btn.refresh", "btn.enable", "btn.disable", "btn.reset", "btn.bind", "btn.rebind",
 		"btn.inbounds", "btn.traffic", "btn.bans", "btn.bansClear", "btn.search",
-		"btn.prev", "btn.next",
+		"btn.prev", "btn.next", "btn.links",
 		"unknownCmd", "expired", "cancelled", "err.read", "err.save",
 		"greet", "alive", "id.reply",
 		"nodes.none", "nodes.title", "nodes.online", "nodes.offline", "nodes.stopped",
@@ -112,6 +112,7 @@ func TestKeysUsedByTheCodeExist(t *testing.T) {
 		"form.expiredMsg", "form.created",
 		"self.unavailable", "self.left", "self.exhausted", "self.unlimited",
 		"self.disabled", "self.sub",
+		"links.none", "links.title", "links.more", "links.unnamed", "links.noQr",
 	}
 	en := botMessages[notify.DefaultLang]
 	for _, k := range used {

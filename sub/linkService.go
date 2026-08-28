@@ -18,8 +18,23 @@ type LinkService struct {
 }
 
 func (s *LinkService) GetLinks(linkJson *json.RawMessage, types string, clientInfo string) []string {
-	links := []Link{}
+	expanded := s.GetLinkList(linkJson, types, clientInfo)
 	var result []string
+	for _, link := range expanded {
+		result = append(result, link.Uri)
+	}
+	return result
+}
+
+// GetLinkList is GetLinks with the remarks kept.
+//
+// The remark is what a link is called on screen -- it names the inbound the
+// link belongs to -- and any caller offering one link at a time needs it to
+// label the choice. A remote subscription expands into several links that share
+// the stored entry's remark, since the remote gives no per-link name here.
+func (s *LinkService) GetLinkList(linkJson *json.RawMessage, types string, clientInfo string) []Link {
+	links := []Link{}
+	var result []Link
 	err := json.Unmarshal(*linkJson, &links)
 	if err != nil {
 		return nil
@@ -27,13 +42,19 @@ func (s *LinkService) GetLinks(linkJson *json.RawMessage, types string, clientIn
 	for _, link := range links {
 		switch link.Type {
 		case "external":
-			result = append(result, link.Uri)
+			result = append(result, link)
 		case "sub":
 			subLinks := util.GetExternalLink(link.Uri)
-			result = append(result, strings.Split(subLinks, "\n")...)
+			for _, uri := range strings.Split(subLinks, "\n") {
+				result = append(result, Link{Type: link.Type, Remark: link.Remark, Uri: uri})
+			}
 		case "local":
 			if types == "all" {
-				result = append(result, s.addClientInfo(link.Uri, clientInfo))
+				result = append(result, Link{
+					Type:   link.Type,
+					Remark: link.Remark,
+					Uri:    s.addClientInfo(link.Uri, clientInfo),
+				})
 			}
 		}
 	}
