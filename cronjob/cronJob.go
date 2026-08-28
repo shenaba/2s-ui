@@ -58,6 +58,8 @@ func (c *CronJob) Start(loc *time.Location, trafficAge int, statsBucketSeconds i
 		c.cron.AddJob("@every 1h", NewNodeReconcileJob())
 		// Sample CPU/memory for threshold alerts (no-op unless a threshold is set)
 		c.cron.AddJob("@every 1m", NewCheckSystemJob())
+		// Probe outbound reachability (no-op unless the alerts are enabled)
+		c.cron.AddJob("@every 5m", NewCheckOutboundJob())
 		// Daily database backup to Telegram (no-op unless switched on)
 		c.cron.AddJob("@daily", NewNotifyBackupJob())
 		// Periodic status digest, only when a valid cron spec is configured.

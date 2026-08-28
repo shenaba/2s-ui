@@ -28,6 +28,7 @@ func TestNotifyDefaultsAreComplete(t *testing.T) {
 		"notifyLang",
 		"notifyMemory",
 		"notifyNodeFlap",
+		"notifyOutboundUrl",
 		"notifyProxy",
 		"notifyReport",
 		"notifySmtpFrom",

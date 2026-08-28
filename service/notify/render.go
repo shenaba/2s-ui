@@ -45,6 +45,35 @@ func Render(e Event, lang string) string {
 	return translate(lang, key, params)
 }
 
+// RenderClient turns an event into the message its own client is sent, which is
+// a different message from the operator's rather than a translation of it: the
+// operator is told which of their clients is running out, the client is told
+// what has happened to their own account.
+//
+// Nothing identifying the panel goes in -- no Host() prefix, no counts of other
+// clients. This is the only notification that leaves the operator's own circle.
+//
+// A kind with nothing to say to a client renders empty and the caller skips it,
+// so adding a kind does not silently start messaging customers.
+func RenderClient(e Event, target ClientTarget, lang string) string {
+	p := map[string]string{"name": target.Name}
+	switch e.Kind {
+	case ClientExpiring:
+		switch {
+		case target.DaysLeft > 0:
+			p["days"] = strconv.Itoa(target.DaysLeft)
+			return translate(lang, "self.expiring.days", p)
+		case target.BytesLeft > 0:
+			p["volume"] = humanBytes(target.BytesLeft)
+			return translate(lang, "self.expiring.volume", p)
+		}
+		return ""
+	case ClientDepleted:
+		return translate(lang, "self.depleted", p)
+	}
+	return ""
+}
+
 // describe maps an event onto a message key and its placeholders. It tolerates
 // a missing or mistyped Data: the event still renders, just without detail.
 func describe(e Event) (string, map[string]string) {
@@ -72,6 +101,19 @@ func describe(e Event) (string, map[string]string) {
 		return "core.crash", p
 	case CoreUp:
 		return "core.up", p
+
+	case OutboundDown:
+		if d, ok := e.Data.(*OutboundData); ok && d.Err != "" {
+			p["error"] = d.Err
+			return "outbound.down.err", p
+		}
+		return "outbound.down", p
+	case OutboundUp:
+		if d, ok := e.Data.(*OutboundData); ok && d.LatencyMs > 0 {
+			p["latency"] = strconv.FormatUint(uint64(d.LatencyMs), 10)
+			return "outbound.up.latency", p
+		}
+		return "outbound.up", p
 
 	case ClientDepleted:
 		if d, ok := e.Data.(*ClientData); ok && len(d.Names) > 0 {

@@ -41,6 +41,31 @@ func (o *OutboundService) GetAll() (*[]map[string]interface{}, error) {
 	return &data, nil
 }
 
+// probeSkippedTypes are the outbound types the reachability probe leaves alone.
+// direct, block and dns never dial the remote a URL test would measure, and
+// selector/urltest are groups -- probing one reports the health of whichever
+// member it currently points at, filed under the group's tag.
+var probeSkippedTypes = map[string]bool{
+	"direct": true, "block": true, "dns": true, "selector": true, "urltest": true,
+}
+
+// ProbeTargets lists the outbound tags worth reachability-testing.
+func (o *OutboundService) ProbeTargets() ([]string, error) {
+	var rows []model.Outbound
+	err := database.GetDB().Model(model.Outbound{}).Select("type", "tag").Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	tags := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.Tag == "" || probeSkippedTypes[row.Type] {
+			continue
+		}
+		tags = append(tags, row.Tag)
+	}
+	return tags, nil
+}
+
 func (o *OutboundService) GetAllConfig(db *gorm.DB) ([]json.RawMessage, error) {
 	var outboundsJson []json.RawMessage
 	var outbounds []*model.Outbound

@@ -12,10 +12,12 @@ type Kind string
 
 const (
 	// State events. Delivery is gated on a transition -- see Suppressor.
-	NodeDown  Kind = "node.down"
-	NodeUp    Kind = "node.up"
-	CoreCrash Kind = "core.crash"
-	CoreUp    Kind = "core.up"
+	NodeDown     Kind = "node.down"
+	NodeUp       Kind = "node.up"
+	CoreCrash    Kind = "core.crash"
+	CoreUp       Kind = "core.up"
+	OutboundDown Kind = "outbound.down"
+	OutboundUp   Kind = "outbound.up"
 
 	// One-shot events, rate limited per subject.
 	ClientDepleted Kind = "client.depleted"
@@ -32,6 +34,7 @@ const (
 // AllKinds is the order the settings page lists the toggles in.
 var AllKinds = []Kind{
 	NodeDown, NodeUp, CoreCrash, CoreUp,
+	OutboundDown, OutboundUp,
 	ClientDepleted, ClientExpiring, CPUHigh, MemoryHigh,
 	LoginSuccess, LoginFailed, LoginBanned,
 }
@@ -67,6 +70,15 @@ type CoreData struct {
 	Err string
 }
 
+// OutboundData accompanies OutboundDown / OutboundUp. Separate from NodeData
+// despite the identical shape: the two describe different things, and merging
+// them would make a later field that only one of them has read as if it applied
+// to both.
+type OutboundData struct {
+	LatencyMs uint16
+	Err       string
+}
+
 // ClientData accompanies ClientDepleted / ClientExpiring. Names is plural
 // because DepleteJob disables a whole batch in one pass and sends one event for
 // the batch rather than one per client.
@@ -74,6 +86,25 @@ type ClientData struct {
 	Names []string
 	// DaysLeft / BytesLeft are only set for ClientExpiring, and only the one
 	// that actually tripped is non-zero.
+	DaysLeft  int
+	BytesLeft int64
+	// Targets are the clients this event is about that have a Telegram binding,
+	// so they can be warned directly as well as the operator. Empty whenever
+	// nobody involved has one, which is the common case -- the binding is
+	// optional and set through the bot, not the panel's client form.
+	//
+	// The operator's message is still rendered from the fields above; this only
+	// adds recipients, it does not change what the operator is told.
+	Targets []ClientTarget
+}
+
+// ClientTarget is one client to warn on their own Telegram chat, carrying the
+// figures that client's message needs. They are repeated here rather than read
+// off ClientData because a batched event (ClientDepleted) stands for many
+// clients at once, each with its own numbers.
+type ClientTarget struct {
+	Name      string
+	TgId      int64
 	DaysLeft  int
 	BytesLeft int64
 }

@@ -715,7 +715,7 @@ func (s *ClientService) DepleteClients() ([]uint, []string, error) {
 	// condition instead of announcing an idle round.
 	// Collected inside the transaction, published after it commits: an alert
 	// about a client that a rollback left enabled would simply be false.
-	var depleted []string
+	var depleted []model.Client
 	var expiring []expiringClient
 
 	seqBefore := lastUpdateSeq.Load()
@@ -751,7 +751,7 @@ func (s *ClientService) DepleteClients() ([]uint, []string, error) {
 	for _, client := range clients {
 		logger.Debug("Client ", client.Name, " is going to be disabled")
 		enableChanged = append(enableChanged, client.Name)
-		depleted = append(depleted, client.Name)
+		depleted = append(depleted, client)
 		var userInbounds []uint
 		json.Unmarshal(client.Inbounds, &userInbounds)
 		// Find changed inbounds
@@ -796,6 +796,8 @@ type expiringClient struct {
 	Name      string
 	DaysLeft  int
 	BytesLeft int64
+	// Telegram chat to warn directly, or 0 for a client with no binding.
+	TgId int64
 }
 
 // findExpiringClients selects the clients approaching either limit, using the
@@ -832,7 +834,7 @@ func (s *ClientService) findExpiringClients(tx *gorm.DB, dt int64) ([]expiringCl
 
 	out := make([]expiringClient, 0, len(rows))
 	for _, c := range rows {
-		e := expiringClient{Name: c.Name}
+		e := expiringClient{Name: c.Name, TgId: c.TgId}
 		if c.Expiry > dt {
 			// Rounded up, so a client with six hours left reads "1 day" rather
 			// than "0 days", which would look like a bug.
@@ -847,26 +849,49 @@ func (s *ClientService) findExpiringClients(tx *gorm.DB, dt int64) ([]expiringCl
 }
 
 // publishClientEvents reports one depletion pass.
-func publishClientEvents(depleted []string, expiring []expiringClient) {
+//
+// Every event carries the Telegram bindings of the clients it is about, so the
+// notifier can warn each of them as well as the operator. Whole rows come in
+// rather than names because that binding is the one field a name cannot carry.
+func publishClientEvents(depleted []model.Client, expiring []expiringClient) {
 	if len(depleted) > 0 {
 		// One event for the whole pass: disabling fifty clients at once is one
 		// thing that happened, not fifty. A disabled client is not selected by
 		// the next pass, so there is nothing to repeat.
+		//
+		// The clients themselves are still told individually -- "you have run
+		// out" is not a batch statement -- which is what Targets carries.
+		names := make([]string, 0, len(depleted))
+		var targets []notify.ClientTarget
+		for _, c := range depleted {
+			names = append(names, c.Name)
+			if c.TgId != 0 {
+				targets = append(targets, notify.ClientTarget{Name: c.Name, TgId: c.TgId})
+			}
+		}
 		notify.Publish(notify.Event{
 			Kind:    notify.ClientDepleted,
 			Subject: "batch",
-			Data:    &notify.ClientData{Names: depleted},
+			Data:    &notify.ClientData{Names: names, Targets: targets},
 		})
 	}
 	// Warnings stay per client, because the useful part of the message is how
 	// much a *particular* client has left, which a combined list cannot say.
 	// The suppressor keys its 24h cooldown on the name, so a client sitting
-	// near its limit is reported once a day rather than once a minute.
+	// near its limit is reported once a day rather than once a minute -- and
+	// the client's own copy inherits that same cooldown, since both are the
+	// same event.
 	for _, c := range expiring {
+		data := &notify.ClientData{DaysLeft: c.DaysLeft, BytesLeft: c.BytesLeft}
+		if c.TgId != 0 {
+			data.Targets = []notify.ClientTarget{{
+				Name: c.Name, TgId: c.TgId, DaysLeft: c.DaysLeft, BytesLeft: c.BytesLeft,
+			}}
+		}
 		notify.Publish(notify.Event{
 			Kind:    notify.ClientExpiring,
 			Subject: c.Name,
-			Data:    &notify.ClientData{DaysLeft: c.DaysLeft, BytesLeft: c.BytesLeft},
+			Data:    data,
 		})
 	}
 }

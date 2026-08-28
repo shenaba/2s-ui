@@ -363,7 +363,7 @@ func TestFindExpiringClients(t *testing.T) {
 		}
 	}
 
-	seed(model.Client{Name: "expires-tomorrow", Enable: true, Expiry: now + day})
+	seed(model.Client{Name: "expires-tomorrow", Enable: true, Expiry: now + day, TgId: 4242})
 	seed(model.Client{Name: "expires-in-two-days", Enable: true, Expiry: now + 2*day})
 	seed(model.Client{Name: "low-traffic", Enable: true, Volume: 100 * gib, Up: 96 * gib, Down: 0})
 	// Excluded: the depletion pass owns everything already over a limit.
@@ -393,6 +393,15 @@ func TestFindExpiringClients(t *testing.T) {
 	}
 	if len(byName) != len(want) {
 		t.Errorf("warned about %d clients, want %d: %v", len(byName), len(want), byName)
+	}
+
+	// The Telegram binding has to come through, or the client never hears about
+	// their own expiry -- publishClientEvents has nowhere else to read it from.
+	if got := byName["expires-tomorrow"].TgId; got != 4242 {
+		t.Errorf("the telegram binding was dropped: TgId = %d, want 4242", got)
+	}
+	if got := byName["low-traffic"].TgId; got != 0 {
+		t.Errorf("an unbound client came back with TgId %d", got)
 	}
 
 	// A client with just under a full day left has to read as 1 day, not 0 --

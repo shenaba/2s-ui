@@ -55,7 +55,13 @@ func (j *NotifyReportJob) Run() {
 	if !j.settingService.NotifyEnabled() {
 		return
 	}
-	if err := notify.DeliverNow(service.StatusDigest(j.settingService.GetNotifyConfig().Lang)); err != nil {
+	lang := j.settingService.GetNotifyConfig().Lang
+	// The names only go in the report, not in StatusDigest itself: that one is
+	// also the bot's /status, which has to stay one screen. Here the names are
+	// the point -- "Clients 120 (118 enabled)" does not say which two stopped
+	// working overnight.
+	body := service.StatusDigest(lang) + service.ClientAlertDigest(lang)
+	if err := notify.DeliverNow(body); err != nil {
 		logger.Warning("notify: report failed: ", err)
 	}
 }

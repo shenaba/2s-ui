@@ -37,8 +37,12 @@ type Config struct {
 	SMTP     SMTPConfig
 }
 
-// wants reports whether the operator asked to hear about this kind.
-func (c Config) wants(k Kind) bool {
+// Wants reports whether the operator asked to hear about this kind.
+//
+// Exported because an event source may be expensive enough to be worth skipping
+// entirely: the outbound probe dials every outbound through the core, which is
+// not something to do every five minutes for an alert nobody enabled.
+func (c Config) Wants(k Kind) bool {
 	return c.Enable && c.Events[k]
 }
 
@@ -114,6 +118,15 @@ func Start(cfg func() Config) {
 			sendSMTP(c, e)
 		}
 	})
+	// The affected clients, not the operator. Its own subscriber rather than a
+	// branch inside the Telegram one because it is a different audience with a
+	// different failure mode: a customer whose chat id is stale must not stop
+	// the operator's copy of the same alert going out.
+	n.bus.Subscribe("client", func(e Event) {
+		if c := cfg(); c.Telegram.Token != "" {
+			sendClientAlerts(c, e)
+		}
+	})
 	std = n
 }
 
@@ -143,7 +156,7 @@ func Publish(e Event) {
 
 func (n *Notifier) publish(e Event) {
 	cfg := n.cfg()
-	if !cfg.wants(e.Kind) {
+	if !cfg.Wants(e.Kind) {
 		return
 	}
 	if e.At.IsZero() {

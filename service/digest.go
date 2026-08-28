@@ -2,7 +2,10 @@ package service
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/database/model"
@@ -78,6 +81,75 @@ func StatusDigest(lang string) string {
 	b.WriteString("\n" + notify.Label(lang, "digest.core") + " " + core)
 
 	return b.String()
+}
+
+// digestListLimit bounds each list in ClientAlertDigest. A panel whose whole
+// client base expired on the same day would otherwise mail out thousands of
+// names, and whatever is dropped is always counted -- a silently truncated list
+// reads as if it were the whole thing.
+const digestListLimit = 20
+
+// ClientAlertDigest lists the clients that have run out and the ones about to,
+// or "" when there is nothing to say.
+//
+// Separate from StatusDigest, which is also the bot's /status and has to stay
+// one screen. This is for the scheduled report, where the names are the point:
+// an operator reading "Clients 120 (118 enabled)" over breakfast cannot tell
+// which two stopped working.
+//
+// The "expiring" half is read through ClientService.findExpiringClients so the
+// report and the alerts agree on what "about to" means -- both then honour the
+// notifyExpireDays / notifyVolumeGB thresholds, including the operator's
+// decision to switch either of them off.
+func ClientAlertDigest(lang string) string {
+	db := database.GetDB()
+	now := time.Now().Unix()
+
+	var b strings.Builder
+
+	var depleted []struct{ Name string }
+	err := db.Model(model.Client{}).
+		Where("enable = false AND ((volume > 0 AND up+down > volume) OR (expiry > 0 AND expiry < ?))", now).
+		Order("name").Select("name").Scan(&depleted).Error
+	if err != nil {
+		logger.Warning("digest: depleted clients: ", err)
+	} else if len(depleted) > 0 {
+		names := make([]string, 0, len(depleted))
+		for _, row := range depleted {
+			names = append(names, row.Name)
+		}
+		writeDigestSection(&b, lang, "digest.depleted", names)
+	}
+
+	var clientService ClientService
+	expiring, err := clientService.findExpiringClients(db, now)
+	if err != nil {
+		logger.Warning("digest: expiring clients: ", err)
+	} else if len(expiring) > 0 {
+		names := make([]string, 0, len(expiring))
+		for _, c := range expiring {
+			names = append(names, c.Name)
+		}
+		sort.Strings(names)
+		writeDigestSection(&b, lang, "digest.expiring", names)
+	}
+
+	return b.String()
+}
+
+func writeDigestSection(b *strings.Builder, lang, titleKey string, names []string) {
+	b.WriteString("\n\n" + notify.Label(lang, titleKey))
+	shown := names
+	if len(shown) > digestListLimit {
+		shown = shown[:digestListLimit]
+	}
+	for _, name := range shown {
+		b.WriteString("\n" + name)
+	}
+	if dropped := len(names) - len(shown); dropped > 0 {
+		b.WriteString("\n" + notify.LabelWith(lang, "digest.more",
+			map[string]string{"count": strconv.Itoa(dropped)}))
+	}
 }
 
 // UsageRatio turns one of ServerService's {current,total} maps into a

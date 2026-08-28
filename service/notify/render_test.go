@@ -112,6 +112,65 @@ func TestRenderFallsBackPerKey(t *testing.T) {
 	}
 }
 
+// The client's copy of an alert is a different message from the operator's, and
+// the difference is the point: it must not carry the panel's hostname, and it
+// must exist in every shipped language.
+func TestRenderClientSpeaksToTheClient(t *testing.T) {
+	target := ClientTarget{Name: "alice", TgId: 42, DaysLeft: 3}
+	volume := ClientTarget{Name: "alice", TgId: 42, BytesLeft: 5 << 30}
+
+	cases := []struct {
+		what   string
+		event  Event
+		target ClientTarget
+		want   string
+	}{
+		{"days left", Event{Kind: ClientExpiring}, target, "3"},
+		{"volume left", Event{Kind: ClientExpiring}, volume, "5.0 GiB"},
+		{"depleted", Event{Kind: ClientDepleted}, ClientTarget{Name: "alice", TgId: 42}, "alice"},
+	}
+	for _, c := range cases {
+		for _, lang := range Langs {
+			got := RenderClient(c.event, c.target, lang)
+			if got == "" {
+				t.Errorf("%s in %s rendered empty", c.what, lang)
+				continue
+			}
+			if strings.Contains(got, "{") {
+				t.Errorf("%s in %s left a placeholder in: %q", c.what, lang, got)
+			}
+			if !strings.Contains(got, "alice") {
+				t.Errorf("%s in %s does not name the client: %q", c.what, lang, got)
+			}
+			if strings.Contains(got, Host()) {
+				t.Errorf("%s in %s leaks the panel hostname: %q", c.what, lang, got)
+			}
+		}
+		if got := RenderClient(c.event, c.target, "en"); !strings.Contains(got, c.want) {
+			t.Errorf("%s: %q does not contain %q", c.what, got, c.want)
+		}
+	}
+}
+
+// Anything the client has no business hearing about renders empty, so adding a
+// kind to the bus cannot silently start messaging customers.
+func TestRenderClientIsSilentForOperatorKinds(t *testing.T) {
+	target := ClientTarget{Name: "alice", TgId: 42, DaysLeft: 3}
+	for _, k := range AllKinds {
+		if k == ClientExpiring || k == ClientDepleted {
+			continue
+		}
+		if got := RenderClient(Event{Kind: k}, target, "en"); got != "" {
+			t.Errorf("%s rendered a client message: %q", k, got)
+		}
+	}
+	// An expiring event that tripped neither margin has nothing to tell the
+	// client, so it is not sent one.
+	if got := RenderClient(Event{Kind: ClientExpiring}, ClientTarget{Name: "alice"}, "en"); got != "" {
+		t.Errorf("an expiry with no margin rendered: %q", got)
+	}
+}
+
 // Every key used by describe() must exist in English, or that event renders as
 // a bare identifier like "client.expiring.volume" in every language.
 func TestEveryMessageKeyIsTranslated(t *testing.T) {
@@ -123,6 +182,10 @@ func TestEveryMessageKeyIsTranslated(t *testing.T) {
 		{Kind: CoreCrash, Data: &CoreData{Err: "bad config"}},
 		{Kind: CoreCrash},
 		{Kind: CoreUp},
+		{Kind: OutboundDown, Data: &OutboundData{Err: "dial timeout"}},
+		{Kind: OutboundDown},
+		{Kind: OutboundUp, Data: &OutboundData{LatencyMs: 42}},
+		{Kind: OutboundUp},
 		{Kind: ClientDepleted, Data: &ClientData{Names: []string{"a", "b"}}},
 		{Kind: ClientExpiring, Data: &ClientData{DaysLeft: 3}},
 		{Kind: ClientExpiring, Data: &ClientData{BytesLeft: 5 << 30}},

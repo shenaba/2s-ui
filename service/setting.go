@@ -118,6 +118,10 @@ var defaultValueMap = map[string]string{
 	"notifySmtpSecurity": "starttls",
 	"notifyBackup":       "false",
 	"notifyReport":       "",
+	// What the outbound probe fetches through each outbound. A 204 endpoint on
+	// purpose: it is the cheapest possible answer, and this runs once per
+	// outbound per pass.
+	"notifyOutboundUrl": "https://www.gstatic.com/generate_204",
 	// Every notify* key the code reads must have a default here: notifySettings
 	// seeds its map from this one and ignores DB rows for keys it does not know,
 	// so a missing entry reads as the zero value forever -- and Save's UPDATE

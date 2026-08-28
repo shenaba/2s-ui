@@ -180,6 +180,17 @@ func (s *SettingService) GetNotifyReportSpec() string {
 	return strings.TrimSpace(s.notifySettings()["notifyReport"])
 }
 
+// GetNotifyOutboundUrl returns what the outbound probe should fetch. An
+// operator who clears the field gets the default back rather than a probe that
+// URL-tests an empty string and reports every outbound as broken.
+func (s *SettingService) GetNotifyOutboundUrl() string {
+	url := strings.TrimSpace(s.notifySettings()["notifyOutboundUrl"])
+	if url == "" {
+		url = defaultValueMap["notifyOutboundUrl"]
+	}
+	return url
+}
+
 // BotConfig is what the interactive Telegram bot needs to connect and to decide
 // who it will talk to.
 type BotConfig struct {

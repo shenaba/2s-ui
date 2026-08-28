@@ -75,6 +75,10 @@ func (s *Suppressor) Decide(e Event, now time.Time) Decision {
 		return Decision{Send: s.stateChangedLocked("core:"+e.Subject, true)}
 	case CoreCrash:
 		return Decision{Send: s.stateChangedLocked("core:"+e.Subject, false)}
+	case OutboundUp:
+		return Decision{Send: s.stateChangedLocked("outbound:"+e.Subject, true)}
+	case OutboundDown:
+		return Decision{Send: s.stateChangedLocked("outbound:"+e.Subject, false)}
 
 	// A ban is the one alert that must never be withheld: it means someone is
 	// actively working on the password, which is precisely when a rate limit on

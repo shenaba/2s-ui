@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/shenaba/2s-ui/logger"
@@ -34,6 +35,42 @@ func sendTelegram(cfg Config, e Event) error {
 				// Skip this chat's remaining pages -- a half-delivered multi
 				// page message is worse than one that failed outright.
 				break
+			}
+		}
+	}
+	return firstErr
+}
+
+// sendClientAlerts warns each affected client on their own Telegram chat.
+//
+// Gated by the caller on the token alone rather than on TelegramConfig.enabled(),
+// which also demands an admin chat id: telling customers about their own quota
+// while the operator hears nothing is a legitimate setup, and the only thing
+// this needs is the bot's credentials. It does not need the interactive bot to
+// be switched on either -- this is an outgoing call, not a polling session.
+//
+// A target RenderClient has no wording for is skipped rather than sent an empty
+// message, so adding a kind to the bus does not silently start messaging
+// customers about it.
+func sendClientAlerts(cfg Config, e Event) error {
+	d, ok := e.Data.(*ClientData)
+	if !ok || len(d.Targets) == 0 {
+		return nil
+	}
+
+	var firstErr error
+	for _, target := range d.Targets {
+		if target.TgId == 0 {
+			continue
+		}
+		text := RenderClient(e, target, cfg.Lang)
+		if text == "" {
+			continue
+		}
+		if err := telegramSendMessage(cfg, strconv.FormatInt(target.TgId, 10), text); err != nil {
+			logger.Warning("notify: client alert to ", target.TgId, " failed: ", err)
+			if firstErr == nil {
+				firstErr = err
 			}
 		}
 	}

@@ -264,6 +264,17 @@
         <SRow :label="$t('setting.notifyNodeFlap')" :hint="$t('setting.notifyNodeFlapHint')">
           <input class="input mono" type="number" min="1" v-model.number="notifyNodeFlap" />
         </SRow>
+        <SRow :label="$t('setting.notifyOutboundUrl')" :hint="$t('setting.notifyOutboundUrlHint')">
+          <input class="input mono" v-model="settings.notifyOutboundUrl"
+                 placeholder="https://www.gstatic.com/generate_204" />
+        </SRow>
+
+        <SectionLabel class="sg-span notify-section">{{ $t('setting.notifySchedule') }}</SectionLabel>
+        <SRow :label="$t('setting.notifyReport')" :hint="$t('setting.notifyReportHint')">
+          <input class="input mono" v-model="settings.notifyReport" placeholder="@daily" />
+        </SRow>
+        <ToggleRow class="sg-span" v-model="notifyBackup"
+                   :label="$t('setting.notifyBackup')" :desc="$t('setting.notifyBackupDesc')" />
 
         <SectionLabel class="sg-span notify-section">Telegram</SectionLabel>
         <SRow :label="$t('setting.notifyTgToken')" :hint="tgTokenHint">
@@ -462,6 +473,9 @@ const settings = ref({
   notifyCpu: "80",
   notifyMemory: "80",
   notifyNodeFlap: "3",
+  notifyOutboundUrl: "",
+  notifyReport: "",
+  notifyBackup: "false",
   notifyTgToken: "",
   notifyTgChatId: "",
   notifyTgApiServer: "",
@@ -1012,6 +1026,11 @@ const notifyBotEnable = computed({
   set: (v: boolean) => { settings.value.notifyBotEnable = v.toString() },
 })
 
+const notifyBackup = computed({
+  get: () => settings.value.notifyBackup == "true",
+  set: (v: boolean) => { settings.value.notifyBackup = v.toString() },
+})
+
 const notifyNum = (key: 'notifyExpireDays' | 'notifyVolumeGB' | 'notifyCpu' | 'notifyMemory' | 'notifyNodeFlap' | 'notifySmtpPort', fallback: number) => computed({
   get: () => { const s = settings.value[key]; return s && s.length > 0 ? parseInt(s) : fallback },
   set: (v: number) => { settings.value[key] = (v > 0 ? v : 0).toString() },
@@ -1030,6 +1049,8 @@ const notifyKinds = computed(() => [
   { value: 'node.up', title: i18n.global.t('setting.notifyKindNodeUp') },
   { value: 'core.crash', title: i18n.global.t('setting.notifyKindCoreCrash') },
   { value: 'core.up', title: i18n.global.t('setting.notifyKindCoreUp') },
+  { value: 'outbound.down', title: i18n.global.t('setting.notifyKindOutboundDown') },
+  { value: 'outbound.up', title: i18n.global.t('setting.notifyKindOutboundUp') },
   { value: 'client.depleted', title: i18n.global.t('setting.notifyKindClientDepleted') },
   { value: 'client.expiring', title: i18n.global.t('setting.notifyKindClientExpiring') },
   { value: 'cpu.high', title: i18n.global.t('setting.notifyKindCpuHigh') },
