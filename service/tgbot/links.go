@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/shenaba/2s-ui/logger"
+	"github.com/shenaba/2s-ui/service"
 	"github.com/shenaba/2s-ui/sub"
 
 	"github.com/go-telegram/bot"
@@ -36,7 +37,33 @@ func clientLinks(name string) ([]sub.Link, error) {
 		return nil, err
 	}
 	var linkService sub.LinkService
-	return linkService.GetLinkList(&c.Links, "all", ""), nil
+	// Whole subscriptions first, individual servers after. That is the order
+	// they are wanted in: a subscription is what a client app should be given,
+	// and it keeps working when the inbounds change, while a single link is the
+	// fallback for an app that cannot take one.
+	return append(subscriptionLinks(c.Name), linkService.GetLinkList(&c.Links, "all", "")...), nil
+}
+
+// subscriptionLinks are the client's whole subscription, one entry per format
+// the subscription server answers with -- the bare URL for apps that read the
+// base64 list, and the two the sub handler switches on with ?format=.
+//
+// Type is left empty: these are built here for display and never go back
+// through GetLinkList, whose "sub" type means something else (a remote
+// subscription to expand).
+func subscriptionLinks(name string) []sub.Link {
+	var settingService service.SettingService
+	uri, err := settingService.GetFinalSubURI(botHostname())
+	if err != nil || uri == "" {
+		// No subscription URI configured: the individual links are all there is.
+		return nil
+	}
+	base := uri + name
+	return []sub.Link{
+		{Remark: t("links.subBase", nil), Uri: base},
+		{Remark: t("links.subClash", nil), Uri: base + "?format=clash"},
+		{Remark: t("links.subJson", nil), Uri: base + "?format=json"},
+	}
 }
 
 // linkLabel is what a link's button says. Remarks are set per inbound and are

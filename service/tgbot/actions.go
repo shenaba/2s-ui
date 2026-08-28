@@ -367,13 +367,15 @@ func sendClientList(ctx context.Context, b *bot.Bot, chatID int64, query string,
 	} else {
 		text.WriteString(t("client.listTitle", nil))
 	}
+	picks := make([]models.InlineKeyboardButton, 0, len(clients))
 	for _, c := range clients {
 		text.WriteString("\n" + clientLine(c))
-		rows = append(rows, []models.InlineKeyboardButton{{
+		picks = append(picks, models.InlineKeyboardButton{
 			Text:         c.Name,
 			CallbackData: payloadPrefix + payloads.put("client|"+c.Name),
-		}})
+		})
 	}
+	rows = append(rows, buttonGrid(picks)...)
 
 	end := offset + len(clients)
 	if int64(end) < total || offset > 0 {
@@ -404,6 +406,28 @@ func sendClientList(ctx context.Context, b *bot.Bot, chatID int64, query string,
 		{Text: t("btn.menu", nil), CallbackData: staticPrefix + "status"},
 	})
 	reply(ctx, b, chatID, text.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows})
+}
+
+// buttonGrid packs picker buttons into rows.
+//
+// Three across while the list is short, two once it is long enough that names
+// start crowding each other -- the same rule 3x-ui uses, and for the same
+// reason: a full page of one-button rows is a screen of scrolling to reach the
+// last name, and client names are short enough to sit two or three abreast.
+func buttonGrid(buttons []models.InlineKeyboardButton) [][]models.InlineKeyboardButton {
+	cols := 3
+	if len(buttons) >= 6 {
+		cols = 2
+	}
+	rows := make([][]models.InlineKeyboardButton, 0, (len(buttons)+cols-1)/cols)
+	for i := 0; i < len(buttons); i += cols {
+		end := i + cols
+		if end > len(buttons) {
+			end = len(buttons)
+		}
+		rows = append(rows, buttons[i:end])
+	}
+	return rows
 }
 
 // clientPagePayload encodes one page button. The search term goes last because

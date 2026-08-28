@@ -113,6 +113,7 @@ func TestKeysUsedByTheCodeExist(t *testing.T) {
 		"self.unavailable", "self.left", "self.exhausted", "self.unlimited",
 		"self.disabled", "self.sub",
 		"links.none", "links.title", "links.more", "links.unnamed", "links.noQr",
+		"links.subBase", "links.subClash", "links.subJson",
 	}
 	en := botMessages[notify.DefaultLang]
 	for _, k := range used {
