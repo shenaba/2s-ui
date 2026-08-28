@@ -52,6 +52,17 @@ func onMessage(ctx context.Context, b *bot.Bot, msg *models.Message) {
 	r, boundClient := roleOf(chatID)
 	text := strings.TrimSpace(msg.Text)
 
+	// A contact chosen from the picker arrives as a service message carrying no
+	// text, so it has to be taken before the form below, which would otherwise
+	// read it as an empty answer and complain. Admin-only, like every other way
+	// of writing a binding: the reply names somebody else's account.
+	if msg.UsersShared != nil {
+		if r == roleAdmin {
+			onUsersShared(ctx, b, chatID, msg.UsersShared)
+		}
+		return
+	}
+
 	// A form in progress consumes plain text; a command cancels it, so a stuck
 	// conversation is always escapable by typing /start. Only admins ever have
 	// one -- nothing an end user can reach asks a question.

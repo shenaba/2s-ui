@@ -204,10 +204,16 @@ func onPayloadCallback(ctx context.Context, b *bot.Bot, chatID int64, payload st
 		sendClientLink(ctx, b, chatID, name, index, false)
 
 	case "bind":
-		// Stored on the draft's Name because that is the field the next
-		// message resolves against; nothing else about the draft is used here.
-		forms.set(chatID, stepBindTgId, clientDraft{Name: arg})
-		reply(ctx, b, chatID, t("bind.prompt", p("name", arg)), nil)
+		c, err := findClient(arg)
+		if err != nil {
+			reply(ctx, b, chatID, err.Error(), mainMenu())
+			return
+		}
+		// Stored on the draft's Name because that is the field a typed answer
+		// resolves against; nothing else about the draft is used here. The
+		// picker answer carries its own client id and does not need it.
+		forms.set(chatID, stepBindTgId, clientDraft{Name: c.Name})
+		sendBindPrompt(ctx, b, chatID, *c)
 
 	case "client.create!":
 		createClient(ctx, b, chatID)
@@ -249,31 +255,39 @@ func findClient(name string) (*model.Client, error) {
 // websocket, and skip the inbound reload -- leaving the panel showing one thing
 // while the core enforces another.
 func applyClient(ctx context.Context, b *bot.Bot, chatID int64, name string, mutate func(*model.Client) (string, map[string]string)) {
+	applyClientWith(ctx, b, chatID, name, mainMenu(), mutate)
+}
+
+// applyClientWith is applyClient with the keyboard the outcome carries.
+//
+// The binding flow needs its own: it puts a reply keyboard up to offer the
+// contact picker, and a reply keyboard is not dismissed by an inline one -- so
+// without a ReplyKeyboardRemove on the way out, a "choose from contacts" button
+// sits under the input box long after the binding is done.
+func applyClientWith(ctx context.Context, b *bot.Bot, chatID int64, name string, markup models.ReplyMarkup, mutate func(*model.Client) (string, map[string]string)) {
 	c, err := findClient(name)
 	if err != nil {
-		reply(ctx, b, chatID, err.Error(), mainMenu())
+		reply(ctx, b, chatID, err.Error(), markup)
 		return
 	}
 	doneKey, extra := mutate(c)
 
 	data, err := json.Marshal(c)
 	if err != nil {
-		reply(ctx, b, chatID, t("err.save", p("detail", err.Error())), mainMenu())
+		reply(ctx, b, chatID, t("err.save", p("detail", err.Error())), markup)
 		return
 	}
 	if err := save(chatID, "clients", "edit", data); err != nil {
-		reply(ctx, b, chatID, t("err.save", p("detail", err.Error())), mainMenu())
+		reply(ctx, b, chatID, t("err.save", p("detail", err.Error())), markup)
 		return
 	}
 	params := p("name", c.Name)
 	for k, v := range extra {
 		params[k] = v
 	}
-	reply(ctx, b, chatID, t(doneKey, params), mainMenu())
+	reply(ctx, b, chatID, t(doneKey, params), markup)
 }
 
-// save is the bot's single write path. actor records which Telegram chat asked,
-// so the panel's change log can attribute it.
 func save(chatID int64, obj, act string, data json.RawMessage) error {
 	var configService service.ConfigService
 	var nodeSync service.NodeSyncService
