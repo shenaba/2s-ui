@@ -508,7 +508,7 @@ func clientDetail(c model.Client) string {
 		b.WriteString("\n" + t("client.telegram", p("id", strconv.FormatInt(c.TgId, 10))))
 	}
 	if c.Desc != "" {
-		b.WriteString("\n" + c.Desc)
+		b.WriteString("\n" + t("client.desc", p("desc", c.Desc)))
 	}
 	return b.String()
 }

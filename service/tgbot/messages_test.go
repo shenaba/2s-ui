@@ -102,7 +102,7 @@ func TestKeysUsedByTheCodeExist(t *testing.T) {
 		"client.notFound", "client.listEmpty", "client.listTitle",
 		"client.range", "client.searchTitle", "client.searchEmpty", "client.searchPrompt",
 		"client.on", "client.off", "client.unlimited", "client.expires", "client.never",
-		"client.upDown", "client.group", "client.telegram",
+		"client.upDown", "client.group", "client.telegram", "client.desc",
 		"client.confirmToggleOn", "client.confirmToggleOff", "client.confirmReset",
 		"client.doneEnabled", "client.doneDisabled", "client.doneReset",
 		"bind.prompt", "bind.invalid", "bind.removed", "bind.done",

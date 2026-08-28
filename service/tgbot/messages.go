@@ -115,6 +115,7 @@ var botMessages = map[string]map[string]string{
 		"client.upDown":       "Up {up} · Down {down}",
 		"client.group":        "Group: {group}",
 		"client.telegram":     "Telegram: {id}",
+		"client.desc":         "Description: {desc}",
 
 		"client.confirmToggleOn":  "Enable client {name}?",
 		"client.confirmToggleOff": "Disable client {name}?",
@@ -262,6 +263,7 @@ var botMessages = map[string]map[string]string{
 		"client.upDown":       "上行 {up} · 下行 {down}",
 		"client.group":        "分组：{group}",
 		"client.telegram":     "Telegram：{id}",
+		"client.desc":         "描述：{desc}",
 
 		"client.confirmToggleOn":  "启用客户端 {name}？",
 		"client.confirmToggleOff": "停用客户端 {name}？",
@@ -409,6 +411,7 @@ var botMessages = map[string]map[string]string{
 		"client.upDown":       "上行 {up} · 下行 {down}",
 		"client.group":        "分組：{group}",
 		"client.telegram":     "Telegram：{id}",
+		"client.desc":         "描述：{desc}",
 
 		"client.confirmToggleOn":  "啟用客戶端 {name}？",
 		"client.confirmToggleOff": "停用客戶端 {name}？",
@@ -550,6 +553,7 @@ var botMessages = map[string]map[string]string{
 		"client.upDown":           "Отдача {up} · Приём {down}",
 		"client.group":            "Группа: {group}",
 		"client.telegram":         "Telegram: {id}",
+		"client.desc":             "Описание: {desc}",
 		"client.confirmToggleOn":  "Включить клиента {name}?",
 		"client.confirmToggleOff": "Отключить клиента {name}?",
 		"client.confirmReset":     "Сбросить счётчики трафика для {name}?",
@@ -687,6 +691,7 @@ var botMessages = map[string]map[string]string{
 		"client.upDown":           "ارسال {up} · دریافت {down}",
 		"client.group":            "گروه: {group}",
 		"client.telegram":         "تلگرام: {id}",
+		"client.desc":             "توضیح: {desc}",
 		"client.confirmToggleOn":  "کاربر {name} فعال شود؟",
 		"client.confirmToggleOff": "کاربر {name} غیرفعال شود؟",
 		"client.confirmReset":     "ترافیک {name} صفر شود؟",
@@ -824,6 +829,7 @@ var botMessages = map[string]map[string]string{
 		"client.upDown":           "Lên {up} · Xuống {down}",
 		"client.group":            "Nhóm: {group}",
 		"client.telegram":         "Telegram: {id}",
+		"client.desc":             "Mô tả: {desc}",
 		"client.confirmToggleOn":  "Bật client {name}?",
 		"client.confirmToggleOff": "Tắt client {name}?",
 		"client.confirmReset":     "Đặt lại bộ đếm lưu lượng cho {name}?",
