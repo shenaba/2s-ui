@@ -10,6 +10,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strconv"
 	"sync"
 	"time"
 
@@ -120,7 +121,7 @@ func runSession(ctx context.Context, cfg service.BotConfig) error {
 	defer stop()
 	go watchConfig(sessionCtx, stop, cfg.Connection())
 
-	setCommands(sessionCtx, b)
+	setCommands(sessionCtx, b, cfg)
 	logger.Info("tgbot: connected")
 	// Returns when sessionCtx is done -- panel shutdown, or watchConfig seeing
 	// the credentials change.
@@ -147,15 +148,35 @@ func watchConfig(ctx context.Context, stop context.CancelFunc, connected string)
 	}
 }
 
-func setCommands(ctx context.Context, b *bot.Bot) {
-	cmds := make([]models.BotCommand, 0, len(commandNames))
-	for _, name := range commandNames {
-		cmds = append(cmds, models.BotCommand{Command: name, Description: t("cmd."+name, nil)})
+// setCommands publishes the in-app command menu.
+//
+// Twice, at two scopes: the harmless commands to everyone, and the full list
+// only to the chats that can run it. Telegram shows the narrowest matching
+// scope, so an admin sees their own menu and everybody else sees the short one.
+// Without the split a stranger opening the menu would read off /nodes, /bans
+// and /backup, which says more about what is behind the bot than any of its
+// answers do.
+func setCommands(ctx context.Context, b *bot.Bot, cfg service.BotConfig) {
+	publish := func(names []string, scope models.BotCommandScope) {
+		cmds := make([]models.BotCommand, 0, len(names))
+		for _, name := range names {
+			cmds = append(cmds, models.BotCommand{Command: name, Description: t("cmd."+name, nil)})
+		}
+		if _, err := b.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: cmds, Scope: scope}); err != nil {
+			// Cosmetic only -- it populates the in-app command menu. Every
+			// command works regardless, so this must not fail the session.
+			logger.Warning("tgbot: publishing the command list failed: ", err)
+		}
 	}
-	if _, err := b.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: cmds}); err != nil {
-		// Cosmetic only -- it populates the in-app command menu. The commands
-		// themselves work regardless, so this must not fail the session.
-		logger.Warning("tgbot: publishing the command list failed: ", err)
+
+	publish(publicCommands, nil)
+	for _, admin := range cfg.Admins {
+		id, err := strconv.ParseInt(admin, 10, 64)
+		if err != nil {
+			logger.Warning("tgbot: ignoring an unparsable admin chat id ", admin)
+			continue
+		}
+		publish(adminCommands, &models.BotCommandScopeChat{ChatID: id})
 	}
 }
 

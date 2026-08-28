@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
+	"gorm.io/gorm"
 )
 
 // clientListLimit bounds how many buttons one listing renders. Telegram caps a
@@ -72,9 +73,28 @@ func onStaticCallback(ctx context.Context, b *bot.Bot, chatID int64, action stri
 	case "nodes":
 		reply(ctx, b, chatID, nodesText(), mainMenu())
 	case "clients":
-		sendClientList(ctx, b, chatID)
+		sendClientList(ctx, b, chatID, "", 0)
+	case "client.search":
+		forms.set(chatID, stepClientSearch, clientDraft{})
+		reply(ctx, b, chatID, t("client.searchPrompt", nil), nil)
 	case "online":
 		reply(ctx, b, chatID, onlineText(), mainMenu())
+	case "inbounds":
+		reply(ctx, b, chatID, inboundsText(), mainMenu())
+	case "traffic":
+		reply(ctx, b, chatID, trafficText(), mainMenu())
+	case "bans":
+		reply(ctx, b, chatID, bansText(), bansMenu())
+	case "bans.confirm":
+		reply(ctx, b, chatID, t("bans.confirmClear", nil),
+			confirmKeyboard(staticPrefix+"bans.clear"))
+	case "bans.clear":
+		var guard service.LoginGuardService
+		if err := guard.ClearAll(); err != nil {
+			reply(ctx, b, chatID, t("err.save", p("detail", err.Error())), mainMenu())
+			return
+		}
+		reply(ctx, b, chatID, t("bans.cleared", nil), mainMenu())
 	case "backup":
 		sendBackup(ctx, b, chatID)
 	case "core.confirm":
@@ -103,6 +123,15 @@ func onPayloadCallback(ctx context.Context, b *bot.Bot, chatID int64, payload st
 	switch verb {
 	case "client":
 		sendClientCard(ctx, b, chatID, arg)
+
+	case "clients":
+		// offset|query, and the query may itself contain a separator.
+		offsetText, query, _ := strings.Cut(arg, "|")
+		offset, err := strconv.Atoi(offsetText)
+		if err != nil {
+			offset = 0
+		}
+		sendClientList(ctx, b, chatID, query, offset)
 
 	case "toggle":
 		c, err := findClient(arg)
@@ -239,32 +268,65 @@ func botHostname() string {
 
 // sendClientList shows the clients closest to needing attention, which is what
 // an operator reaching for this on their phone is nearly always after.
-func sendClientList(ctx context.Context, b *bot.Bot, chatID int64) {
+// sendClientList renders one page of clients, optionally narrowed by a search
+// term. Past a couple of hundred clients the rest were simply unreachable from
+// the bot: the first page was all anyone could see.
+func sendClientList(ctx context.Context, b *bot.Bot, chatID int64, query string, offset int) {
+	if offset < 0 {
+		offset = 0
+	}
+	// Rebuilt per use rather than shared: a GORM chain that has already run a
+	// Count carries state into the next call on it.
+	matching := func() *gorm.DB {
+		q := database.GetDB().Model(model.Client{})
+		if query != "" {
+			// LIKE reads % and _ as wildcards, so an unescaped search for
+			// "user_01" would also match "userX01" and read as a broken search.
+			like := "%" + likeEscape(query) + "%"
+			q = q.Where(
+				"name LIKE ? ESCAPE '\\' OR remark LIKE ? ESCAPE '\\' OR `group` LIKE ? ESCAPE '\\'",
+				like, like, like)
+		}
+		return q
+	}
+
+	var total int64
+	if err := matching().Count(&total).Error; err != nil {
+		reply(ctx, b, chatID, t("err.read", p("detail", err.Error())), mainMenu())
+		return
+	}
+	if total == 0 {
+		key := "client.listEmpty"
+		if query != "" {
+			key = "client.searchEmpty"
+		}
+		reply(ctx, b, chatID, t(key, p("query", query)), mainMenu())
+		return
+	}
+	if offset >= int(total) {
+		offset = 0
+	}
+
 	var clients []model.Client
 	// Disabled first, then soonest to expire. The CASE keeps unlimited clients
 	// (expiry 0) at the end instead of sorting them to the front as the
-	// smallest value.
-	err := database.GetDB().Model(model.Client{}).
-		Order("enable ASC, CASE WHEN expiry > 0 THEN expiry ELSE 9223372036854775807 END ASC").
-		Limit(clientListLimit + 1).Find(&clients).Error
+	// smallest value. Name breaks the tie so paging is stable -- without a
+	// total order two pages can repeat one row and skip another.
+	err := matching().
+		Order("enable ASC, CASE WHEN expiry > 0 THEN expiry ELSE 9223372036854775807 END ASC, name ASC").
+		Offset(offset).Limit(clientListLimit).Find(&clients).Error
 	if err != nil {
 		reply(ctx, b, chatID, t("err.read", p("detail", err.Error())), mainMenu())
 		return
 	}
-	if len(clients) == 0 {
-		reply(ctx, b, chatID, t("client.listEmpty", nil), mainMenu())
-		return
-	}
-
-	truncated := false
-	if len(clients) > clientListLimit {
-		clients = clients[:clientListLimit]
-		truncated = true
-	}
 
 	var rows [][]models.InlineKeyboardButton
 	var text strings.Builder
-	text.WriteString(t("client.listTitle", nil))
+	if query != "" {
+		text.WriteString(t("client.searchTitle", p("query", query)))
+	} else {
+		text.WriteString(t("client.listTitle", nil))
+	}
 	for _, c := range clients {
 		text.WriteString("\n" + clientLine(c))
 		rows = append(rows, []models.InlineKeyboardButton{{
@@ -272,16 +334,48 @@ func sendClientList(ctx context.Context, b *bot.Bot, chatID int64) {
 			CallbackData: payloadPrefix + payloads.put("client|"+c.Name),
 		}})
 	}
-	if truncated {
-		var total int64
-		if err := database.GetDB().Model(model.Client{}).Count(&total).Error; err != nil {
-			logger.Warning("tgbot: client count: ", err)
-		}
-		text.WriteString("\n\n" + t("client.truncated", p(
-			"shown", strconv.Itoa(clientListLimit), "total", strconv.FormatInt(total, 10))))
+
+	end := offset + len(clients)
+	if int64(end) < total || offset > 0 {
+		text.WriteString("\n\n" + t("client.range", p(
+			"from", strconv.Itoa(offset+1), "to", strconv.Itoa(end),
+			"total", strconv.FormatInt(total, 10))))
 	}
-	rows = append(rows, []models.InlineKeyboardButton{{Text: t("btn.menu", nil), CallbackData: staticPrefix + "status"}})
+
+	var nav []models.InlineKeyboardButton
+	if offset > 0 {
+		nav = append(nav, models.InlineKeyboardButton{
+			Text:         t("btn.prev", nil),
+			CallbackData: payloadPrefix + payloads.put(clientPagePayload(query, offset-clientListLimit)),
+		})
+	}
+	if int64(end) < total {
+		nav = append(nav, models.InlineKeyboardButton{
+			Text:         t("btn.next", nil),
+			CallbackData: payloadPrefix + payloads.put(clientPagePayload(query, end)),
+		})
+	}
+	if len(nav) > 0 {
+		rows = append(rows, nav)
+	}
+
+	rows = append(rows, []models.InlineKeyboardButton{
+		{Text: t("btn.search", nil), CallbackData: staticPrefix + "client.search"},
+		{Text: t("btn.menu", nil), CallbackData: staticPrefix + "status"},
+	})
 	reply(ctx, b, chatID, text.String(), &models.InlineKeyboardMarkup{InlineKeyboard: rows})
+}
+
+// clientPagePayload encodes one page button. The search term goes last because
+// it is the only part that may contain the separator.
+func clientPagePayload(query string, offset int) string {
+	return "clients|" + strconv.Itoa(offset) + "|" + query
+}
+
+// likeEscape neutralises the LIKE wildcards in a search term the operator
+// typed. The backslash goes first, or escaping the wildcards re-introduces it.
+func likeEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
 func sendClientCard(ctx context.Context, b *bot.Bot, chatID int64, name string) {

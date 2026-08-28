@@ -314,8 +314,52 @@ func (s *LoginGuardService) RecordSuccess(ip, username string) {
 // CLI recovery operation rather than an unauthenticated endpoint: someone who
 // can reach the database can already reset the admin credentials, while a web
 // endpoint capable of clearing its own limiter would nullify the limiter.
+//
+// The Telegram bot offers it too, which does not weaken that: reaching it there
+// means being on the admin chat list, and anyone who is can already restart the
+// core and download the database through the same bot.
 func (s *LoginGuardService) ClearAll() error {
 	return database.GetDB().Where("1 = 1").Delete(&model.LoginAttempt{}).Error
+}
+
+// BanInfo is one identity the limiter is currently refusing.
+type BanInfo struct {
+	// Scope is ip, user or prompt; Key is the folded address or username.
+	Scope     string
+	Key       string
+	Failures  int
+	Remaining time.Duration
+}
+
+// ActiveBans lists the identities being refused right now, longest first.
+//
+// The remaining time comes from loginBanRemaining rather than from the column,
+// because BannedUntil is not on its own the answer: a served username ban keeps
+// its old positive value while the row is disarmed. The query filters on the
+// same comparison so the two cannot disagree.
+func (s *LoginGuardService) ActiveBans(limit int) ([]BanInfo, error) {
+	now := time.Now().Unix()
+	var rows []model.LoginAttempt
+	err := database.GetDB().Model(model.LoginAttempt{}).
+		Where("banned_until > ?", now).
+		Order("banned_until DESC").Limit(limit).Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]BanInfo, 0, len(rows))
+	for _, row := range rows {
+		remaining := loginBanRemaining(row, now)
+		if remaining <= 0 {
+			continue
+		}
+		out = append(out, BanInfo{
+			Scope:     row.Scope,
+			Key:       row.Key,
+			Failures:  row.Failures,
+			Remaining: time.Duration(remaining) * time.Second,
+		})
+	}
+	return out, nil
 }
 
 func (s *LoginGuardService) find(scope, key string) (model.LoginAttempt, error) {

@@ -24,6 +24,10 @@ func onFormInput(ctx context.Context, b *bot.Bot, chatID int64, form formState, 
 	draft := form.Draft
 
 	switch form.Step {
+	case stepClientSearch:
+		forms.clear(chatID)
+		sendClientList(ctx, b, chatID, strings.TrimSpace(text), 0)
+
 	case stepBindTgId:
 		id, err := strconv.ParseInt(strings.TrimSpace(text), 10, 64)
 		if err != nil || id < 0 {

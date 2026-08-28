@@ -1,9 +1,15 @@
 package service
 
 import (
+	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/database/model"
+	"github.com/shenaba/2s-ui/logger"
+
+	"github.com/op/go-logging"
 )
 
 var testGuard = loginGuardConfig{maxFailures: 5, window: 300, ban: 900}
@@ -209,5 +215,76 @@ func TestNormalizeLoginIP(t *testing.T) {
 	b := loginKeys("2001:db8:aa:bb:9999::7", "admin")
 	if a[0].Key != b[0].Key {
 		t.Errorf("two addresses in one /64 produced different keys: %q vs %q", a[0].Key, b[0].Key)
+	}
+}
+
+// ActiveBans is what the bot shows an operator during an attack, and it has one
+// trap: BannedUntil stays positive after a username ban is served, so reading
+// the column alone reports bans that are over as if they were live.
+func TestActiveBans(t *testing.T) {
+	logger.InitLogger(logging.CRITICAL)
+
+	dir := t.TempDir()
+	if err := database.InitDB(filepath.Join(dir, "bans.db")); err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.CloseDBForTest(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	})
+	db := database.GetDB()
+
+	now := time.Now().Unix()
+	rows := []model.LoginAttempt{
+		{Scope: loginScopeIP, Key: "1.2.3.4", Failures: 5, BannedUntil: now + 900},
+		{Scope: loginScopeUser, Key: "admin", Failures: 5, BannedUntil: now + 300},
+		{Scope: loginScopePrompt, Key: "5.6.7.8", Failures: 50, BannedUntil: now + 60},
+		// Served: the row is kept so the username axis can rearm, and its
+		// BannedUntil keeps the old, now-past value.
+		{Scope: loginScopeUser, Key: "served", BannedUntil: now - 1},
+		// Counting up, not yet banned.
+		{Scope: loginScopeIP, Key: "9.9.9.9", Failures: 3, WindowStart: now},
+	}
+	for _, row := range rows {
+		if err := db.Create(&row).Error; err != nil {
+			t.Fatalf("seed %s/%s: %v", row.Scope, row.Key, err)
+		}
+	}
+
+	var guard LoginGuardService
+	got, err := guard.ActiveBans(10)
+	if err != nil {
+		t.Fatalf("ActiveBans: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d bans, want 3: %+v", len(got), got)
+	}
+	// Longest first, so the worst offender is at the top of the message.
+	if got[0].Key != "1.2.3.4" || got[2].Key != "5.6.7.8" {
+		t.Errorf("bans are not ordered longest first: %+v", got)
+	}
+	if got[0].Remaining < 14*time.Minute || got[0].Remaining > 15*time.Minute {
+		t.Errorf("remaining time is %v, want just under 15m", got[0].Remaining)
+	}
+	if got[0].Failures != 5 {
+		t.Errorf("failure count lost: %d", got[0].Failures)
+	}
+	for _, ban := range got {
+		if ban.Key == "served" {
+			t.Error("a served ban is reported as active")
+		}
+		if ban.Key == "9.9.9.9" {
+			t.Error("a client that is only counting up is reported as banned")
+		}
+	}
+
+	// The limit is a limit, not a suggestion: the bot renders one message.
+	limited, err := guard.ActiveBans(1)
+	if err != nil {
+		t.Fatalf("ActiveBans(1): %v", err)
+	}
+	if len(limited) != 1 {
+		t.Errorf("ActiveBans(1) returned %d rows", len(limited))
 	}
 }

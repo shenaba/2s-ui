@@ -225,6 +225,35 @@ func (s *StatsService) GetStats(resource string, tag string, period string) ([]m
 	return result, nil
 }
 
+// TagTotal is one tag's traffic over a window, both directions summed.
+type TagTotal struct {
+	Tag     string
+	Traffic int64
+}
+
+// TopTags ranks the busiest tags of one resource since a point in time.
+//
+// GetStats answers "how did this one tag move over the last day", which is what
+// a chart needs. Nothing answered "which ones moved most", which is what a
+// report needs, and doing it by pulling every series and sorting in Go would
+// read the whole table to keep ten rows.
+//
+// resource is one of the values SaveStats writes: inbound, outbound or user.
+func (s *StatsService) TopTags(resource string, since int64, limit int) ([]TagTotal, error) {
+	var rows []TagTotal
+	err := database.GetDB().Raw(
+		`SELECT tag, SUM(traffic) AS traffic
+		 FROM stats
+		 WHERE resource = ? AND date_time > ?
+		 GROUP BY tag
+		 HAVING traffic > 0
+		 ORDER BY traffic DESC
+		 LIMIT ?`,
+		resource, since, limit,
+	).Scan(&rows).Error
+	return rows, err
+}
+
 func (s *StatsService) GetOnlines() (onlines, error) {
 	onlineMu.RLock()
 	defer onlineMu.RUnlock()

@@ -83,6 +83,10 @@ const (
 	// stepBindTgId reuses clientDraft.Name for the client being bound; nothing
 	// else on the draft applies to it.
 	stepBindTgId formStep = "client:bind"
+	// stepClientSearch carries no draft at all -- the next message is the
+	// search term. It goes through the form store anyway so that a search and
+	// a half-finished new-client form cannot both be live in one chat.
+	stepClientSearch formStep = "client:search"
 )
 
 // clientDraft is a client being assembled across several messages.
