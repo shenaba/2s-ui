@@ -1,6 +1,8 @@
 package tgbot
 
 import (
+	"sync/atomic"
+
 	"github.com/shenaba/2s-ui/service"
 	"github.com/shenaba/2s-ui/service/notify"
 )
@@ -883,20 +885,41 @@ var botMessages = map[string]map[string]string{
 	},
 }
 
-// t translates one key into the operator's notification language.
+// langCache holds the language for the update being handled. Always a string.
 //
-// The language is read per message rather than captured at connect, for the
-// same reason the admin list is: a settings change should take effect on the
-// next message, not on the next reconnect.
-func t(key string, params map[string]string) string {
+// t() is called once per button label and once per line of every listing -- a
+// full client list is around fifty -- and each call used to read the settings
+// table for a value that cannot change halfway through composing one reply.
+// refreshLang resolves it when the update arrives instead, so the read happens
+// once per message rather than once per word. A settings change still takes
+// effect on the next message, which is all the per-call read ever bought.
+var langCache atomic.Value
+
+// refreshLang re-resolves the language for one update. Called from dispatch,
+// and from runSession before the command menus go out, which is the one place
+// wording is produced outside an update.
+func refreshLang() {
 	var settingService service.SettingService
-	return notify.Translate(botMessages, settingService.GetBotConfig().Lang, key, params)
+	langCache.Store(settingService.GetBotConfig().Lang)
 }
 
-// botLang is the language every reply is rendered in.
+// botLang is the language every reply is rendered in. It falls back to reading
+// the setting so that anything reached before the first refresh -- a test, an
+// early error path -- still renders in the operator's language rather than
+// English.
 func botLang() string {
+	if lang, ok := langCache.Load().(string); ok && lang != "" {
+		return lang
+	}
 	var settingService service.SettingService
-	return settingService.GetBotConfig().Lang
+	lang := settingService.GetBotConfig().Lang
+	langCache.Store(lang)
+	return lang
+}
+
+// t translates one key into the operator's notification language.
+func t(key string, params map[string]string) string {
+	return notify.Translate(botMessages, botLang(), key, params)
 }
 
 // nodeStateText translates the probe states NodeStatus reports.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -559,18 +558,10 @@ func clientDetail(c model.Client) string {
 	return b.String()
 }
 
-func humanBytes(b int64) string {
-	const unit = 1024
-	if b < unit {
-		return strconv.FormatInt(b, 10) + " B"
-	}
-	div, exp := int64(unit), 0
-	for n := b / unit; n >= unit && exp < 4; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTP"[exp])
-}
+// humanBytes is notify's, not a second copy: the operator reads a client card
+// from here and an expiry alert about that same client from there, and the two
+// must not disagree about the figure.
+func humanBytes(b int64) string { return notify.HumanBytes(b) }
 
 func timeText(unix int64) string {
 	return time.Unix(unix, 0).Format("2006-01-02 15:04")

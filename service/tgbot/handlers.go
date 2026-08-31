@@ -1,6 +1,7 @@
 package tgbot
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strconv"
@@ -39,6 +40,8 @@ const (
 
 // dispatch is the single entry point the SDK calls for every update.
 func dispatch(ctx context.Context, b *bot.Bot, update *models.Update) {
+	// Once per update, not once per translated string -- see langCache.
+	refreshLang()
 	switch {
 	case update.CallbackQuery != nil:
 		onCallback(ctx, b, update.CallbackQuery)
@@ -306,8 +309,11 @@ func sendBackup(ctx context.Context, b *bot.Bot, chatID int64) {
 	}
 	name := "2s-ui-" + notify.Host() + ".db"
 	if _, err := b.SendDocument(ctx, &bot.SendDocumentParams{
+		// bytes, not strings.NewReader(string(data)): the export is already a
+		// []byte and a database is tens of megabytes, so the conversion was a
+		// second full copy held for the length of the upload.
 		ChatID:   chatID,
-		Document: &models.InputFileUpload{Filename: name, Data: strings.NewReader(string(data))},
+		Document: &models.InputFileUpload{Filename: name, Data: bytes.NewReader(data)},
 	}); err != nil {
 		reply(ctx, b, chatID, t("backup.failed", p("detail", err.Error())), mainMenu())
 	}

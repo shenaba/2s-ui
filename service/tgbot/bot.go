@@ -121,6 +121,9 @@ func runSession(ctx context.Context, cfg service.BotConfig) error {
 	sessionCtx, stop := context.WithCancel(ctx)
 	defer stop()
 
+	// The command descriptions are the one piece of wording produced outside an
+	// update, so the language has to be resolved here rather than by dispatch.
+	refreshLang()
 	// The public menu depends only on publicCommands and the language, neither
 	// of which an admin-list edit touches -- and the default scope is the widest
 	// write this bot makes, since it is what every stranger sees. Published once
