@@ -870,6 +870,18 @@ func (s *ClientService) findExpiringClients(tx *gorm.DB, dt int64) ([]expiringCl
 // notifier can warn each of them as well as the operator. Whole rows come in
 // rather than names because that binding is the one field a name cannot carry.
 func publishClientEvents(depleted []model.Client, expiring []expiringClient) {
+	if len(depleted) == 0 && len(expiring) == 0 {
+		return
+	}
+	// Asked once for the pass rather than left to Publish, which reads the
+	// settings per event. The expiry half is one event per client sitting near
+	// a limit, every minute -- on a panel with these alerts off that was a
+	// settings scan per client to decide nothing.
+	var settingService SettingService
+	if !settingService.NotifyWants(notify.ClientDepleted, notify.ClientExpiring) {
+		return
+	}
+
 	if len(depleted) > 0 {
 		// One event for the whole pass: disabling fifty clients at once is one
 		// thing that happened, not fifty. A disabled client is not selected by

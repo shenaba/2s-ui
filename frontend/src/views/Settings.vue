@@ -490,6 +490,8 @@ const settings = ref({
   notifySmtpSecurity: "starttls",
   hasNotifyTgToken: "",
   hasNotifySmtpPass: "",
+  // 后端算出来的,不是设置项:notify.AllKinds 的值和顺序。见 notifyKinds。
+  notifyKindsAll: "",
 })
 
 onMounted(async () => {
@@ -1042,27 +1044,19 @@ const notifyMemory = notifyNum('notifyMemory', 80)
 const notifyNodeFlap = notifyNum('notifyNodeFlap', 3)
 const notifySmtpPort = notifyNum('notifySmtpPort', 587)
 
-// 事件种类。value 是后端 service/notify/event.go 里的 Kind 常量,逗号拼进 notifyEvents;
-// 改这里的字符串等于把用户已开的事件悄悄关掉。
-const notifyKinds = computed(() => [
-  { value: 'node.down', title: i18n.global.t('setting.notifyKindNodeDown') },
-  { value: 'node.up', title: i18n.global.t('setting.notifyKindNodeUp') },
-  { value: 'core.crash', title: i18n.global.t('setting.notifyKindCoreCrash') },
-  { value: 'core.up', title: i18n.global.t('setting.notifyKindCoreUp') },
-  { value: 'outbound.down', title: i18n.global.t('setting.notifyKindOutboundDown') },
-  { value: 'outbound.up', title: i18n.global.t('setting.notifyKindOutboundUp') },
-  { value: 'client.depleted', title: i18n.global.t('setting.notifyKindClientDepleted') },
-  { value: 'client.expiring', title: i18n.global.t('setting.notifyKindClientExpiring') },
-  { value: 'cpu.high', title: i18n.global.t('setting.notifyKindCpuHigh') },
-  { value: 'memory.high', title: i18n.global.t('setting.notifyKindMemoryHigh') },
-  { value: 'login.success', title: i18n.global.t('setting.notifyKindLoginSuccess') },
-  { value: 'login.failed', title: i18n.global.t('setting.notifyKindLoginFailed') },
-  { value: 'login.banned', title: i18n.global.t('setting.notifyKindLoginBanned') },
-])
+// 事件种类和顺序都由后端给（notify.AllKinds → GetAllSetting 的 notifyKindsAll）。
+// 以前这里抄了一份那 13 个字符串,于是新增一种事件要改两处、而只有 Go 那处会被测试盯住;
+// 抄错一个字符串还会把用户已开的事件悄悄关掉。
+// 显示名的 i18n key 由值推导:node.down → setting.notifyKindNodeDown。
+const notifyKinds = computed(() => splitCsv(settings.value.notifyKindsAll).map(value => ({
+  value,
+  title: i18n.global.t('setting.notifyKind' +
+    value.split('.').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join('')),
+})))
 
-const notifyEventSet = computed(() => new Set(
-  (settings.value.notifyEvents ?? '').split(',').map(s => s.trim()).filter(s => s.length > 0)
-))
+const splitCsv = (s: string) => (s ?? '').split(',').map(v => v.trim()).filter(v => v.length > 0)
+
+const notifyEventSet = computed(() => new Set(splitCsv(settings.value.notifyEvents)))
 const hasNotifyEvent = (kind: string) => notifyEventSet.value.has(kind)
 const toggleNotifyEvent = (kind: string) => {
   const set = new Set(notifyEventSet.value)

@@ -14,6 +14,7 @@ import (
 	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/database/model"
 	"github.com/shenaba/2s-ui/logger"
+	"github.com/shenaba/2s-ui/service/notify"
 	"github.com/shenaba/2s-ui/util/common"
 
 	"gorm.io/gorm"
@@ -179,7 +180,28 @@ func (s *SettingService) GetAllSetting() (*map[string]string, error) {
 		delete(allSetting, key)
 	}
 
+	// The event kinds the settings page offers, in notify.AllKinds' order.
+	// Computed, never stored: the page used to carry its own copy of these
+	// thirteen strings, so adding a Kind meant editing both sides and only the
+	// Go one was checked by anything. Sent as a list rather than a schema
+	// because that is all the page needs -- it derives each toggle's label from
+	// the value (node.down -> setting.notifyKindNodeDown).
+	allSetting[notifyKindsKey] = notifyKindsValue()
+
 	return &allSetting, nil
+}
+
+// notifyKindsKey is the computed entry above. It has no row in the settings
+// table, and the form posts back everything it was handed, so Save drops it the
+// same way it drops the has* flags.
+const notifyKindsKey = "notifyKindsAll"
+
+func notifyKindsValue() string {
+	names := make([]string, 0, len(notify.AllKinds))
+	for _, kind := range notify.AllKinds {
+		names = append(names, string(kind))
+	}
+	return strings.Join(names, ",")
 }
 
 // hasKey is the companion flag for a write-only setting: notifyTgToken ->
@@ -661,7 +683,7 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 		if obj == "" && isNotifySecret(key) {
 			continue
 		}
-		if isNotifySecretFlag(key) {
+		if isNotifySecretFlag(key) || key == notifyKindsKey {
 			continue
 		}
 		if key == "webTrustedProxies" {
