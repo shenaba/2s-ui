@@ -1,9 +1,22 @@
 package cronjob
 
 import (
+	"time"
+
 	"github.com/shenaba/2s-ui/service"
 	"github.com/shenaba/2s-ui/service/notify"
 )
+
+// cpuSampleWindow is how long the job watches the CPU before deciding.
+//
+// Its own window, not gopsutil's shared "since the last call" baseline: the hub
+// broadcasts status every 2s to any open panel tab and the bot's /status
+// samples it as well, all through the same package-global, so a
+// since-last-call reading here would be whatever interval those left behind --
+// a two-second sliver during which one burst reads as sustained load. Three
+// seconds is long enough that a single spike cannot fill it and short enough to
+// sit comfortably inside a minute-cadence job.
+const cpuSampleWindow = 3 * time.Second
 
 // CheckSystemJob samples CPU and memory and reports threshold breaches.
 //
@@ -13,12 +26,6 @@ import (
 type CheckSystemJob struct {
 	service.ServerService
 	settingService service.SettingService
-	// primed guards the first reading. gopsutil's cpu.Percent(0, false)
-	// reports the average since the previous call, so the first one covers
-	// everything since boot (or since whenever a panel page last asked) and
-	// says nothing about the last minute. Alerting on it would mean a busy
-	// startup pages someone about load that has already passed.
-	primed bool
 }
 
 func NewCheckSystemJob() *CheckSystemJob {
@@ -33,18 +40,16 @@ func (j *CheckSystemJob) Run() {
 		return
 	}
 
-	cpuPct := j.ServerService.GetCpuPercent()
-	if !j.primed {
-		j.primed = true
-		return
-	}
-
-	if th.Cpu > 0 && cpuPct > float64(th.Cpu) {
-		notify.Publish(notify.Event{
-			Kind:    notify.CPUHigh,
-			Subject: notify.Host(),
-			Data:    &notify.MetricData{Percent: cpuPct, Threshold: th.Cpu},
-		})
+	// Sampled only when the CPU half is switched on: this blocks for the width
+	// of the window, and a memory-only setup has no reason to wait for it.
+	if th.Cpu > 0 {
+		if cpuPct := j.ServerService.GetCpuPercentOver(cpuSampleWindow); cpuPct > float64(th.Cpu) {
+			notify.Publish(notify.Event{
+				Kind:    notify.CPUHigh,
+				Subject: notify.Host(),
+				Data:    &notify.MetricData{Percent: cpuPct, Threshold: th.Cpu},
+			})
+		}
 	}
 
 	if th.Memory > 0 {

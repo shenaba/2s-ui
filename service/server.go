@@ -54,13 +54,45 @@ func (s *ServerService) GetStatus(request string) *map[string]interface{} {
 }
 
 func (s *ServerService) GetCpuPercent() float64 {
-	percents, err := cpu.Percent(0, false)
+	return firstCpuPercent(cpu.Percent(0, false))
+}
+
+// GetCpuPercentOver samples the CPU over a window of its own instead of since
+// whenever anybody last asked.
+//
+// GetCpuPercent passes interval 0, which reads and then overwrites gopsutil's
+// one process-wide baseline (cpu.lastCPUPercent). That is right for a live
+// readout, and wrong for anything that compares the answer against a threshold:
+// the hub broadcasts status every 2s to each open panel tab and the bot's
+// /status samples it too, all through that same global, so a since-last-call
+// reading is whatever interval those happened to leave behind -- a momentary
+// burst then reads as sustained load. A positive interval makes gopsutil take
+// both samples itself and touch no shared state, at the cost of blocking for d.
+func (s *ServerService) GetCpuPercentOver(d time.Duration) float64 {
+	return firstCpuPercent(cpu.Percent(d, false))
+}
+
+// firstCpuPercent unwraps a cpu.Percent result, reporting 0 when there is
+// nothing to read.
+//
+// The empty-slice case is its own branch and not folded into the error one.
+// gopsutil returns `make([]float64, len(t1)), nil` when both of its samples
+// come back empty -- a nil error with nothing in it, which a bare percents[0]
+// panics on. That takes the panel down rather than losing a reading, because
+// this is called from the hub's 2s status broadcast and from inside the bot,
+// neither of which recovers. Logging it as an error with a nil detail would
+// also be the one line an operator has to diagnose from, and "failed: <nil>"
+// says nothing.
+func firstCpuPercent(percents []float64, err error) float64 {
 	if err != nil {
 		logger.Warning("get cpu percent failed:", err)
 		return 0
-	} else {
-		return percents[0]
 	}
+	if len(percents) == 0 {
+		logger.Warning("get cpu percent returned no samples")
+		return 0
+	}
+	return percents[0]
 }
 
 func (s *ServerService) GetMemInfo() map[string]interface{} {
