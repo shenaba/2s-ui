@@ -90,9 +90,10 @@ func TestSendSMTPGivesUpOnASilentServer(t *testing.T) {
 
 	restore := smtpTimeout
 	smtpTimeout = 200 * time.Millisecond
-	// Restored only after every sender has been joined below, so the write
-	// cannot race a goroutine still reading it inside dialSMTP.
-	defer func() { smtpTimeout = restore }()
+	// Restored at the end rather than in a defer. On the give-up path below a
+	// sender may still be running and reading this, and racing a write against
+	// it is worse than leaving a package-local knob at its test value while the
+	// run is already failing.
 
 	// Every security mode, because each takes its own route to a connection and
 	// only the "none" one ever went through a single shared dial.
@@ -116,11 +117,18 @@ func TestSendSMTPGivesUpOnASilentServer(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			// Not just a slow test: this is the subscriber worker, the settings
 			// page's test request, or a report job, blocked with no way out.
-			// Tear the server down so the sender returns and this test does not
-			// leave a goroutine reading smtpTimeout behind it.
+			// Tearing the server down usually releases the sender, but the join
+			// is bounded -- if closing its connection is not enough, reporting
+			// the failure beats stalling the whole package until go test's own
+			// timeout fires. The goroutine dies with the process either way.
 			srv.closeAll()
-			<-done
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+			}
 			t.Fatalf("%s: sendSMTP never returned; the send path has no timeout", security)
 		}
 	}
+
+	smtpTimeout = restore
 }
