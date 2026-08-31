@@ -97,6 +97,16 @@ func onClientCallback(ctx context.Context, b *bot.Bot, chatID int64, name, data 
 }
 
 func onStaticCallback(ctx context.Context, b *bot.Bot, chatID int64, action string) {
+	// A button press navigates away from whatever was in progress, exactly as a
+	// typed command does. Without this a bind prompt left behind by an earlier
+	// tap stayed live, and the next bare number the operator sent for something
+	// else was swallowed as its answer. The contact picker is left alone --
+	// only an explicit cancel withdraws a binding -- which is why the disarm
+	// has to read the form before it goes. The two actions that raise a form
+	// set it again in the switch below.
+	cancelled := action == "cancel" && disarmBindPrompt(ctx, b, chatID)
+	forms.clear(chatID)
+
 	switch action {
 	case "status":
 		reply(ctx, b, chatID, service.StatusDigest(botLang()), mainMenu())
@@ -141,14 +151,12 @@ func onStaticCallback(ctx context.Context, b *bot.Bot, chatID int64, action stri
 		forms.set(chatID, stepClientName, clientDraft{})
 		reply(ctx, b, chatID, t("form.name", nil), nil)
 	case "cancel":
-		// Cancelling a binding has already been answered by the removal, and
-		// the card that raised the prompt still carries its own buttons -- a
-		// second "cancelled" with the menu under it would only repeat itself.
-		if disarmBindPrompt(ctx, b, chatID) {
-			forms.clear(chatID)
+		// A cancelled binding has already been answered by the removal above,
+		// and the card that raised the prompt still carries its own buttons --
+		// a second "cancelled" with the menu under it would only repeat itself.
+		if cancelled {
 			return
 		}
-		forms.clear(chatID)
 		reply(ctx, b, chatID, t("cancelled", nil), mainMenu())
 	}
 }
@@ -275,27 +283,37 @@ func applyClient(ctx context.Context, b *bot.Bot, chatID int64, name string, mut
 // without a ReplyKeyboardRemove on the way out, a "choose from contacts" button
 // sits under the input box long after the binding is done.
 func applyClientWith(ctx context.Context, b *bot.Bot, chatID int64, name string, markup models.ReplyMarkup, mutate func(*model.Client) (string, map[string]string)) {
+	reply(ctx, b, chatID, editClient(chatID, name, mutate), markup)
+}
+
+// editClient loads a client, applies mutate and saves it, returning the message
+// to answer with -- success and failure alike, already translated.
+//
+// Split from the reply so a caller that has to serialise the read-modify-write
+// can hold its lock across just the database work and answer Telegram outside
+// it: a send is a round trip on a 60s client, which is not something to make
+// another operator wait behind. See bindClient.
+func editClient(chatID int64, name string, mutate func(*model.Client) (string, map[string]string)) string {
 	c, err := findClient(name)
 	if err != nil {
-		reply(ctx, b, chatID, err.Error(), markup)
-		return
+		// Already a translated sentence -- findClient builds it from
+		// client.notFound.
+		return err.Error()
 	}
 	doneKey, extra := mutate(c)
 
 	data, err := json.Marshal(c)
 	if err != nil {
-		reply(ctx, b, chatID, t("err.save", p("detail", err.Error())), markup)
-		return
+		return t("err.save", p("detail", err.Error()))
 	}
 	if err := save(chatID, "clients", "edit", data); err != nil {
-		reply(ctx, b, chatID, t("err.save", p("detail", err.Error())), markup)
-		return
+		return t("err.save", p("detail", err.Error()))
 	}
 	params := p("name", c.Name)
 	for k, v := range extra {
 		params[k] = v
 	}
-	reply(ctx, b, chatID, t(doneKey, params), markup)
+	return t(doneKey, params)
 }
 
 func save(chatID int64, obj, act string, data json.RawMessage) error {

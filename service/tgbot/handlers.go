@@ -63,6 +63,8 @@ func onMessage(ctx context.Context, b *bot.Bot, msg *models.Message) {
 		return
 	}
 
+	cmd, arg := parseCommand(text)
+
 	// A form in progress consumes plain text; a command cancels it, so a stuck
 	// conversation is always escapable by typing /start. Only admins ever have
 	// one -- nothing an end user can reach asks a question.
@@ -73,14 +75,22 @@ func onMessage(ctx context.Context, b *bot.Bot, msg *models.Message) {
 				return
 			}
 		}
-		// The binding prompt is the one form that leaves a keyboard behind, and
-		// its own text tells the operator that /start cancels. Clearing the form
-		// is not enough to make that true.
-		disarmBindPrompt(ctx, b, chatID)
-		forms.clear(chatID)
+		// /start only. It is the cancel the binding prompt names, and the one
+		// command that means "abandon this" rather than "show me that" -- so it
+		// is the one that takes the contact picker away and says so. Disarming
+		// on every command turned /clients and /status into abandonments the
+		// operator never asked for.
+		if cmd == "start" {
+			disarmBindPrompt(ctx, b, chatID)
+		}
+		// /id is the exception, because it belongs to this workflow rather than
+		// interrupting it: the prompt invites a typed id, and the comment below
+		// is about how someone finds theirs. Clearing here left the operator
+		// with no form to answer into.
+		if cmd != "id" {
+			forms.clear(chatID)
+		}
 	}
-
-	cmd, arg := parseCommand(text)
 
 	// Answered for everybody, before the role check. Binding a client needs
 	// their numeric id, and the person who has it is the one who cannot read

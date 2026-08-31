@@ -43,6 +43,12 @@ func TestClientBoundTo(t *testing.T) {
 	// Disabled still counts: re-enabling it would bring the collision back
 	// rather than resolve it, and roleOf resolves disabled clients anyway.
 	seed("carol", 901, false)
+	// A duplicate this check would refuse today, but an install upgrading from
+	// before it can already carry one. Both holders have to be named, or the
+	// operator unbinds the first and is told about the second on the retry.
+	// dave is disabled so the ordering is also pinned: roleOf prefers the
+	// enabled row, and this answer has to agree with it.
+	seed("dave", 900, false)
 
 	cases := []struct {
 		name    string
@@ -51,10 +57,12 @@ func TestClientBoundTo(t *testing.T) {
 		want    string
 	}{
 		{"a free id", 555, "bob", ""},
-		{"an id another client holds", 900, "bob", "alice"},
+		// Two legacy holders, enabled one first -- the order roleOf resolves in.
+		{"an id other clients hold", 900, "bob", "alice, dave"},
 		// Re-confirming the id a client already has is not a conflict with
-		// itself, or nobody could ever re-run their own binding.
-		{"the client's own id", 900, "alice", ""},
+		// itself, or nobody could ever re-run their own binding -- but the
+		// other holder still is one.
+		{"the client's own id", 900, "alice", "dave"},
 		{"a disabled client still holds its id", 901, "bob", "carol"},
 		// 0 is the column default that every never-bound client carries, so a
 		// lookup for it would match all of them. Unbinding is the one call that

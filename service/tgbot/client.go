@@ -141,14 +141,14 @@ func disarmBindPrompt(ctx context.Context, b *bot.Bot, chatID int64) bool {
 // operator was still in the middle of making, and there is no honest thing to
 // say to them when that happens.
 //
-// The outcome always removes the keyboard, including on the two failures: the
-// request is over either way, and leaving it up invites a retry into the same
-// error.
+// Only a completed binding removes the keyboard, which bindClient does. The two
+// failures below keep it and answer with the menu instead: Telegram allows one
+// markup per message, and leaving the operator with neither a picker to retry
+// with nor a menu to move on from is the worse of the two.
 func onUsersShared(ctx context.Context, b *bot.Bot, chatID int64, shared *models.UsersShared) {
-	markup := &models.ReplyKeyboardRemove{RemoveKeyboard: true}
 	forms.clear(chatID)
 	if len(shared.Users) == 0 {
-		reply(ctx, b, chatID, t("bind.pickEmpty", nil), markup)
+		reply(ctx, b, chatID, t("bind.pickEmpty", nil), mainMenu())
 		return
 	}
 	var c model.Client
@@ -157,7 +157,7 @@ func onUsersShared(ctx context.Context, b *bot.Bot, chatID int64, shared *models
 	if err != nil {
 		// The client was deleted while the picker was open, or the reply came
 		// from some other request this bot never made.
-		reply(ctx, b, chatID, t("bind.pickStale", nil), markup)
+		reply(ctx, b, chatID, t("bind.pickStale", nil), mainMenu())
 		return
 	}
 	bindClient(ctx, b, chatID, c.Name, shared.Users[0].UserID)
@@ -175,35 +175,38 @@ var bindMu sync.Mutex
 // tapped a contact or typed an id, the "choose from contacts" button under the
 // input box has served its purpose, and an inline keyboard does not dismiss it.
 func bindClient(ctx context.Context, b *bot.Bot, chatID int64, name string, tgID int64) {
-	// The conflict check below is a read followed by a write, and tg_id carries
-	// no unique index to catch what falls between them. This is the bot's own
-	// serialisation: it is the only writer of that column (the panel's client
-	// form has no field for it and preserveServerManagedFields keeps a save
-	// from touching it), so one lock is enough to make the check mean
-	// something. Held across the reply too, which is a Telegram round trip --
-	// acceptable only because binds are an operator action a few seconds apart
-	// at worst, and because splitting it would mean giving applyClientWith an
-	// abort path for one caller.
+	reply(ctx, b, chatID, applyBinding(chatID, name, tgID),
+		&models.ReplyKeyboardRemove{RemoveKeyboard: true})
+}
+
+// applyBinding is the serialised half of bindClient: the conflict check and the
+// write, and nothing else.
+//
+// The check is a read followed by a write and tg_id carries no unique index, so
+// something has to close the gap. A lock is enough because the bot is the only
+// writer of that column -- the panel's client form has no field for it, and
+// preserveServerManagedFields keeps a save from touching it. Nothing that talks
+// to Telegram happens inside it: the reply is a round trip on a 60s client, and
+// a stalled edge would otherwise hold every other bind behind it for a minute.
+// The write itself can still restart the affected inbounds, which is inherent
+// to serialising it and is at least bounded.
+func applyBinding(chatID int64, name string, tgID int64) string {
 	bindMu.Lock()
 	defer bindMu.Unlock()
 
-	markup := &models.ReplyKeyboardRemove{RemoveKeyboard: true}
 	// One Telegram id has to resolve to exactly one client. roleOf takes the
 	// first matching row, so a second binding does not give that person a
-	// second account -- it makes one of the two invisible to them, and which
-	// one is down to the query plan. Refuse instead, naming the client that
-	// already holds the id so the operator knows what to unbind.
+	// second account -- it makes one of the two invisible to them. Refuse
+	// instead, naming what already holds the id so the operator knows what to
+	// unbind.
 	other, err := clientBoundTo(tgID, name)
 	if err != nil {
-		reply(ctx, b, chatID, t("err.read", p("detail", err.Error())), markup)
-		return
+		return t("err.read", p("detail", err.Error()))
 	}
 	if other != "" {
-		reply(ctx, b, chatID, t("bind.taken", p(
-			"id", strconv.FormatInt(tgID, 10), "name", other)), markup)
-		return
+		return t("bind.taken", p("id", strconv.FormatInt(tgID, 10), "name", other))
 	}
-	applyClientWith(ctx, b, chatID, name, markup, func(c *model.Client) (string, map[string]string) {
+	return editClient(chatID, name, func(c *model.Client) (string, map[string]string) {
 		c.TgId = tgID
 		if tgID == 0 {
 			return "bind.removed", nil
@@ -212,9 +215,15 @@ func bindClient(ctx context.Context, b *bot.Bot, chatID int64, name string, tgID
 	})
 }
 
-// clientBoundTo reports which other client already holds tgID, or "" when it is
+// clientBoundTo names the other clients already holding tgID, or "" when it is
 // free. exclude is the client being bound, so re-confirming an id a client
 // already has is not reported as a conflict with itself.
+//
+// All of them, not the first one the query plan happens to reach: an install
+// from before this check can carry more than one, and naming them one at a time
+// would send the operator round the loop once per duplicate. Ordered the way
+// roleOf resolves them so the client that would actually answer in the bot
+// comes first, and capped because the answer is read on a phone.
 //
 // Disabled clients count: roleOf resolves those too, and a client that ran out
 // is precisely the one whose owner is about to open the bot.
@@ -227,9 +236,18 @@ func clientBoundTo(tgID int64, exclude string) (string, error) {
 	if tgID == 0 {
 		return "", nil
 	}
-	var name string
+	var names []string
 	err := database.GetDB().Model(model.Client{}).
 		Where("tg_id = ? AND name <> ?", tgID, exclude).
-		Limit(1).Pluck("name", &name).Error
-	return name, err
+		Order("enable DESC, id ASC").
+		Limit(clientBoundToLimit).Pluck("name", &names).Error
+	if err != nil {
+		return "", err
+	}
+	return strings.Join(names, ", "), nil
 }
+
+// clientBoundToLimit bounds how many holders of one Telegram id the refusal
+// names. Duplicates can only be legacy rows now, so more than a couple means
+// something else is wrong and the list stops being the useful part.
+const clientBoundToLimit = 5
