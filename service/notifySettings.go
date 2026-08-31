@@ -137,6 +137,33 @@ func (s *SettingService) NotifyEnabled() bool {
 	return s.notifySettings()["notifyEnable"] == "true"
 }
 
+// NotifyWants reports whether any of these kinds is enabled, in one settings
+// read.
+//
+// notify.Publish reads the settings itself for every event, which is the right
+// shape for a source that fires once -- and the wrong one for a source with an
+// item loop. The node probe publishes one event per online node every five
+// seconds and the depletion pass one per client near a limit every minute, so
+// on a panel with the alerts switched off those loops were paying a
+// settings-table scan per item to compute "no". Ask once, outside the loop, and
+// skip it. Config.Wants exists for the same reason -- see CheckOutboundJob,
+// which skips a whole round of proxy handshakes on it.
+func (s *SettingService) NotifyWants(kinds ...notify.Kind) bool {
+	m := s.notifySettings()
+	if m["notifyEnable"] != "true" {
+		return false
+	}
+	enabled := splitList(m["notifyEvents"])
+	for _, kind := range kinds {
+		for _, name := range enabled {
+			if name == string(kind) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // NotifyBackupEnabled reports whether the daily database backup should be
 // uploaded. Gated on the master switch too: a backup upload is a notification
 // like any other, and turning notifications off should stop all of them.

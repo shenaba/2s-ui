@@ -314,6 +314,12 @@ func (s *NodeService) notifyStatuses(nodes []*model.Node, statuses map[uint]Node
 	if flap < 1 {
 		flap = 1
 	}
+	// Asked once for the pass rather than left to Publish, which reads the
+	// settings per event: this loop runs every five seconds and once per node,
+	// so on a panel with the node alerts off that was a settings scan per node
+	// per pass to decide nothing. The streak bookkeeping below still runs, so
+	// switching the alerts on does not inherit a stale count.
+	wanted := settingService.NotifyWants(notify.NodeUp, notify.NodeDown)
 
 	names := make(map[uint]string, len(nodes))
 	for _, n := range nodes {
@@ -337,15 +343,17 @@ func (s *NodeService) notifyStatuses(nodes []*model.Node, statuses map[uint]Node
 		}
 		if status.State == "online" {
 			delete(nodeFailStreak, id)
-			notify.Publish(notify.Event{
-				Kind:    notify.NodeUp,
-				Subject: name,
-				Data:    &notify.NodeData{LatencyMs: status.Latency},
-			})
+			if wanted {
+				notify.Publish(notify.Event{
+					Kind:    notify.NodeUp,
+					Subject: name,
+					Data:    &notify.NodeData{LatencyMs: status.Latency},
+				})
+			}
 			continue
 		}
 		nodeFailStreak[id]++
-		if nodeFailStreak[id] < flap {
+		if nodeFailStreak[id] < flap || !wanted {
 			continue
 		}
 		notify.Publish(notify.Event{

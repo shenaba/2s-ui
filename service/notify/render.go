@@ -140,6 +140,15 @@ func fillLogin(p map[string]string, data any) {
 	}
 }
 
+// HumanBytes renders a byte count the way both halves of the Telegram
+// integration show one.
+//
+// Exported because service/tgbot needs the same rendering: the operator reads
+// a client card from the bot and an expiry alert about that same client, and
+// two copies of this would eventually disagree about the figure. Alongside
+// Translate, Label, Paginate and Host, which are exported for the same reason.
+func HumanBytes(b int64) string { return humanBytes(b) }
+
 func humanBytes(b int64) string {
 	const unit = 1024
 	if b < unit {
