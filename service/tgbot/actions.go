@@ -104,6 +104,10 @@ func onStaticCallback(ctx context.Context, b *bot.Bot, chatID int64, action stri
 	// only an explicit cancel withdraws a binding -- which is why the disarm
 	// has to read the form before it goes. The two actions that raise a form
 	// set it again in the switch below.
+	//
+	// onPayloadCallback does the same for the buttons that carry an argument;
+	// the two have to stay in step, because between them they are every button
+	// this bot draws.
 	cancelled := action == "cancel" && disarmBindPrompt(ctx, b, chatID)
 	forms.clear(chatID)
 
@@ -165,6 +169,20 @@ func onStaticCallback(ctx context.Context, b *bot.Bot, chatID int64, action stri
 // verb|argument; a trailing ! on the verb means the operator has confirmed.
 func onPayloadCallback(ctx context.Context, b *bot.Bot, chatID int64, payload string) {
 	verb, arg, _ := strings.Cut(payload, "|")
+	// The same rule onStaticCallback follows, and the half that matters more:
+	// tapping a client's name is a payload callback, so without this a bind
+	// prompt raised for one client stayed live while another client's card was
+	// on screen, and the next number typed bound the one no longer being looked
+	// at. The picker is left alone here too -- only an explicit cancel
+	// withdraws a binding.
+	//
+	// client.create! is the exception: it is the confirm button for the very
+	// form it is about to read. bind needs no exception, because it replaces
+	// the form immediately afterwards.
+	if verb != "client.create!" {
+		forms.clear(chatID)
+	}
+
 	switch verb {
 	case "client":
 		sendClientCard(ctx, b, chatID, arg)
