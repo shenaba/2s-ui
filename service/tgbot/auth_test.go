@@ -60,9 +60,11 @@ func TestRoleOf(t *testing.T) {
 		{"second admin, whitespace in the setting", 222, roleAdmin, ""},
 		{"bound client", 900, roleClient, "alice"},
 		{"stranger", 555, roleNone, ""},
-		// A disabled client cannot query itself: the account is off, and the
-		// answer would be the operator's business to give.
-		{"bound but disabled", 901, roleNone, ""},
+		// A disabled client still resolves. Running out is when the owner
+		// reaches for the bot, selfUsageText says so in their own language, and
+		// refusing here would answer them as a stranger right after the panel
+		// had messaged them that their subscription was disabled.
+		{"bound but disabled", 901, roleClient, "bob"},
 		// The decisive one. tg_id defaults to 0, so a zero chat id must not
 		// match every unbound row and hand out somebody else's usage.
 		{"zero chat id", 0, roleNone, ""},
