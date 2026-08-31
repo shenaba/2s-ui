@@ -131,6 +131,7 @@ var botMessages = map[string]map[string]string{
 		"bind.invalid":   "Send a numeric Telegram user id, or 0 to unbind.",
 		"bind.removed":   "{name}: Telegram binding removed.",
 		"bind.done":      "{name}: bound to Telegram id {id}.",
+		"bind.taken":     "Telegram id {id} is already bound to {name}. Unbind it there first.",
 
 		"form.name":       "New client — send a name.\nSend /start at any point to cancel.",
 		"form.nameEmpty":  "The name cannot be empty. Send a name.",
@@ -279,6 +280,7 @@ var botMessages = map[string]map[string]string{
 		"bind.invalid":   "请发送数字形式的 Telegram 用户 ID，或发 0 解除绑定。",
 		"bind.removed":   "{name}：已解除 Telegram 绑定。",
 		"bind.done":      "{name}：已绑定到 Telegram ID {id}。",
+		"bind.taken":     "Telegram ID {id} 已经绑定在 {name} 上，请先在那边解绑。",
 
 		"form.name":       "新建客户端 — 请发送名称。\n任何时候发 /start 都可取消。",
 		"form.nameEmpty":  "名称不能为空，请发送一个名称。",
@@ -427,6 +429,7 @@ var botMessages = map[string]map[string]string{
 		"bind.invalid":   "請傳送數字形式的 Telegram 使用者 ID，或發送 0 解除綁定。",
 		"bind.removed":   "{name}：已解除 Telegram 綁定。",
 		"bind.done":      "{name}：已綁定到 Telegram ID {id}。",
+		"bind.taken":     "Telegram ID {id} 已經綁定在 {name} 上，請先在那邊解除綁定。",
 
 		"form.name":       "新增客戶端 — 請傳送名稱。\n任何時候發送 /start 都可取消。",
 		"form.nameEmpty":  "名稱不能為空，請傳送一個名稱。",
@@ -567,6 +570,7 @@ var botMessages = map[string]map[string]string{
 		"bind.invalid":            "Отправьте числовой Telegram id или 0, чтобы отвязать.",
 		"bind.removed":            "{name}: привязка Telegram снята.",
 		"bind.done":               "{name}: привязан к Telegram id {id}.",
+		"bind.taken":              "Telegram id {id} уже привязан к {name}. Сначала отвяжите его там.",
 		"form.name":               "Новый клиент — отправьте имя.\nВ любой момент /start отменит.",
 		"form.nameEmpty":          "Имя не может быть пустым. Отправьте имя.",
 		"form.nameTaken":          "Клиент {name} уже существует. Отправьте другое имя.",
@@ -705,6 +709,7 @@ var botMessages = map[string]map[string]string{
 		"bind.invalid":            "یک شناسه عددی تلگرام بفرستید، یا ۰ برای قطع اتصال.",
 		"bind.removed":            "{name}: اتصال تلگرام قطع شد.",
 		"bind.done":               "{name}: به شناسه تلگرام {id} متصل شد.",
+		"bind.taken":              "شناسه تلگرام {id} از قبل به {name} متصل است. اول آن را قطع کنید.",
 		"form.name":               "کاربر جدید — یک نام بفرستید.\nهر لحظه با /start لغو می‌شود.",
 		"form.nameEmpty":          "نام نمی‌تواند خالی باشد. یک نام بفرستید.",
 		"form.nameTaken":          "کاربری با نام {name} از قبل وجود دارد. نام دیگری بفرستید.",
@@ -843,6 +848,7 @@ var botMessages = map[string]map[string]string{
 		"bind.invalid":            "Gửi một Telegram id dạng số, hoặc 0 để hủy liên kết.",
 		"bind.removed":            "{name}: đã hủy liên kết Telegram.",
 		"bind.done":               "{name}: đã liên kết với Telegram id {id}.",
+		"bind.taken":              "Telegram id {id} đã liên kết với {name}. Hãy hủy liên kết ở đó trước.",
 		"form.name":               "Client mới — gửi một tên.\nGửi /start bất cứ lúc nào để hủy.",
 		"form.nameEmpty":          "Tên không được để trống. Gửi một tên.",
 		"form.nameTaken":          "Đã có client tên {name}. Gửi tên khác.",

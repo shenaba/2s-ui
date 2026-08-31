@@ -105,7 +105,7 @@ func TestKeysUsedByTheCodeExist(t *testing.T) {
 		"client.upDown", "client.group", "client.telegram", "client.desc",
 		"client.confirmToggleOn", "client.confirmToggleOff", "client.confirmReset",
 		"client.doneEnabled", "client.doneDisabled", "client.doneReset",
-		"bind.prompt", "bind.invalid", "bind.removed", "bind.done",
+		"bind.prompt", "bind.invalid", "bind.removed", "bind.done", "bind.taken",
 		"bind.pick", "bind.pickEmpty", "bind.pickStale",
 		"form.name", "form.nameEmpty", "form.nameTaken", "form.volume", "form.volumeBad",
 		"form.expiry", "form.expiryBad", "form.summary", "form.sumName", "form.sumTraffic",

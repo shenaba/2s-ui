@@ -33,13 +33,16 @@ func onCallback(ctx context.Context, b *bot.Bot, q *models.CallbackQuery) {
 		logger.Warning("tgbot: ignoring a callback from unauthorised chat ", chatID)
 		return
 	}
-	// Always answer, even when the action fails: an unanswered callback leaves
-	// a spinner on the button until Telegram times it out.
-	defer func() {
-		if _, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: q.ID}); err != nil {
-			logger.Debug("tgbot: answering the callback failed: ", err)
-		}
-	}()
+	// Answered before the action runs, not after it: an unanswered callback
+	// leaves a spinner on the button until Telegram times it out, and the
+	// actions worth pressing are the slow ones -- a database upload, a QR
+	// render, a core restart. Deferring this until they finished meant the
+	// answer arrived after the spinner had already timed out, against a
+	// callback id Telegram had expired. Failing to answer is cosmetic, so it
+	// must not stop the action either.
+	if _, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: q.ID}); err != nil {
+		logger.Debug("tgbot: answering the callback failed: ", err)
+	}
 
 	data := q.Data
 	if r == roleClient {
@@ -138,8 +141,18 @@ func onStaticCallback(ctx context.Context, b *bot.Bot, chatID int64, action stri
 		forms.set(chatID, stepClientName, clientDraft{})
 		reply(ctx, b, chatID, t("form.name", nil), nil)
 	case "cancel":
+		// A bind prompt leaves a reply keyboard behind, and an inline markup
+		// does not dismiss one -- so cancelling that particular flow has to
+		// answer with a removal rather than with the menu, or the contact
+		// picker stays under the input box after the question was withdrawn.
+		// The card that raised the prompt still carries its own buttons, so
+		// nothing is stranded. Every other flow keeps the menu.
+		var markup models.ReplyMarkup = mainMenu()
+		if form, live := forms.get(chatID); live && form.Step == stepBindTgId {
+			markup = &models.ReplyKeyboardRemove{RemoveKeyboard: true}
+		}
 		forms.clear(chatID)
-		reply(ctx, b, chatID, t("cancelled", nil), mainMenu())
+		reply(ctx, b, chatID, t("cancelled", nil), markup)
 	}
 }
 
