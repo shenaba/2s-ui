@@ -141,18 +141,15 @@ func onStaticCallback(ctx context.Context, b *bot.Bot, chatID int64, action stri
 		forms.set(chatID, stepClientName, clientDraft{})
 		reply(ctx, b, chatID, t("form.name", nil), nil)
 	case "cancel":
-		// A bind prompt leaves a reply keyboard behind, and an inline markup
-		// does not dismiss one -- so cancelling that particular flow has to
-		// answer with a removal rather than with the menu, or the contact
-		// picker stays under the input box after the question was withdrawn.
-		// The card that raised the prompt still carries its own buttons, so
-		// nothing is stranded. Every other flow keeps the menu.
-		var markup models.ReplyMarkup = mainMenu()
-		if form, live := forms.get(chatID); live && form.Step == stepBindTgId {
-			markup = &models.ReplyKeyboardRemove{RemoveKeyboard: true}
+		// Cancelling a binding has already been answered by the removal, and
+		// the card that raised the prompt still carries its own buttons -- a
+		// second "cancelled" with the menu under it would only repeat itself.
+		if disarmBindPrompt(ctx, b, chatID) {
+			forms.clear(chatID)
+			return
 		}
 		forms.clear(chatID)
-		reply(ctx, b, chatID, t("cancelled", nil), markup)
+		reply(ctx, b, chatID, t("cancelled", nil), mainMenu())
 	}
 }
 

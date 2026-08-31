@@ -73,6 +73,10 @@ func onMessage(ctx context.Context, b *bot.Bot, msg *models.Message) {
 				return
 			}
 		}
+		// The binding prompt is the one form that leaves a keyboard behind, and
+		// its own text tells the operator that /start cancels. Clearing the form
+		// is not enough to make that true.
+		disarmBindPrompt(ctx, b, chatID)
 		forms.clear(chatID)
 	}
 

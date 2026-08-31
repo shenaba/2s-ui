@@ -112,6 +112,27 @@ func sendBindPrompt(ctx context.Context, b *bot.Bot, chatID int64, c model.Clien
 	reply(ctx, b, chatID, t("bind.prompt", p("name", c.Name)), markup)
 }
 
+// disarmBindPrompt takes the contact picker away when this chat has a binding
+// in progress, reporting whether it had one.
+//
+// The picker is a reply keyboard: an inline markup does not dismiss one, and
+// OneTimeKeyboard only hides it once a button is actually used. So it outlives
+// the prompt that raised it, and sending a removal is the only thing that ends
+// a binding early -- clearing the form does not, because onUsersShared
+// deliberately does not consult it.
+//
+// Every path that abandons the flow on purpose has to call this. Passive expiry
+// deliberately does not: an operator who spent a while choosing a contact still
+// wants the binding they asked for.
+func disarmBindPrompt(ctx context.Context, b *bot.Bot, chatID int64) bool {
+	form, live := forms.get(chatID)
+	if !live || form.Step != stepBindTgId {
+		return false
+	}
+	reply(ctx, b, chatID, t("cancelled", nil), &models.ReplyKeyboardRemove{RemoveKeyboard: true})
+	return true
+}
+
 // onUsersShared completes a binding the operator answered with the picker.
 //
 // It does not consult the form, deliberately -- see sendBindPrompt. What
