@@ -7,9 +7,27 @@ import (
 	"net/smtp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/shenaba/2s-ui/util/common"
 )
+
+// smtpTimeout bounds one whole message: the dial, the TLS handshake, the auth
+// exchange and every command after it.
+//
+// net/smtp's own Dial has no timeout and sets no deadline, and neither does
+// tls.Dial, so without this a host that accepts the connection and then stops
+// answering blocks the sender forever. That is not one lost alert: it wedges
+// the "smtp" subscriber's worker, whose 64-slot queue then fills and drops
+// every later alert on that channel with no recovery; it hangs the settings
+// page's test button, which calls deliverAll straight from the gin handler;
+// and it leaks a goroutine per scheduled report.
+//
+// Longer than sendTimeout because a mail submission is several round trips
+// where an HTTP post is one. A var rather than a const so the test can shrink
+// it -- verifying this needs a server that never answers, and waiting out the
+// real budget for that is not a test anyone will keep running.
+var smtpTimeout = 30 * time.Second
 
 // sendSMTP delivers one event by email.
 //
@@ -61,12 +79,23 @@ func sendSMTP(cfg Config, e Event) error {
 
 func dialSMTP(cfg SMTPConfig) (*smtp.Client, error) {
 	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
+	dialer := &net.Dialer{Timeout: smtpTimeout}
+	// One deadline for the whole exchange rather than one per command: the
+	// budget belongs to the message, and a server that answers each command
+	// just slowly enough is as unreachable as one that answers none.
+	deadline := time.Now().Add(smtpTimeout)
 
 	switch strings.ToLower(cfg.Security) {
 	case "tls":
 		// Implicit TLS: the whole session is wrapped, typically on port 465.
-		conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: cfg.Host})
+		// DialWithDialer applies the dialer's timeout to the connect and the
+		// handshake together; the deadline then covers the commands.
+		conn, err := tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{ServerName: cfg.Host})
 		if err != nil {
+			return nil, err
+		}
+		if err := conn.SetDeadline(deadline); err != nil {
+			conn.Close()
 			return nil, err
 		}
 		client, err := smtp.NewClient(conn, cfg.Host)
@@ -77,7 +106,7 @@ func dialSMTP(cfg SMTPConfig) (*smtp.Client, error) {
 		return client, nil
 
 	case "starttls":
-		client, err := smtp.Dial(addr)
+		client, err := dialPlain(dialer, addr, cfg.Host, deadline)
 		if err != nil {
 			return nil, err
 		}
@@ -95,8 +124,30 @@ func dialSMTP(cfg SMTPConfig) (*smtp.Client, error) {
 		return client, nil
 
 	default:
-		return smtp.Dial(addr)
+		return dialPlain(dialer, addr, cfg.Host, deadline)
 	}
+}
+
+// dialPlain is smtp.Dial with the deadline armed before the greeting is read.
+//
+// Set on the raw socket rather than on the smtp.Client, so it survives
+// StartTLS: that wraps the same connection in place, and a tls.Conn reads and
+// writes through to the socket the deadline lives on.
+func dialPlain(dialer *net.Dialer, addr, host string, deadline time.Time) (*smtp.Client, error) {
+	conn, err := dialer.Dial("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	if err := conn.SetDeadline(deadline); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return client, nil
 }
 
 // buildMessage assembles the RFC 5322 message. Headers are CRLF-separated and
