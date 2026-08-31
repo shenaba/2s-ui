@@ -367,7 +367,7 @@ export default {
     notifyOutboundUrlHint: "每 5 分鐘經每個出站拉取一次",
     notifySchedule: "定時報告",
     notifyReport: "報告週期",
-    notifyReportHint: "cron 或 @daily,留空關閉。重啟面板後生效",
+    notifyReportHint: "cron 或 {'@'}daily,留空關閉。重啟面板後生效",
     notifyBackup: "附帶資料庫備份",
     notifyBackupDesc: "每天把資料庫上傳到 Telegram",
     notifyTgToken: "Bot Token",

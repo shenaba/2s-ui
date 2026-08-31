@@ -367,7 +367,7 @@ export default {
     notifyOutboundUrlHint: "هر ۵ دقیقه از طریق هر خروجی دریافت می‌شود",
     notifySchedule: "گزارش زمان‌بندی‌شده",
     notifyReport: "زمان‌بندی گزارش",
-    notifyReportHint: "cron یا @daily؛ خالی یعنی خاموش. پس از راه‌اندازی مجدد اعمال می‌شود",
+    notifyReportHint: "cron یا {'@'}daily؛ خالی یعنی خاموش. پس از راه‌اندازی مجدد اعمال می‌شود",
     notifyBackup: "پیوست پشتیبان پایگاه داده",
     notifyBackupDesc: "روزی یک بار پایگاه داده را به تلگرام می‌فرستد",
     notifyTgToken: "توکن ربات",

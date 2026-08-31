@@ -368,7 +368,7 @@ export default {
     notifyOutboundUrlHint: "Запрашивается через каждое исходящее раз в 5 мин",
     notifySchedule: "Регулярный отчёт",
     notifyReport: "Расписание отчёта",
-    notifyReportHint: "cron или @daily; пусто — выключено. Применяется после перезапуска",
+    notifyReportHint: "cron или {'@'}daily; пусто — выключено. Применяется после перезапуска",
     notifyBackup: "Прикладывать резервную копию",
     notifyBackupDesc: "Раз в сутки отправляет базу данных в Telegram",
     notifyTgToken: "Токен бота",

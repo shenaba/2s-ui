@@ -367,7 +367,7 @@ export default {
     notifyOutboundUrlHint: "Được tải qua từng outbound mỗi 5 phút",
     notifySchedule: "Báo cáo định kỳ",
     notifyReport: "Lịch báo cáo",
-    notifyReportHint: "cron hoặc @daily; để trống là tắt. Có hiệu lực sau khi khởi động lại",
+    notifyReportHint: "cron hoặc {'@'}daily; để trống là tắt. Có hiệu lực sau khi khởi động lại",
     notifyBackup: "Đính kèm bản sao lưu cơ sở dữ liệu",
     notifyBackupDesc: "Mỗi ngày gửi cơ sở dữ liệu lên Telegram",
     notifyTgToken: "Bot token",
