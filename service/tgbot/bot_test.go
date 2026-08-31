@@ -63,6 +63,11 @@ func TestMenuStateStale(t *testing.T) {
 		{"an entry that could not be published is not a change",
 			menuState{admins: []string{"111", "not-an-id"}, published: []string{"111"}},
 			[]string{"111", "not-an-id"}, false},
+		// A publish that failed leaves retry set, so the next poll tries again
+		// even though the setting itself has not moved.
+		{"a failed publish is retried",
+			menuState{admins: []string{"111"}, published: nil, retry: true},
+			[]string{"111"}, true},
 	}
 
 	for _, c := range cases {

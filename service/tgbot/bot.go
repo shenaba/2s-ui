@@ -121,6 +121,12 @@ func runSession(ctx context.Context, cfg service.BotConfig) error {
 	sessionCtx, stop := context.WithCancel(ctx)
 	defer stop()
 
+	// The public menu depends only on publicCommands and the language, neither
+	// of which an admin-list edit touches -- and the default scope is the widest
+	// write this bot makes, since it is what every stranger sees. Published once
+	// per session here rather than inside setCommands, which watchConfig calls
+	// again on every edit.
+	publishCommands(sessionCtx, b, publicCommands, nil)
 	menus := setCommands(sessionCtx, b, cfg.Admins, menuState{})
 	go watchConfig(sessionCtx, stop, b, cfg.Connection(), menus)
 
@@ -168,17 +174,21 @@ func watchConfig(ctx context.Context, stop context.CancelFunc, b *bot.Bot, conne
 type menuState struct {
 	admins    []string
 	published []string
+	// retry is set when a publish failed and the next poll should try again. It
+	// is cleared by that attempt whatever its outcome, so a chat id Telegram
+	// permanently refuses -- one that never started the bot, say -- costs one
+	// extra call rather than a republish every twenty seconds forever.
+	retry bool
 }
 
-// stale reports whether the admin setting has moved since these menus went out.
+// stale reports whether these menus need publishing again.
 //
-// Against admins, never against published -- that choice is the whole reason
-// menuState has two fields, and swapping them turns an admin list with one
-// unparsable entry into a republish of every menu every twenty seconds. The
-// setting is an ordered list, so a reorder counts as a change and merely
-// republishes.
+// Compared against admins, never against published -- that choice is the whole
+// reason menuState has both, and swapping them turns an admin list with one
+// unparsable entry into a republish every twenty seconds. The setting is an
+// ordered list, so a reorder counts as a change and merely republishes.
 func (m menuState) stale(admins []string) bool {
-	return !slices.Equal(m.admins, admins)
+	return m.retry || !slices.Equal(m.admins, admins)
 }
 
 // setCommands publishes the in-app command menus and takes back the ones that
@@ -200,28 +210,23 @@ func (m menuState) stale(admins []string) bool {
 // removed while the panel is down keeps their menu; closing that would mean a
 // settings row to remember a list of command names by.
 func setCommands(ctx context.Context, b *bot.Bot, admins []string, previous menuState) menuState {
-	publish := func(names []string, scope models.BotCommandScope) {
-		cmds := make([]models.BotCommand, 0, len(names))
-		for _, name := range names {
-			cmds = append(cmds, models.BotCommand{Command: name, Description: t("cmd."+name, nil)})
-		}
-		if _, err := b.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: cmds, Scope: scope}); err != nil {
-			// Cosmetic only -- it populates the in-app command menu. Every
-			// command works regardless, so this must not fail the session.
-			logger.Warning("tgbot: publishing the command list failed: ", err)
-		}
-	}
-
-	publish(publicCommands, nil)
-
 	current := make([]string, 0, len(admins))
+	complete := true
 	for _, admin := range admins {
 		id, err := strconv.ParseInt(admin, 10, 64)
 		if err != nil {
+			// Not a failure to retry: this entry can never be published, and
+			// treating it as one is what would republish on every poll.
 			logger.Warning("tgbot: ignoring an unparsable admin chat id ", admin)
 			continue
 		}
-		publish(adminCommands, &models.BotCommandScopeChat{ChatID: id})
+		if !publishCommands(ctx, b, adminCommands, &models.BotCommandScopeChat{ChatID: id}) {
+			// Left out of current on purpose, so the state does not claim a
+			// menu that never arrived and a later revoke does not think it has
+			// one to take back.
+			complete = false
+			continue
+		}
 		current = append(current, admin)
 	}
 
@@ -238,7 +243,35 @@ func setCommands(ctx context.Context, b *bot.Bot, admins []string, previous menu
 			logger.Warning("tgbot: revoking the admin menu for ", gone, " failed: ", err)
 		}
 	}
-	return menuState{admins: admins, published: current}
+
+	// admins records the setting only once every id in it actually published.
+	// Otherwise the previous value stays, so the next poll still sees the
+	// setting as changed and tries again -- and retry bounds that to one extra
+	// attempt, because a chat id Telegram will never accept must not turn into
+	// a call every twenty seconds for the life of the session.
+	settled := admins
+	if !complete {
+		settled = previous.admins
+	}
+	return menuState{admins: settled, published: current, retry: !complete && !previous.retry}
+}
+
+// publishCommands writes one command list at one scope, reporting whether it
+// landed.
+//
+// A failure is cosmetic -- it populates the in-app menu, and every command
+// works regardless -- so it is logged and never fails the session. The caller
+// still needs to know, or it would record a menu that was never delivered.
+func publishCommands(ctx context.Context, b *bot.Bot, names []string, scope models.BotCommandScope) bool {
+	cmds := make([]models.BotCommand, 0, len(names))
+	for _, name := range names {
+		cmds = append(cmds, models.BotCommand{Command: name, Description: t("cmd."+name, nil)})
+	}
+	if _, err := b.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: cmds, Scope: scope}); err != nil {
+		logger.Warning("tgbot: publishing the command list failed: ", err)
+		return false
+	}
+	return true
 }
 
 // revoked lists the chats that were published to and no longer are. Linear on
