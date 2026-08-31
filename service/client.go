@@ -807,6 +807,11 @@ func (s *ClientService) findExpiringClients(tx *gorm.DB, dt int64) ([]expiringCl
 	var settingService SettingService
 	th := settingService.GetNotifyThresholds()
 
+	// Computed once and used twice -- in the query that selects the rows and in
+	// the loop below that decides which margin to report -- so the two cannot
+	// drift into disagreeing about which threshold actually tripped.
+	expireBefore := dt + int64(th.ExpireDays)*86400
+
 	var conds []string
 	// Anything already over a limit belongs to the depletion pass above;
 	// without these two guards a client that expired days ago but still has
@@ -814,7 +819,7 @@ func (s *ClientService) findExpiringClients(tx *gorm.DB, dt int64) ([]expiringCl
 	args := []any{dt}
 	if th.ExpireDays > 0 {
 		conds = append(conds, "(expiry > 0 AND expiry < ?)")
-		args = append(args, dt+int64(th.ExpireDays)*86400)
+		args = append(args, expireBefore)
 	}
 	if th.VolumeBytes > 0 {
 		conds = append(conds, "(volume > 0 AND up+down > volume - ?)")
@@ -835,13 +840,24 @@ func (s *ClientService) findExpiringClients(tx *gorm.DB, dt int64) ([]expiringCl
 	out := make([]expiringClient, 0, len(rows))
 	for _, c := range rows {
 		e := expiringClient{Name: c.Name, TgId: c.TgId}
-		if c.Expiry > dt {
+		left := c.Volume - c.Up - c.Down
+		// Only the margin that actually selected the row is filled in, because
+		// the renderer prefers DaysLeft when both are set. A client picked up
+		// by the volume threshold can still have months left on its expiry, and
+		// filling that in regardless reported "expires in 30 days" to a client
+		// whose real problem was 4 GiB of traffic left -- naming the wrong
+		// reason, on the customer's own Telegram rather than only the
+		// operator's.
+		if th.ExpireDays > 0 && c.Expiry > dt && c.Expiry < expireBefore {
 			// Rounded up, so a client with six hours left reads "1 day" rather
 			// than "0 days", which would look like a bug.
 			e.DaysLeft = int((c.Expiry - dt + 86399) / 86400)
 		}
-		if c.Volume > 0 && c.Up+c.Down < c.Volume {
-			e.BytesLeft = c.Volume - c.Up - c.Down
+		// left > 0 and left < VolumeBytes are the Go spellings of the two SQL
+		// conditions above: "not over the limit yet" and "inside the warning
+		// margin".
+		if th.VolumeBytes > 0 && c.Volume > 0 && left > 0 && left < th.VolumeBytes {
+			e.BytesLeft = left
 		}
 		out = append(out, e)
 	}

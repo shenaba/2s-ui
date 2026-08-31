@@ -366,6 +366,13 @@ func TestFindExpiringClients(t *testing.T) {
 	seed(model.Client{Name: "expires-tomorrow", Enable: true, Expiry: now + day, TgId: 4242})
 	seed(model.Client{Name: "expires-in-two-days", Enable: true, Expiry: now + 2*day})
 	seed(model.Client{Name: "low-traffic", Enable: true, Volume: 100 * gib, Up: 96 * gib, Down: 0})
+	// Selected by the volume threshold while its expiry is nowhere near: the
+	// margin reported has to be the one that tripped, or the client is told
+	// "expires in 30 days" about a subscription that is running out of traffic.
+	seed(model.Client{
+		Name: "low-traffic-far-expiry", Enable: true,
+		Volume: 100 * gib, Up: 96 * gib, Expiry: now + 30*day,
+	})
 	// Excluded: the depletion pass owns everything already over a limit.
 	seed(model.Client{Name: "already-expired", Enable: true, Expiry: now - day})
 	seed(model.Client{Name: "already-over-quota", Enable: true, Volume: 10 * gib, Up: 11 * gib})
@@ -385,7 +392,7 @@ func TestFindExpiringClients(t *testing.T) {
 	for _, c := range got {
 		byName[c.Name] = c
 	}
-	want := []string{"expires-tomorrow", "expires-in-two-days", "low-traffic"}
+	want := []string{"expires-tomorrow", "expires-in-two-days", "low-traffic", "low-traffic-far-expiry"}
 	for _, name := range want {
 		if _, ok := byName[name]; !ok {
 			t.Errorf("%s should have been warned about", name)
@@ -393,6 +400,22 @@ func TestFindExpiringClients(t *testing.T) {
 	}
 	if len(byName) != len(want) {
 		t.Errorf("warned about %d clients, want %d: %v", len(byName), len(want), byName)
+	}
+
+	// Whichever threshold selected a client is the one the message has to name.
+	// render.describe prefers DaysLeft whenever it is set, so a stray value
+	// there silently overrides the reason the client was picked at all.
+	if c := byName["low-traffic-far-expiry"]; c.DaysLeft != 0 || c.BytesLeft != 4*gib {
+		t.Errorf("a volume warning came back as DaysLeft=%d BytesLeft=%d; want 0 and %d",
+			c.DaysLeft, c.BytesLeft, 4*gib)
+	}
+	if c := byName["low-traffic"]; c.DaysLeft != 0 || c.BytesLeft != 4*gib {
+		t.Errorf("low-traffic: DaysLeft=%d BytesLeft=%d; want 0 and %d",
+			c.DaysLeft, c.BytesLeft, 4*gib)
+	}
+	if c := byName["expires-tomorrow"]; c.DaysLeft != 1 || c.BytesLeft != 0 {
+		t.Errorf("an expiry warning came back as DaysLeft=%d BytesLeft=%d; want 1 and 0",
+			c.DaysLeft, c.BytesLeft)
 	}
 
 	// The Telegram binding has to come through, or the client never hears about
