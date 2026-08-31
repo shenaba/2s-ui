@@ -10,6 +10,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -119,9 +120,10 @@ func runSession(ctx context.Context, cfg service.BotConfig) error {
 
 	sessionCtx, stop := context.WithCancel(ctx)
 	defer stop()
-	go watchConfig(sessionCtx, stop, cfg.Connection())
 
-	setCommands(sessionCtx, b, cfg)
+	menus := setCommands(sessionCtx, b, cfg.Admins, menuState{})
+	go watchConfig(sessionCtx, stop, b, cfg.Connection(), menus)
+
 	logger.Info("tgbot: connected")
 	// Returns when sessionCtx is done -- panel shutdown, or watchConfig seeing
 	// the credentials change.
@@ -131,9 +133,13 @@ func runSession(ctx context.Context, cfg service.BotConfig) error {
 }
 
 // watchConfig ends the session when the credentials change or the bot is turned
-// off. Only the connection fields count: re-reading the admin list on every
-// command means an edit there takes effect without dropping the connection.
-func watchConfig(ctx context.Context, stop context.CancelFunc, connected string) {
+// off, and keeps the per-admin command menus in step in between.
+//
+// Only the connection fields end the session: re-reading the admin list on
+// every command means an edit there takes effect without dropping the
+// connection. The menus are the one part of an admin-list edit that does not
+// take care of itself, because they are state held on Telegram's side.
+func watchConfig(ctx context.Context, stop context.CancelFunc, b *bot.Bot, connected string, menus menuState) {
 	var settingService service.SettingService
 	for {
 		if !sleep(ctx, configPoll) {
@@ -145,18 +151,55 @@ func watchConfig(ctx context.Context, stop context.CancelFunc, connected string)
 			stop()
 			return
 		}
+		if menus.stale(cfg.Admins) {
+			menus = setCommands(ctx, b, cfg.Admins, menus)
+		}
 	}
 }
 
-// setCommands publishes the in-app command menu.
+// menuState is what setCommands published last.
 //
-// Twice, at two scopes: the harmless commands to everyone, and the full list
-// only to the chats that can run it. Telegram shows the narrowest matching
-// scope, so an admin sees their own menu and everybody else sees the short one.
-// Without the split a stranger opening the menu would read off /nodes, /bans
-// and /backup, which says more about what is behind the bot than any of its
-// answers do.
-func setCommands(ctx context.Context, b *bot.Bot, cfg service.BotConfig) {
+// Both halves are needed. admins is the setting exactly as it was read, and is
+// what an edit is detected against: an unparsable entry never reaches
+// published, so comparing the setting to that instead would look like a change
+// on every single poll and republish every menu every twenty seconds forever.
+// published is the chats actually reached, which is what a later call has to
+// revoke.
+type menuState struct {
+	admins    []string
+	published []string
+}
+
+// stale reports whether the admin setting has moved since these menus went out.
+//
+// Against admins, never against published -- that choice is the whole reason
+// menuState has two fields, and swapping them turns an admin list with one
+// unparsable entry into a republish of every menu every twenty seconds. The
+// setting is an ordered list, so a reorder counts as a change and merely
+// republishes.
+func (m menuState) stale(admins []string) bool {
+	return !slices.Equal(m.admins, admins)
+}
+
+// setCommands publishes the in-app command menus and takes back the ones that
+// no longer apply. It returns the admin chats it published to, which is what a
+// later call needs as its previous.
+//
+// Two scopes: the harmless commands to everyone, and the full list only to the
+// chats that can run it. Telegram shows the narrowest matching scope, so an
+// admin sees their own menu and everybody else sees the short one. Without the
+// split a stranger opening the menu would read off /nodes, /bans and /backup,
+// which says more about what is behind the bot than any of its answers do.
+//
+// A chat-scoped list lives on Telegram's side, so dropping someone from the
+// admin setting does not by itself take their menu away -- it has to be
+// deleted, or a removed admin goes on reading the panel's whole management
+// surface off their command menu, which is the disclosure the split exists to
+// prevent. previous is what this session published last, and watchConfig calls
+// back in on every admin-list edit. The bookkeeping is in memory, so an admin
+// removed while the panel is down keeps their menu; closing that would mean a
+// settings row to remember a list of command names by.
+func setCommands(ctx context.Context, b *bot.Bot, admins []string, previous menuState) menuState {
 	publish := func(names []string, scope models.BotCommandScope) {
 		cmds := make([]models.BotCommand, 0, len(names))
 		for _, name := range names {
@@ -170,14 +213,45 @@ func setCommands(ctx context.Context, b *bot.Bot, cfg service.BotConfig) {
 	}
 
 	publish(publicCommands, nil)
-	for _, admin := range cfg.Admins {
+
+	current := make([]string, 0, len(admins))
+	for _, admin := range admins {
 		id, err := strconv.ParseInt(admin, 10, 64)
 		if err != nil {
 			logger.Warning("tgbot: ignoring an unparsable admin chat id ", admin)
 			continue
 		}
 		publish(adminCommands, &models.BotCommandScopeChat{ChatID: id})
+		current = append(current, admin)
 	}
+
+	for _, gone := range revoked(previous.published, current) {
+		id, err := strconv.ParseInt(gone, 10, 64)
+		if err != nil {
+			continue
+		}
+		// Deleting the chat scope falls that chat back to the public menu,
+		// which is what a non-admin should have been seeing all along.
+		if _, err := b.DeleteMyCommands(ctx, &bot.DeleteMyCommandsParams{
+			Scope: &models.BotCommandScopeChat{ChatID: id},
+		}); err != nil {
+			logger.Warning("tgbot: revoking the admin menu for ", gone, " failed: ", err)
+		}
+	}
+	return menuState{admins: admins, published: current}
+}
+
+// revoked lists the chats that were published to and no longer are. Linear on
+// purpose: this is the operator's own admin chat list, one entry on nearly
+// every install and a handful on the largest.
+func revoked(previous, current []string) []string {
+	var gone []string
+	for _, id := range previous {
+		if !slices.Contains(current, id) {
+			gone = append(gone, id)
+		}
+	}
+	return gone
 }
 
 func httpClient(proxy string) *http.Client {
