@@ -89,6 +89,11 @@ d en fetch_fail "Failed to fetch s-ui version, it maybe due to Github API restri
 d en download_fail "Downloading s-ui failed, please be sure that your server can access Github"
 d en begin_install "Beginning the install s-ui %s"
 d en download_ver_fail "download s-ui %s failed, please check the version exists"
+d en extract_fail "Extracting s-ui failed, the archive may be corrupt or the disk is full"
+d en broken_bin "The installed s-ui binary does not run, the installation is incomplete"
+d en copy_fail "Copying s-ui into /usr/local failed, check the free space and permissions there"
+d en restored_previous "The previously installed s-ui has been restarted, the panel is back up"
+d en service_stopped "s-ui is NOT running. Fix the problem above, then run the installer again"
 d en install_finished "installation finished, it is up and running now..."
 d en access_panel "You may access the Panel with following URL(s):"
 d en executing "Executing..."
@@ -121,6 +126,11 @@ d fa fetch_fail "دریافت نسخهٔ s-ui ناموفق بود؛ ممکن ا�
 d fa download_fail "دانلود s-ui ناموفق بود؛ مطمئن شوید سرور شما به Github دسترسی دارد"
 d fa begin_install "شروع نصب s-ui نسخهٔ %s"
 d fa download_ver_fail "دانلود s-ui نسخهٔ %s ناموفق بود؛ لطفاً از وجود این نسخه مطمئن شوید"
+d fa extract_fail "استخراج s-ui ناموفق بود؛ ممکن است فایل خراب باشد یا فضای دیسک پر باشد"
+d fa broken_bin "باینری نصب‌شدهٔ s-ui اجرا نمی‌شود؛ نصب ناقص است"
+d fa copy_fail "کپی s-ui در /usr/local ناموفق بود؛ فضای خالی و دسترسی‌های آن را بررسی کنید"
+d fa restored_previous "نسخهٔ نصب‌شدهٔ قبلی s-ui دوباره اجرا شد؛ پنل بالا آمد"
+d fa service_stopped "s-ui در حال اجرا نیست. مشکل بالا را رفع کنید و نصب را دوباره اجرا کنید"
 d fa install_finished "نصب به پایان رسید و هم اکنون در حال اجراست..."
 d fa access_panel "می توانید از طریق آدرس (های) زیر به پنل دسترسی داشته باشید:"
 d fa executing "در حال اجرا..."
@@ -153,6 +163,11 @@ d ru fetch_fail "Не удалось получить версию s-ui, воз�
 d ru download_fail "Не удалось загрузить s-ui, убедитесь, что ваш сервер имеет доступ к Github"
 d ru begin_install "Начинается установка s-ui %s"
 d ru download_ver_fail "загрузка s-ui %s не удалась, проверьте существование этой версии"
+d ru extract_fail "Не удалось распаковать s-ui: архив повреждён или на диске нет места"
+d ru broken_bin "Установленный файл s-ui не запускается, установка неполная"
+d ru copy_fail "Не удалось скопировать s-ui в /usr/local: проверьте свободное место и права"
+d ru restored_previous "Ранее установленный s-ui перезапущен, панель снова работает"
+d ru service_stopped "s-ui НЕ запущен. Устраните проблему выше и запустите установку заново"
 d ru install_finished "установка завершена, панель запущена и работает..."
 d ru access_panel "Вы можете получить доступ к панели по следующим URL:"
 d ru executing "Выполнение..."
@@ -185,6 +200,11 @@ d vi fetch_fail "Không thể lấy phiên bản s-ui, có thể do giới hạn
 d vi download_fail "Tải s-ui thất bại, hãy chắc chắn máy chủ của bạn có thể truy cập Github"
 d vi begin_install "Bắt đầu cài đặt s-ui %s"
 d vi download_ver_fail "tải s-ui %s thất bại, vui lòng kiểm tra phiên bản có tồn tại không"
+d vi extract_fail "Giải nén s-ui thất bại, tệp có thể bị hỏng hoặc đĩa đã đầy"
+d vi broken_bin "Tệp s-ui đã cài đặt không chạy được, quá trình cài đặt chưa hoàn tất"
+d vi copy_fail "Sao chép s-ui vào /usr/local thất bại, hãy kiểm tra dung lượng trống và quyền truy cập"
+d vi restored_previous "Bản s-ui đã cài trước đó đã được khởi động lại, bảng điều khiển đã hoạt động"
+d vi service_stopped "s-ui KHÔNG chạy. Hãy khắc phục sự cố ở trên rồi chạy lại trình cài đặt"
 d vi install_finished "cài đặt hoàn tất, hiện đang chạy..."
 d vi access_panel "Bạn có thể truy cập bảng điều khiển qua (các) URL sau:"
 d vi executing "Đang thực thi..."
@@ -217,6 +237,11 @@ d zhcn fetch_fail "获取 s-ui 版本失败，可能是由于 Github API 限制�
 d zhcn download_fail "下载 s-ui 失败，请确保您的服务器可以访问 Github"
 d zhcn begin_install "开始安装 s-ui %s"
 d zhcn download_ver_fail "下载 s-ui %s 失败，请检查该版本是否存在"
+d zhcn extract_fail "解压 s-ui 失败，压缩包可能已损坏或磁盘空间不足"
+d zhcn broken_bin "已安装的 s-ui 程序无法运行，安装不完整"
+d zhcn copy_fail "复制 s-ui 到 /usr/local 失败，请检查该目录的剩余空间和权限"
+d zhcn restored_previous "已重新启动原先安装的 s-ui，面板已恢复运行"
+d zhcn service_stopped "s-ui 未在运行。请先解决上面的问题，然后重新执行安装"
 d zhcn install_finished "安装完成，现已运行..."
 d zhcn access_panel "您可以通过以下 URL 访问面板："
 d zhcn executing "正在执行..."
@@ -249,6 +274,11 @@ d zhtw fetch_fail "取得 s-ui 版本失敗，可能是由於 Github API 限制�
 d zhtw download_fail "下載 s-ui 失敗，請確保您的伺服器可以存取 Github"
 d zhtw begin_install "開始安裝 s-ui %s"
 d zhtw download_ver_fail "下載 s-ui %s 失敗，請檢查該版本是否存在"
+d zhtw extract_fail "解壓 s-ui 失敗，壓縮檔可能已損毀或磁碟空間不足"
+d zhtw broken_bin "已安裝的 s-ui 程式無法執行，安裝不完整"
+d zhtw copy_fail "複製 s-ui 到 /usr/local 失敗，請檢查該目錄的剩餘空間與權限"
+d zhtw restored_previous "已重新啟動原先安裝的 s-ui，面板已恢復執行"
+d zhtw service_stopped "s-ui 未在執行。請先解決上面的問題，然後重新執行安裝"
 d zhtw install_finished "安裝完成，現已執行..."
 d zhtw access_panel "您可以透過以下 URL 存取面板："
 d zhtw executing "正在執行..."
@@ -370,8 +400,9 @@ supervisor=supervise-daemon
 respawn_delay=10
 
 depend() {
-    need net
-    after firewall
+    need localmount
+    use net dns logger firewall
+    after net firewall
 }
 EOF
     fi
@@ -456,6 +487,37 @@ prepare_services() {
     fi
 }
 
+# restart_existing_service brings back whatever is already under /usr/local.
+# install_s-ui stops the running panel before unpacking, so an upgrade that
+# fails afterwards leaves it down; when the installed binary still runs, putting
+# it back is strictly better than exiting on a dead panel. `sui -v` is the one
+# subcommand that needs no database, which makes it a safe liveness probe.
+restart_existing_service() {
+    [[ -x /usr/local/s-ui/sui ]] || return 1
+    /usr/local/s-ui/sui -v >/dev/null 2>&1 || return 1
+    if [[ "${init_system}" == "openrc" ]]; then
+        rc-service s-ui restart >/dev/null 2>&1
+    else
+        systemctl start s-ui >/dev/null 2>&1
+    fi
+}
+
+# abort_install <message-key> — say what went wrong, clear the staging dir, and
+# state whether the panel is running. Every caller has already stopped the
+# service, so staying silent about that would leave the operator with a dead
+# panel and only a message about the archive.
+abort_install() {
+    echo -e "${red}$(t "$1")${plain}"
+    df -h /tmp /usr/local 2>/dev/null
+    rm -rf /tmp/s-ui "/tmp/s-ui-linux-$(arch).tar.gz"
+    if restart_existing_service; then
+        echo -e "${yellow}$(t restored_previous)${plain}"
+    else
+        echo -e "${red}$(t service_stopped)${plain}"
+    fi
+    exit 1
+}
+
 install_s-ui() {
     cd /tmp/
 
@@ -494,7 +556,9 @@ install_s-ui() {
         fi
     fi
 
-    tar zxvf s-ui-linux-$(arch).tar.gz
+    if ! tar zxvf s-ui-linux-$(arch).tar.gz; then
+        abort_install extract_fail
+    fi
     rm s-ui-linux-$(arch).tar.gz -f
 
     chmod +x s-ui/sui s-ui/s-ui.sh
@@ -502,7 +566,14 @@ install_s-ui() {
     # /usr/local/s-ui/ with the rest, so install_openrc_service can restore
     # it without re-embedding (mirrors how s-ui.service is shipped).
     cp s-ui/s-ui.sh /usr/bin/s-ui
-    cp -rf s-ui /usr/local/
+    if ! cp -rf s-ui /usr/local/; then
+        abort_install copy_fail
+    fi
+    # A truncated copy still leaves an executable behind, and the next step
+    # would run migrations against it. Make it prove it starts first.
+    if ! /usr/local/s-ui/sui -v >/dev/null 2>&1; then
+        abort_install broken_bin
+    fi
     if [[ "${init_system}" == "systemd" ]]; then
         cp -f s-ui/*.service /etc/systemd/system/
     fi
