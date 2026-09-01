@@ -22,9 +22,8 @@
           <option v-for="s in vmessSecurities" :key="s" :value="s">{{ s }}</option>
         </Select>
       </Field>
-      <Field v-if="type == inTypes.Hysteria" label="Recv window">
-        <input class="input mono" type="number" min="0" v-model.number="inData.out_json.recv_window" />
-      </Field>
+      <!-- recv_window was hysteria's own name for the QUIC stream window; the
+           shared QUIC fields on the outbound form carry it now. -->
       <Field v-if="type == inTypes.TUIC" label="UDP Relay Mode">
         <Select v-model="udpRelayMode">
           <option value="">{{ $t('none') }}</option>

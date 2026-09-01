@@ -1,20 +1,6 @@
 <template>
   <div>
-    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
-      <SectionLabel style="flex: 1;">Hysteria</SectionLabel>
-      <Pop :min-width="220">
-        <template #trigger="{ toggle }">
-          <Btn sm @click="toggle">
-            <Ico name="settings" :size="14" /> {{ $t('types.hy.hyOptions') }}
-          </Btn>
-        </template>
-        <div style="display: flex; flex-direction: column; gap: 2px; padding: 5px;">
-          <SwitchLabel v-model="optionRsvConn" label="Recv window conn" />
-          <SwitchLabel v-model="optionRsvClnt" label="Recv window client" />
-          <SwitchLabel v-model="optionMaxConn" label="Max conn client" />
-        </div>
-      </Pop>
-    </div>
+    <SectionLabel style="margin-bottom: 12px;">Hysteria</SectionLabel>
     <div class="grid2">
       <Field :label="$t('stats.upload') + ' (' + $t('stats.Mbps') + ')'">
         <input class="input mono" type="number" v-model.number="up_mbps" />
@@ -26,20 +12,11 @@
     <Field :label="$t('types.hy.obfs')">
       <input class="input mono" v-model="data.obfs" />
     </Field>
-    <div style="display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 15px;">
-      <SwitchLabel v-model="data.disable_mtu_discovery" label="Disable MTU discovery" />
-    </div>
-    <div class="grid2">
-      <Field v-if="data.recv_window_conn != undefined" label="Recv window conn">
-        <input class="input mono" type="number" min="0" v-model.number="data.recv_window_conn" />
-      </Field>
-      <Field v-if="data.recv_window_client != undefined" label="Recv window client">
-        <input class="input mono" type="number" min="0" v-model.number="data.recv_window_client" />
-      </Field>
-      <Field v-if="data.max_conn_client != undefined" label="Max conn client">
-        <input class="input mono" type="number" min="0" v-model.number="data.max_conn_client" />
-      </Field>
-    </div>
+    <!-- recv_window_conn / recv_window_client / max_conn_client /
+         disable_mtu_discovery were hysteria's own names for the QUIC options
+         every QUIC protocol now shares. sing-box 1.14 still reads the old ones
+         but only as a fallback, so the panel writes the new names only. -->
+    <QuicFields :data="data" quic />
   </div>
 </template>
 
@@ -47,27 +24,9 @@
 import { computed } from 'vue'
 import Field from '@/components/ui/Field.vue'
 import SectionLabel from '@/components/ui/SectionLabel.vue'
-import SwitchLabel from '@/components/ui/SwitchLabel.vue'
-import Pop from '@/components/ui/Pop.vue'
-import Ico from '@/components/ui/Ico.vue'
-import Btn from '@/components/ui/Btn.vue'
+import QuicFields from '@/components/forms/out/QuicFields.vue'
 
 const props = defineProps<{ data: any }>()
-
-const optionRsvConn = computed({
-  get: (): boolean => props.data.recv_window_conn != undefined,
-  set: (v: boolean) => { props.data.recv_window_conn = v ? 15728640 : undefined },
-})
-
-const optionRsvClnt = computed({
-  get: (): boolean => props.data.recv_window_client != undefined,
-  set: (v: boolean) => { props.data.recv_window_client = v ? 67108864 : undefined },
-})
-
-const optionMaxConn = computed({
-  get: (): boolean => props.data.max_conn_client != undefined,
-  set: (v: boolean) => { props.data.max_conn_client = v ? 1024 : undefined },
-})
 
 const down_mbps = computed({
   get: (): any => (props.data.down_mbps ? props.data.down_mbps : 0),

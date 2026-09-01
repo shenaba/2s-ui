@@ -23,7 +23,6 @@
       </Field>
     </div>
     <div style="display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 15px;">
-      <SwitchLabel v-model="independentNat" label="Independent NAT" />
       <SwitchLabel v-model="autoRoute" label="Auto Route" />
     </div>
     <div v-if="autoRoute" class="fade-up" style="display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 15px;">
@@ -61,10 +60,9 @@ const udpTimeout = computed({
   set: (v: number) => { props.data.udp_timeout = v > 0 ? v + 'm' : '5m' },
 })
 
-const independentNat = computed({
-  get: (): boolean => props.data.endpoint_independent_nat ?? false,
-  set: (v: boolean) => { props.data.endpoint_independent_nat = v },
-})
+// endpoint_independent_nat is gone: since sing-box 1.12 the tun stack decides
+// this for itself and the option is ignored, so offering it only invited an
+// operator to set something that does nothing.
 
 const autoRoute = computed({
   get: (): boolean => props.data.auto_route ?? false,

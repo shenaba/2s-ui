@@ -27,11 +27,13 @@
     <SwitchLabel v-model="udpOverStream" label="UDP Over Stream" />
     <SwitchLabel v-model="zeroRtt" label="Zero-RTT Handshake" />
   </div>
+  <QuicFields :data="data" quic />
 </template>
 
 <script lang="ts" setup>
 import Select from '@/components/ui/Select.vue'
 import { computed } from 'vue'
+import QuicFields from '../QuicFields.vue'
 import RandomUtil from '@/plugins/randomUtil'
 import Field from '@/components/ui/Field.vue'
 import KeyInput from '@/components/ui/KeyInput.vue'

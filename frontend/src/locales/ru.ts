@@ -848,6 +848,15 @@ export default {
   httpClient: {
     title: "HTTP-клиент",
   },
+  quic: {
+    idleTimeout: "Тайм-аут простоя",
+    keepAlive: "Период keep-alive",
+    streamWindow: "Окно потока",
+    connectionWindow: "Окно соединения",
+    maxStreams: "Макс. одновременных потоков",
+    initialPacketSize: "Размер первого пакета",
+    disableMtuDiscovery: "Отключить определение MTU пути",
+  },
   date: {
     expiry: "Срок действия",
     expired: "Истек",

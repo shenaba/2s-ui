@@ -847,6 +847,15 @@ export default {
   httpClient: {
     title: "HTTP Client",
   },
+  quic: {
+    idleTimeout: "Thời gian chờ nhàn rỗi",
+    keepAlive: "Chu kỳ keep-alive",
+    streamWindow: "Cửa sổ luồng",
+    connectionWindow: "Cửa sổ kết nối",
+    maxStreams: "Số luồng đồng thời tối đa",
+    initialPacketSize: "Kích thước gói ban đầu",
+    disableMtuDiscovery: "Tắt dò tìm MTU đường truyền",
+  },
   date: {
     expiry: "Hết hạn",
     expired: "Đã hết hạn",

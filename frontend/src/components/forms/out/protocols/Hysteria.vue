@@ -7,8 +7,6 @@
         <Btn variant="subtle" sm @click="toggle">{{ $t('types.hy.hyOptions') }}</Btn>
       </template>
       <div style="display: flex; flex-direction: column; gap: 2px; padding: 4px;">
-        <div class="pop-item"><SwitchLabel v-model="optionRsvConn" label="Recv window conn" /></div>
-        <div class="pop-item"><SwitchLabel v-model="optionRsvWin" label="Recv window" /></div>
         <div class="pop-item"><SwitchLabel v-model="optionMPort" :label="$t('rule.portRange')" /></div>
       </div>
     </Pop>
@@ -27,13 +25,12 @@
       <input class="input mono" v-model="data.auth_str" />
     </Field>
     <Network :data="data" />
-    <Field v-if="data.recv_window_conn != undefined" label="Recv window conn" :mb="0">
-      <input class="input mono" type="number" min="0" v-model.number="data.recv_window_conn" />
-    </Field>
-    <Field v-if="data.recv_window != undefined" label="Recv window" :mb="0">
-      <input class="input mono" type="number" min="0" v-model.number="data.recv_window" />
-    </Field>
   </div>
+  <!-- recv_window_conn / recv_window / disable_mtu_discovery were hysteria's
+       own names for the QUIC options every QUIC protocol now shares. sing-box
+       1.14 still reads the old ones, but only as a fallback, so the panel
+       writes the new names only. -->
+  <QuicFields :data="data" quic />
   <template v-if="optionMPort">
     <Field :label="$t('rule.portRange') + ' ' + $t('commaSeparated')">
       <input class="input mono" v-model="serverPorts" />
@@ -42,9 +39,6 @@
       <input class="input mono" type="number" min="0" v-model.number="hopInterval" />
     </Field>
   </template>
-  <div style="margin-bottom: 15px;">
-    <SwitchLabel v-model="disableMtu" label="Disable MTU discovery" />
-  </div>
 </template>
 
 <script lang="ts" setup>
@@ -55,21 +49,10 @@ import Pop from '@/components/ui/Pop.vue'
 import SwitchLabel from '@/components/ui/SwitchLabel.vue'
 import SectionLabel from '@/components/ui/SectionLabel.vue'
 import Network from '../Network.vue'
+import QuicFields from '../QuicFields.vue'
 
 const props = defineProps<{ data: any }>()
 
-const disableMtu = computed({
-  get: () => props.data.disable_mtu_discovery ?? false,
-  set: (v: boolean) => { props.data.disable_mtu_discovery = v },
-})
-const optionRsvConn = computed({
-  get: (): boolean => props.data.recv_window_conn != undefined,
-  set: (v: boolean) => { props.data.recv_window_conn = v ? 15728640 : undefined },
-})
-const optionRsvWin = computed({
-  get: (): boolean => props.data.recv_window != undefined,
-  set: (v: boolean) => { props.data.recv_window = v ? 67108864 : undefined },
-})
 const optionMPort = computed({
   get: (): boolean => props.data.server_ports != undefined,
   set: (v: boolean) => { props.data.server_ports = v ? [] : undefined },

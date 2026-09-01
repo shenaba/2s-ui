@@ -35,10 +35,12 @@
       <input class="input mono" type="number" min="0" v-model.number="hopInterval" />
     </Field>
   </template>
+  <QuicFields :data="data" quic />
 </template>
 
 <script lang="ts" setup>
 import { computed } from 'vue'
+import QuicFields from '../QuicFields.vue'
 import Field from '@/components/ui/Field.vue'
 import Btn from '@/components/ui/Btn.vue'
 import Pop from '@/components/ui/Pop.vue'

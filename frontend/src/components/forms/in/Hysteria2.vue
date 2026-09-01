@@ -60,11 +60,13 @@
       </template>
     </template>
   </div>
+  <QuicFields :data="data" quic />
 </template>
 
 <script lang="ts" setup>
 import Select from '@/components/ui/Select.vue'
 import { computed } from 'vue'
+import QuicFields from '@/components/forms/out/QuicFields.vue'
 import { useI18n } from 'vue-i18n'
 import Field from '@/components/ui/Field.vue'
 import SectionLabel from '@/components/ui/SectionLabel.vue'

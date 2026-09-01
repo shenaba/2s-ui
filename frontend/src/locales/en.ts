@@ -855,6 +855,15 @@ export default {
   httpClient: {
     title: "HTTP Client",
   },
+  quic: {
+    idleTimeout: "Idle timeout",
+    keepAlive: "Keep-alive period",
+    streamWindow: "Stream window",
+    connectionWindow: "Connection window",
+    maxStreams: "Max concurrent streams",
+    initialPacketSize: "Initial packet size",
+    disableMtuDiscovery: "Disable path MTU discovery",
+  },
   date: {
     expiry: "Expiry",
     expired: "Expired",

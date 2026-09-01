@@ -847,6 +847,15 @@ export default {
   httpClient: {
     title: "HTTP 客户端",
   },
+  quic: {
+    idleTimeout: "空闲超时",
+    keepAlive: "保活间隔",
+    streamWindow: "流窗口",
+    connectionWindow: "连接窗口",
+    maxStreams: "最大并发流",
+    initialPacketSize: "初始包大小",
+    disableMtuDiscovery: "禁用路径 MTU 探测",
+  },
   date: {
     expiry: "到期",
     expired: "已到期",

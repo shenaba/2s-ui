@@ -847,6 +847,15 @@ export default {
   httpClient: {
     title: "HTTP 用戶端",
   },
+  quic: {
+    idleTimeout: "閒置逾時",
+    keepAlive: "保活間隔",
+    streamWindow: "串流視窗",
+    connectionWindow: "連線視窗",
+    maxStreams: "最大並行串流",
+    initialPacketSize: "初始封包大小",
+    disableMtuDiscovery: "停用路徑 MTU 探測",
+  },
   date: {
     expiry: "到期",
     expired: "已到期",

@@ -847,6 +847,15 @@ export default {
   httpClient: {
     title: "کلاینت HTTP",
   },
+  quic: {
+    idleTimeout: "مهلت بی‌کاری",
+    keepAlive: "دورهٔ زنده‌نگه‌داشتن",
+    streamWindow: "پنجرهٔ جریان",
+    connectionWindow: "پنجرهٔ اتصال",
+    maxStreams: "بیشینهٔ جریان‌های هم‌زمان",
+    initialPacketSize: "اندازهٔ بستهٔ اولیه",
+    disableMtuDiscovery: "غیرفعال‌سازی کشف MTU مسیر",
+  },
   date: {
     expiry: "انقضا",
     expired: "منقضی",
