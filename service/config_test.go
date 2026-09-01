@@ -87,10 +87,14 @@ func decodeConfig(t *testing.T, raw string) SingBoxConfig {
 }
 
 // A remote rule-set with no client of its own downloads over the implicit
-// default, which sing-box 1.14 deprecates.
+// default, which sing-box 1.14 deprecates. The declared replacement has to keep
+// dialing through the same outbound: the implicit client sets DefaultOutbound,
+// which has no JSON field, so the only way to say it is a detour naming
+// route.final. Without one the download would silently go out directly.
 func TestEnsureDefaultHTTPClient(t *testing.T) {
 	config := decodeConfig(t, `{
-		"route": {"rule_set": [
+		"outbounds": [{"type": "selector", "tag": "proxy", "outbounds": ["a"]}],
+		"route": {"final": "proxy", "rule_set": [
 			{"type": "remote", "tag": "a", "url": "https://e.com/a.srs"}
 		]}
 	}`)
@@ -102,13 +106,77 @@ func TestEnsureDefaultHTTPClient(t *testing.T) {
 	if err := json.Unmarshal(config.HTTPClients[0], &client); err != nil {
 		t.Fatal(err)
 	}
-	// A detour to a plain direct outbound is rejected by sing-box, and the
-	// default outbound is what the implicit client used anyway.
-	if client["tag"] != defaultHTTPClientTag || len(client) != 1 {
+	if client["tag"] != defaultHTTPClientTag || client["detour"] != "proxy" || len(client) != 2 {
 		t.Errorf("unexpected client: %v", client)
 	}
 	if routeOf(t, config)["default_http_client"] != defaultHTTPClientTag {
 		t.Errorf("the route must point at it, got %v", routeOf(t, config))
+	}
+}
+
+// sing-box refuses a detour to a direct outbound carrying no options, and no
+// detour already means the same thing, so that is the one case with no detour.
+func TestEnsureDefaultHTTPClientOmitsNoopDetour(t *testing.T) {
+	config := decodeConfig(t, `{
+		"outbounds": [{"type": "direct", "tag": "direct"}],
+		"route": {"final": "direct", "rule_set": [
+			{"type": "remote", "tag": "a", "url": "https://e.com/a.srs"}
+		]}
+	}`)
+
+	if len(config.HTTPClients) != 1 {
+		t.Fatalf("expected one declared http client, got %v", config.HTTPClients)
+	}
+	var client map[string]any
+	if err := json.Unmarshal(config.HTTPClients[0], &client); err != nil {
+		t.Fatal(err)
+	}
+	if client["tag"] != defaultHTTPClientTag || len(client) != 1 {
+		t.Errorf("a no-op detour must be left out, got %v", client)
+	}
+}
+
+// A direct outbound with dialer options is not a no-op, so the detour stays.
+func TestEnsureDefaultHTTPClientKeepsConfiguredDirect(t *testing.T) {
+	config := decodeConfig(t, `{
+		"outbounds": [{"type": "direct", "tag": "direct", "bind_interface": "eth1"}],
+		"route": {"final": "direct", "rule_set": [
+			{"type": "remote", "tag": "a", "url": "https://e.com/a.srs"}
+		]}
+	}`)
+
+	var client map[string]any
+	if err := json.Unmarshal(config.HTTPClients[0], &client); err != nil {
+		t.Fatal(err)
+	}
+	if client["detour"] != "direct" {
+		t.Errorf("a direct outbound with dialer options is a real detour, got %v", client)
+	}
+}
+
+// route.final may name an endpoint rather than an outbound -- wireguard, warp
+// and tailscale all sit on the panel's Endpoints page -- and sing-box resolves a
+// detour through outbound.Manager.Outbound, which falls back to the endpoint
+// manager. Searching only outbounds would skip declaring the client on a
+// perfectly valid config and leave the deprecation warning this function exists
+// to silence.
+func TestEnsureDefaultHTTPClientResolvesAnEndpoint(t *testing.T) {
+	config := decodeConfig(t, `{
+		"endpoints": [{"type": "wireguard", "tag": "wg-out", "address": ["10.0.0.2/32"]}],
+		"route": {"final": "wg-out", "rule_set": [
+			{"type": "remote", "tag": "a", "url": "https://e.com/a.srs"}
+		]}
+	}`)
+
+	if len(config.HTTPClients) != 1 {
+		t.Fatalf("expected one declared http client, got %v", config.HTTPClients)
+	}
+	var client map[string]any
+	if err := json.Unmarshal(config.HTTPClients[0], &client); err != nil {
+		t.Fatal(err)
+	}
+	if client["detour"] != "wg-out" {
+		t.Errorf("the detour must name the endpoint route.final points at, got %v", client)
 	}
 }
 
@@ -123,6 +191,15 @@ func TestEnsureDefaultHTTPClientLeavesConfigsAlone(t *testing.T) {
 		"no rule-set": `{"route": {"rules": []}}`,
 		"no route":    `{"log": {"level": "info"}}`,
 		"default already set": `{"route": {"default_http_client": "mine", "rule_set": [
+			{"type": "remote", "tag": "a", "url": "https://e.com/a.srs"}
+		]}}`,
+		// Without route.final the default outbound is whichever sing-box
+		// created first, which the panel does not model -- a wrong dial path is
+		// worse than the deprecation line, so nothing is declared.
+		"no final": `{"route": {"rule_set": [
+			{"type": "remote", "tag": "a", "url": "https://e.com/a.srs"}
+		]}}`,
+		"final names nothing": `{"route": {"final": "gone", "rule_set": [
 			{"type": "remote", "tag": "a", "url": "https://e.com/a.srs"}
 		]}}`,
 	} {
@@ -148,8 +225,9 @@ func TestEnsureDefaultHTTPClientLeavesConfigsAlone(t *testing.T) {
 // falling back, so one is added beside them rather than skipped.
 func TestEnsureDefaultHTTPClientAppends(t *testing.T) {
 	config := decodeConfig(t, `{
+		"outbounds": [{"type": "selector", "tag": "proxy", "outbounds": ["a"]}],
 		"http_clients": [{"tag": "over-proxy", "detour": "proxy"}],
-		"route": {"rule_set": [
+		"route": {"final": "proxy", "rule_set": [
 			{"type": "remote", "tag": "a", "url": "https://e.com/a.srs"},
 			{"type": "remote", "tag": "b", "url": "https://e.com/b.srs", "http_client": "over-proxy"}
 		]}
@@ -166,8 +244,9 @@ func TestEnsureDefaultHTTPClientAppends(t *testing.T) {
 // The added client must not take a tag the operator already used.
 func TestEnsureDefaultHTTPClientAvoidsTagCollision(t *testing.T) {
 	config := decodeConfig(t, `{
+		"outbounds": [{"type": "selector", "tag": "proxy", "outbounds": ["a"]}],
 		"http_clients": [{"tag": "default", "detour": "proxy"}],
-		"route": {"rule_set": [{"type": "remote", "tag": "a", "url": "https://e.com/a.srs"}]}
+		"route": {"final": "proxy", "rule_set": [{"type": "remote", "tag": "a", "url": "https://e.com/a.srs"}]}
 	}`)
 
 	got := routeOf(t, config)["default_http_client"]

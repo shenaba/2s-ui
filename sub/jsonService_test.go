@@ -9,6 +9,7 @@ import (
 
 	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/database/model"
+	"github.com/shenaba/2s-ui/util"
 
 	"gopkg.in/yaml.v3"
 )
@@ -638,7 +639,19 @@ func TestClashUdpRespectsTcpOnlyListener(t *testing.T) {
 
 // runAddHTTPClients drives addHTTPClients over a settings template the way
 // addOthers does, and hands back both halves it can write to.
+//
+// The outbound list is part of the input, not scenery: the declared client has
+// to name route.final as its detour, so addHTTPClients has to be able to find
+// that outbound and see it is not an optionless direct one.
 func runAddHTTPClients(t *testing.T, template string) (map[string]interface{}, map[string]interface{}) {
+	t.Helper()
+	return runAddHTTPClientsWith(t, template, []map[string]interface{}{
+		{"type": "selector", "tag": "proxy", "outbounds": []interface{}{"auto"}},
+		{"type": "direct", "tag": "direct"},
+	})
+}
+
+func runAddHTTPClientsWith(t *testing.T, template string, outbounds []map[string]interface{}) (map[string]interface{}, map[string]interface{}) {
 	t.Helper()
 	var othersJson map[string]interface{}
 	if err := json.Unmarshal([]byte(template), &othersJson); err != nil {
@@ -648,8 +661,11 @@ func runAddHTTPClients(t *testing.T, template string) (map[string]interface{}, m
 	if ruleSet, ok := othersJson["rule_set"]; ok {
 		route["rule_set"] = ruleSet
 	}
+	if final, ok := othersJson["final"].(string); ok && final != "" {
+		route["final"] = final
+	}
 	jsonConfig := map[string]interface{}{}
-	(&JsonService{}).addHTTPClients(&jsonConfig, route, othersJson)
+	(&JsonService{}).addHTTPClients(&jsonConfig, route, othersJson, outbounds)
 	return jsonConfig, route
 }
 
@@ -670,13 +686,49 @@ func TestAddHTTPClientsDeclaresDefault(t *testing.T) {
 	if client["tag"] != defaultHTTPClientTag {
 		t.Errorf("unexpected client: %v", client)
 	}
-	// A detour would be wrong here: sing-box refuses a detour to a plain direct
-	// outbound, and downloading over the default outbound is the intent.
-	if _, hasDetour := client["detour"]; hasDetour {
-		t.Errorf("the default download client must carry no detour, got %v", client)
+	// The detour is the whole point: sing-box's implicit client dials through
+	// the default outbound, and a declared client can only say that by naming
+	// route.final. Leaving it out would send rule-set downloads out directly,
+	// which on a censored network is where they stop arriving.
+	if client["detour"] != "proxy" {
+		t.Errorf("the default download client must dial through route.final, got %v", client)
 	}
 	if route["default_http_client"] != defaultHTTPClientTag {
 		t.Errorf("the route must point at it, got %v", route["default_http_client"])
+	}
+}
+
+// sing-box refuses a detour to a direct outbound carrying no options of its
+// own, and no detour already means the same thing.
+func TestAddHTTPClientsOmitsNoopDetour(t *testing.T) {
+	jsonConfig, _ := runAddHTTPClients(t, `{
+		"final": "direct",
+		"rule_set": [{"tag": "a", "type": "remote", "format": "binary", "url": "https://e.com/a.srs"}]
+	}`)
+
+	clients, ok := jsonConfig["http_clients"].([]interface{})
+	if !ok || len(clients) != 1 {
+		t.Fatalf("expected one declared http client, got %v", jsonConfig["http_clients"])
+	}
+	client, _ := clients[0].(map[string]interface{})
+	if _, hasDetour := client["detour"]; hasDetour {
+		t.Errorf("a no-op detour must be left out, got %v", client)
+	}
+}
+
+// Nothing is declared when the detour cannot be named: a client that dials
+// directly is not the fallback it would be replacing.
+func TestAddHTTPClientsSkipsWhenFinalIsUnknown(t *testing.T) {
+	jsonConfig, route := runAddHTTPClientsWith(t, `{
+		"final": "gone",
+		"rule_set": [{"tag": "a", "type": "remote", "format": "binary", "url": "https://e.com/a.srs"}]
+	}`, []map[string]interface{}{{"type": "direct", "tag": "direct"}})
+
+	if _, ok := jsonConfig["http_clients"]; ok {
+		t.Errorf("no client should have been declared, got %v", jsonConfig["http_clients"])
+	}
+	if _, ok := route["default_http_client"]; ok {
+		t.Errorf("no default should have been set, got %v", route["default_http_client"])
 	}
 }
 
@@ -787,5 +839,282 @@ func TestDefaultDomainResolverFromTemplate(t *testing.T) {
 	}`)
 	if route["default_domain_resolver"] != "direct-dns" {
 		t.Errorf("the template's choice must win, got %v", route["default_domain_resolver"])
+	}
+}
+
+// seedSnellClient seeds a snell listener of the given version plus a client
+// holding the per-client key for it.
+func seedSnellClient(t *testing.T, subId string, version int) {
+	t.Helper()
+	db := database.GetDB()
+
+	inbound := &model.Inbound{
+		Type:    "snell",
+		Tag:     "snell-in",
+		Addrs:   json.RawMessage(`[]`),
+		Options: json.RawMessage(fmt.Sprintf(`{"version":%d,"psk":"shared-psk-value","mode":"default"}`, version)),
+		OutJson: json.RawMessage(`{}`),
+	}
+	if err := db.Create(inbound).Error; err != nil {
+		t.Fatalf("seed inbound: %v", err)
+	}
+	// FillOutJson is what the panel runs on save; the subscription reads what
+	// it left behind.
+	if err := util.FillOutJson(inbound, "example.com"); err != nil {
+		t.Fatalf("fill out_json: %v", err)
+	}
+	if err := db.Model(model.Inbound{}).Where("id = ?", inbound.Id).
+		Update("out_json", inbound.OutJson).Error; err != nil {
+		t.Fatalf("store out_json: %v", err)
+	}
+	if err := db.Create(&model.Client{
+		Enable: true, Name: subId,
+		Config:   json.RawMessage(`{"snell":{"name":"` + subId + `","userkey":"client-key"}}`),
+		Inbounds: json.RawMessage(fmt.Sprintf(`[%d]`, inbound.Id)),
+		Links:    json.RawMessage(`[]`),
+	}).Error; err != nil {
+		t.Fatalf("seed client: %v", err)
+	}
+}
+
+// A snell v6 listener is reachable by a sing-box client, so the subscription
+// has to carry the shared psk from the listener and the per-client userkey from
+// the client's own config.
+func TestSubEmitsSnellV6(t *testing.T) {
+	setupSubDB(t)
+	seedSnellClient(t, "subsnell", 6)
+
+	raw, _, err := (&JsonService{}).GetJson("subsnell", "json")
+	if err != nil {
+		t.Fatalf("GetJson: %v", err)
+	}
+	var found bool
+	for _, ob := range outboundsOf(t, *raw) {
+		if ob["type"] != "snell" {
+			continue
+		}
+		found = true
+		if ob["version"] != float64(6) {
+			t.Errorf("version = %v, want 6", ob["version"])
+		}
+		if ob["psk"] != "shared-psk-value" {
+			t.Errorf("psk = %v, want the listener's", ob["psk"])
+		}
+		if ob["userkey"] != "client-key" {
+			t.Errorf("userkey = %v, want the client's", ob["userkey"])
+		}
+		if ob["mode"] != "default" {
+			t.Errorf("mode = %v, want the listener's", ob["mode"])
+		}
+		if _, leaked := ob["name"]; leaked {
+			t.Errorf("the client config's name is not an outbound option, got %v", ob)
+		}
+	}
+	if !found {
+		t.Fatalf("no snell outbound emitted:\n%s", *raw)
+	}
+}
+
+// sing-box's snell outbound speaks versions 4 and 6 while the inbound speaks 5
+// and 6, so a v5 listener has no client config to generate. Emitting a v5
+// outbound anyway would produce a config sing-box refuses to load.
+func TestSubSkipsSnellV5(t *testing.T) {
+	setupSubDB(t)
+	seedSnellClient(t, "subsnell5", 5)
+
+	raw, _, err := (&JsonService{}).GetJson("subsnell5", "json")
+	if err != nil {
+		t.Fatalf("GetJson: %v", err)
+	}
+	for _, ob := range outboundsOf(t, *raw) {
+		if ob["type"] == "snell" {
+			t.Fatalf("a v5 listener has no generated client config:\n%s", *raw)
+		}
+	}
+}
+
+// subClashUdp is the single switch for the udp flag, shadowsocks included. The
+// protocol branch used to answer for itself whenever the listener was not
+// TCP-only, which made the setting mean nothing there.
+func TestClashUdpAppliesToShadowsocks(t *testing.T) {
+	setupSubDB(t)
+	db := database.GetDB()
+
+	inbound := &model.Inbound{
+		Type:    "shadowsocks",
+		Tag:     "ss-udp",
+		Addrs:   json.RawMessage(`[]`),
+		OutJson: json.RawMessage(`{"type":"shadowsocks","tag":"ss-udp","server":"example.com","server_port":443,"method":"aes-128-gcm","network":"udp"}`),
+		Options: json.RawMessage(`{"method":"aes-128-gcm","network":"udp"}`),
+	}
+	if err := db.Create(inbound).Error; err != nil {
+		t.Fatalf("seed inbound: %v", err)
+	}
+	if err := db.Create(&model.Client{
+		Enable: true, Name: "subssudp",
+		Config:   json.RawMessage(`{"shadowsocks":{"password":"pw"}}`),
+		Inbounds: json.RawMessage(fmt.Sprintf(`[%d]`, inbound.Id)),
+		Links:    json.RawMessage(`[]`),
+	}).Error; err != nil {
+		t.Fatalf("seed client: %v", err)
+	}
+
+	clash, _, err := (&ClashService{}).GetClash("subssudp")
+	if err != nil {
+		t.Fatalf("GetClash: %v", err)
+	}
+	if _, ok := clashProxy(t, *clash, "ss-udp")["udp"]; ok {
+		t.Errorf("udp must stay off until the setting is on:\n%s", *clash)
+	}
+
+	if err := db.Create(&model.Setting{Key: "subClashUdp", Value: "true"}).Error; err != nil {
+		t.Fatalf("seed setting: %v", err)
+	}
+	clash, _, err = (&ClashService{}).GetClash("subssudp")
+	if err != nil {
+		t.Fatalf("GetClash: %v", err)
+	}
+	if clashProxy(t, *clash, "ss-udp")["udp"] != true {
+		t.Errorf("udp = %v with subClashUdp on, want true:\n%s", clashProxy(t, *clash, "ss-udp")["udp"], *clash)
+	}
+}
+
+// seedShadowsocksClient seeds a shadowsocks listener plus a client, letting the
+// caller decide the listener's network and whether the client config asks for
+// UDP over TCP.
+func seedShadowsocksClient(t *testing.T, subId, tag, network string, uot bool) {
+	t.Helper()
+	db := database.GetDB()
+
+	outJson := fmt.Sprintf(
+		`{"type":"shadowsocks","tag":%q,"server":"example.com","server_port":443,`+
+			`"method":"aes-128-gcm","udp_over_tcp":%t}`, tag, uot)
+	inbound := &model.Inbound{
+		Type: "shadowsocks", Tag: tag,
+		Addrs:   json.RawMessage(`[]`),
+		OutJson: json.RawMessage(outJson),
+		Options: json.RawMessage(fmt.Sprintf(`{"method":"aes-128-gcm","network":%q}`, network)),
+	}
+	if err := db.Create(inbound).Error; err != nil {
+		t.Fatalf("seed inbound: %v", err)
+	}
+	if err := db.Create(&model.Client{
+		Enable: true, Name: subId,
+		Config:   json.RawMessage(`{"shadowsocks":{"password":"pw"}}`),
+		Inbounds: json.RawMessage(fmt.Sprintf(`[%d]`, inbound.Id)),
+		Links:    json.RawMessage(`[]`),
+	}).Error; err != nil {
+		t.Fatalf("seed client: %v", err)
+	}
+}
+
+// UDP over TCP is its own opt-in, not something the subClashUdp default gates:
+// mihomo reads udp-over-tcp only when udp is set, so emitting one without the
+// other describes a transport that is never used.
+func TestClashUdpOverTcpTurnsUdpOnByItself(t *testing.T) {
+	setupSubDB(t)
+	seedShadowsocksClient(t, "subuot", "ss-uot", "udp", true)
+
+	clash, _, err := (&ClashService{}).GetClash("subuot")
+	if err != nil {
+		t.Fatalf("GetClash: %v", err)
+	}
+	proxy := clashProxy(t, *clash, "ss-uot")
+	if proxy["udp-over-tcp"] != true {
+		t.Errorf("udp-over-tcp = %v, want true:\n%s", proxy["udp-over-tcp"], *clash)
+	}
+	// subClashUdp is off here; UoT still has to bring udp with it.
+	if proxy["udp"] != true {
+		t.Errorf("udp = %v, want true so mihomo actually reads udp-over-tcp:\n%s", proxy["udp"], *clash)
+	}
+}
+
+// Carrying UDP inside the TCP stream is what UoT is for, so a TCP-only listener
+// is precisely where it applies -- the network check must not gate it.
+func TestClashUdpOverTcpAppliesToTcpOnlyListener(t *testing.T) {
+	setupSubDB(t)
+	seedShadowsocksClient(t, "subuottcp", "ss-uot-tcp", "tcp", true)
+
+	clash, _, err := (&ClashService{}).GetClash("subuottcp")
+	if err != nil {
+		t.Fatalf("GetClash: %v", err)
+	}
+	proxy := clashProxy(t, *clash, "ss-uot-tcp")
+	if proxy["udp"] != true || proxy["udp-over-tcp"] != true {
+		t.Errorf("a tcp-only listener is where UoT belongs, got udp=%v uot=%v:\n%s",
+			proxy["udp"], proxy["udp-over-tcp"], *clash)
+	}
+}
+
+// Without UoT the plain-UDP default still answers, and it stays off until the
+// setting is on.
+func TestClashUdpWithoutUdpOverTcpStaysOff(t *testing.T) {
+	setupSubDB(t)
+	seedShadowsocksClient(t, "subnouot", "ss-no-uot", "udp", false)
+
+	clash, _, err := (&ClashService{}).GetClash("subnouot")
+	if err != nil {
+		t.Fatalf("GetClash: %v", err)
+	}
+	proxy := clashProxy(t, *clash, "ss-no-uot")
+	if _, ok := proxy["udp"]; ok {
+		t.Errorf("udp must stay off until subClashUdp is on:\n%s", *clash)
+	}
+	if _, ok := proxy["udp-over-tcp"]; ok {
+		t.Errorf("udp-over-tcp must not appear when the client config says false:\n%s", *clash)
+	}
+}
+
+// addOthers returns before it writes `route` on every failure path, so a
+// template the panel cannot parse used to produce a subscription with outbounds
+// and no route section at all: every rule the operator wrote silently gone, and
+// nothing anywhere saying so. Failing the fetch is what tells them.
+func TestGetJsonFailsOnUnparseableTemplate(t *testing.T) {
+	setupSubDB(t)
+	seedLocalIPv6Client(t, "subbad", "")
+	if err := database.GetDB().Create(&model.Setting{
+		Key: "subJsonExt", Value: `{"dns": {`,
+	}).Error; err != nil {
+		t.Fatalf("seed setting: %v", err)
+	}
+
+	raw, _, err := (&JsonService{}).GetJson("subbad", "json")
+	if err == nil {
+		t.Fatalf("a template that cannot be parsed must fail the fetch, got:\n%s", *raw)
+	}
+	if raw != nil {
+		t.Errorf("no config should be handed back alongside the error, got:\n%s", *raw)
+	}
+}
+
+// The healthy path still carries the template's routing through untouched.
+func TestGetJsonKeepsRouteFromTemplate(t *testing.T) {
+	setupSubDB(t)
+	seedLocalIPv6Client(t, "subok", "")
+	if err := database.GetDB().Create(&model.Setting{
+		Key:   "subJsonExt",
+		Value: `{"final": "proxy", "rules": [{"action": "sniff"}]}`,
+	}).Error; err != nil {
+		t.Fatalf("seed setting: %v", err)
+	}
+
+	raw, _, err := (&JsonService{}).GetJson("subok", "json")
+	if err != nil {
+		t.Fatalf("GetJson: %v", err)
+	}
+	var cfg struct {
+		Route struct {
+			Final string           `json:"final"`
+			Rules []map[string]any `json:"rules"`
+		} `json:"route"`
+	}
+	if err := json.Unmarshal([]byte(*raw), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Route.Final != "proxy" {
+		t.Errorf("route.final = %q, want the template's", cfg.Route.Final)
+	}
+	if len(cfg.Route.Rules) != 1 || cfg.Route.Rules[0]["action"] != "sniff" {
+		t.Errorf("the template's rules must survive, got %v", cfg.Route.Rules)
 	}
 }

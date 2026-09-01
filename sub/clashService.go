@@ -197,21 +197,31 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 			proxy["type"] = "ss"
 			proxy["cipher"] = obMap["method"]
 			proxy["password"] = obMap["password"]
-			if network, ok := obMap["network"].(string); ok && network != "tcp" {
-				proxy["udp"] = true
-			}
+			// The plain-UDP default is decided below with every other protocol;
+			// this branch used to answer for itself whenever the listener was
+			// not TCP-only, which made subClashUdp mean nothing here.
+			//
+			// UDP over TCP is the exception and turns udp on by itself: it is
+			// not a default anyone can opt out of later, it is the operator
+			// having already said this client carries UDP, and mihomo reads
+			// udp-over-tcp only when udp is set. It is also the one form that
+			// works on a TCP-only listener -- carrying UDP inside the TCP
+			// stream is the whole point -- so the network check below must not
+			// gate it.
 			if uot, ok := obMap["udp_over_tcp"].(bool); ok && uot {
+				proxy["udp"] = true
 				proxy["udp-over-tcp"] = true
 			}
 		default:
 			continue
 		}
 
-		// Mihomo keeps UDP off unless the proxy opts in. A default, not an
-		// override: an outbound restricted to TCP keeps its answer, the same
-		// field the shadowsocks case above reads -- getOutbounds copies a
-		// TCP-only listener's network onto it, so this sees the restriction
-		// even when the operator never opened the client-config tab.
+		// Mihomo keeps UDP off unless the proxy opts in, and subClashUdp is the
+		// single switch that decides it -- shadowsocks included, which is why
+		// the case above no longer answers for itself. A default, not an
+		// override: an outbound restricted to TCP keeps its answer, since
+		// getOutbounds copies a TCP-only shadowsocks listener's network onto
+		// it even when the operator never opened the client-config tab.
 		network, _ := obMap["network"].(string)
 		if defaultUdp && network != "tcp" {
 			switch proxy["type"] {
