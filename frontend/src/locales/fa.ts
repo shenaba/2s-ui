@@ -343,6 +343,7 @@ export default {
     clashSub: "سابسکریپشن CLASH",
     clashNoDefGrp: "غیرفعال‌سازی گروه‌های پیش‌فرض",
     clashSprtAll: "پشتیبانی از 'all'",
+    clashUdp: "UDP پیش‌فرض (VMess/VLESS/Trojan/SS/SOCKS)",
     mixedPort: "ورودی Mixed",
     tun: "ورودی TUN",
 

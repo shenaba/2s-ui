@@ -344,6 +344,7 @@ export default {
     clashSub: "Clash подписка",
     clashNoDefGrp: "Отключить группы по умолчанию",
     clashSprtAll: "Поддержка 'all'",
+    clashUdp: "UDP по умолчанию (VMess/VLESS/Trojan/SS/SOCKS)",
     mixedPort: "Смешанный порт",
     tun: "Tun инбоунд",
 

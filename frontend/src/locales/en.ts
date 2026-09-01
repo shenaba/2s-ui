@@ -345,6 +345,7 @@ export default {
     clashSub: "Clash Subscription",
     clashNoDefGrp: "Disable Default Groups",
     clashSprtAll: "Support 'all'",
+    clashUdp: "UDP by default (VMess/VLESS/Trojan/SS/SOCKS)",
     mixedPort: "Mixed Inbound Port",
     tun: "Tun Inbound",
 

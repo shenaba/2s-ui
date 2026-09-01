@@ -15,6 +15,7 @@ import (
 	"github.com/shenaba/2s-ui/database/model"
 	"github.com/shenaba/2s-ui/logger"
 	"github.com/shenaba/2s-ui/service/notify"
+	"github.com/shenaba/2s-ui/util"
 	"github.com/shenaba/2s-ui/util/common"
 
 	"gorm.io/gorm"
@@ -82,6 +83,7 @@ var defaultValueMap = map[string]string{
 	"subClashExt":        "",
 	"subClashNoDefGrp":   "false",
 	"subClashSprtAll":    "false",
+	"subClashUdp":        "false",
 	"globalReset":        "",
 	"globalResetLast":    "0",
 	"config":             defaultConfig,
@@ -240,6 +242,33 @@ func (s *SettingService) getString(key string) (string, error) {
 		return "", err
 	}
 	return setting.Value, nil
+}
+
+// getBools reads several boolean settings in one query rather than one SELECT
+// each. Missing rows fall back to defaultValueMap exactly as getString does;
+// an unparseable stored value yields false for that key without failing the
+// others, since a malformed toggle should not take a whole page down.
+func (s *SettingService) getBools(keys ...string) (map[string]bool, error) {
+	var rows []model.Setting
+	if err := database.GetDB().Model(model.Setting{}).Where("key in ?", keys).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	stored := make(map[string]string, len(rows))
+	for _, row := range rows {
+		stored[row.Key] = row.Value
+	}
+
+	out := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		value, ok := stored[key]
+		if !ok {
+			if value, ok = defaultValueMap[key]; !ok {
+				return nil, common.NewErrorf("key <%v> not in defaultValueMap", key)
+			}
+		}
+		out[key], _ = strconv.ParseBool(value)
+	}
+	return out, nil
 }
 
 func (s *SettingService) saveSetting(key string, value string) error {
@@ -639,7 +668,11 @@ func (s *SettingService) GetFinalSubURI(host string) (string, error) {
 	} else {
 		port = ":" + port
 	}
-	return protocol + "://" + host + port + (*allSetting)["subPath"], nil
+	// This is the one place the host becomes a URL. Callers hand over the bare
+	// form (api.bareHost, botHostname) and subDomain is raw settings input, so
+	// an IPv6 literal is unbracketed in both — without this the port would read
+	// as another hextet and the whole link would be unusable.
+	return protocol + "://" + util.HostForURI(host) + port + (*allSetting)["subPath"], nil
 }
 
 func (s *SettingService) GetConfig() (string, error) {
@@ -665,6 +698,15 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 	if err != nil {
 		return err
 	}
+	// Ignore accidental surrounding whitespace while preserving spaces inside
+	// values such as certificate paths and URLs. This happens up front rather
+	// than per key inside the loop: the mode flags below are read straight out
+	// of the map, so trimming later would let one request decide the checks
+	// from the raw value while storing the trimmed one.
+	for key, value := range settings {
+		settings[key] = strings.TrimSpace(value)
+	}
+
 	// When ACME auto-cert is enabled the manual cert/key paths are unused (and
 	// may be stale/deleted), so skip their file-existence check below.
 	// nginx 模式下面板自身只跑 HTTP,web 侧 cert/key 同样不使用,也跳过检查
@@ -754,6 +796,25 @@ func (s *SettingService) GetSubClashNoDefGrp() (bool, error) {
 // proxy tag.
 func (s *SettingService) GetSubClashSprtAll() (bool, error) {
 	return s.getBool("subClashSprtAll")
+}
+
+// GetSubClashUdp reports whether generated Clash proxies should carry
+// "udp: true" by default. Mihomo disables UDP unless the proxy opts in, so
+// without it VMess/VLESS/Trojan/Shadowsocks/SOCKS nodes reach the client with
+// UDP off. The QUIC-based protocols are not affected: mihomo carries UDP on
+// those regardless.
+func (s *SettingService) GetSubClashUdp() (bool, error) {
+	return s.getBool("subClashUdp")
+}
+
+// GetSubClashFlags returns the three Clash toggles ConvertToClashMeta needs on
+// every subscription fetch, in one query instead of three.
+func (s *SettingService) GetSubClashFlags() (noDefGrp bool, sprtAll bool, udp bool, err error) {
+	flags, err := s.getBools("subClashNoDefGrp", "subClashSprtAll", "subClashUdp")
+	if err != nil {
+		return false, false, false, err
+	}
+	return flags["subClashNoDefGrp"], flags["subClashSprtAll"], flags["subClashUdp"], nil
 }
 
 func (s *SettingService) fileExists(path string) error {

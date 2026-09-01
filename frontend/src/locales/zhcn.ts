@@ -343,6 +343,7 @@ export default {
     clashSub: "Clash 订阅",
     clashNoDefGrp: "禁用默认分组",
     clashSprtAll: "支持 'all'",
+    clashUdp: "默认开启 UDP(VMess/VLESS/Trojan/SS/SOCKS)",
     mixedPort: "混合入站端口",
     tun: "Tun 入站",
 

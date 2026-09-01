@@ -334,6 +334,7 @@
       <div style="display: flex; gap: 26px; padding-bottom: 16px; flex-wrap: wrap;">
         <SwitchLabel v-model="clashNoDefGrp" :label="$t('setting.clashNoDefGrp')" />
         <SwitchLabel v-model="clashSprtAll" :label="$t('setting.clashSprtAll')" />
+        <SwitchLabel v-model="clashUdp" :label="$t('setting.clashUdp')" />
       </div>
 
       <div class="field-grid">
@@ -461,6 +462,7 @@ const settings = ref({
   subClashExt: "",
   subClashNoDefGrp: "false",
   subClashSprtAll: "false",
+  subClashUdp: "false",
   // 通知。凭据(notifyTgToken / notifySmtpPass)后端只写不读:GetAllSetting 把值抹掉,
   // 改成回一个 hasNotifyTgToken / hasNotifySmtpPass 布尔,所以这里两个输入框永远是空的,
   // 留空保存 = 不改动已存的凭据(后端 Save 跳过空值),要换就填新的。
@@ -1529,6 +1531,11 @@ const clashNoDefGrp = computed({
 const clashSprtAll = computed({
   get: () => { return settings.value.subClashSprtAll == "true" },
   set: (v: boolean) => { settings.value.subClashSprtAll = v ? "true" : "false" }
+})
+
+const clashUdp = computed({
+  get: () => { return settings.value.subClashUdp == "true" },
+  set: (v: boolean) => { settings.value.subClashUdp = v ? "true" : "false" }
 })
 
 const defaultConfig: any = {

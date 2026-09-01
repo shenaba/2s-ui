@@ -391,3 +391,246 @@ func TestGetJson_CollidingExternalLinkIsRenamed(t *testing.T) {
 		}
 	}
 }
+
+// seedLocalIPv6Client seeds a plain (non-replica) inbound whose out_json still
+// holds a bracketed IPv6 literal, which is what the panel stored before
+// FillOutJson started normalising it.
+func seedLocalIPv6Client(t *testing.T, subId, remark string) {
+	t.Helper()
+	db := database.GetDB()
+
+	inbound := &model.Inbound{
+		Type:    "vless",
+		Tag:     "v6-in",
+		Addrs:   json.RawMessage(`[]`),
+		OutJson: json.RawMessage(`{"type":"vless","tag":"v6-in","server":"[2001:db8::1]","server_port":443}`),
+		Options: json.RawMessage(`{}`),
+	}
+	if err := db.Create(inbound).Error; err != nil {
+		t.Fatalf("seed inbound: %v", err)
+	}
+	client := &model.Client{
+		Enable:   true,
+		Name:     subId,
+		Remark:   remark,
+		Config:   json.RawMessage(clientVlessConfig),
+		Inbounds: json.RawMessage(fmt.Sprintf(`[%d]`, inbound.Id)),
+		Links:    json.RawMessage(`[]`),
+	}
+	if err := db.Create(client).Error; err != nil {
+		t.Fatalf("seed client: %v", err)
+	}
+}
+
+// A share link already carries the client's remark; the JSON and Clash
+// subscriptions now name their nodes the same way, so one subscriber's nodes
+// are tellable from another's in a shared client app.
+func TestSubTagsCarryClientRemark(t *testing.T) {
+	setupSubDB(t)
+	seedLocalIPv6Client(t, "subv6", "alice")
+
+	raw, _, err := (&JsonService{}).GetJson("subv6", "json")
+	if err != nil {
+		t.Fatalf("GetJson: %v", err)
+	}
+	var found bool
+	for _, ob := range outboundsOf(t, *raw) {
+		if ob["type"] != "vless" {
+			continue
+		}
+		found = true
+		if ob["tag"] != "alice-v6-in" {
+			t.Errorf("json tag = %v, want %q", ob["tag"], "alice-v6-in")
+		}
+	}
+	if !found {
+		t.Fatalf("no vless outbound emitted:\n%s", *raw)
+	}
+
+	clash, _, err := (&ClashService{}).GetClash("subv6")
+	if err != nil {
+		t.Fatalf("GetClash: %v", err)
+	}
+	if !strings.Contains(*clash, "name: alice-v6-in") {
+		t.Errorf("clash proxy is not named after the client:\n%s", *clash)
+	}
+}
+
+// An IPv6 server reaches sing-box and mihomo bare. Bracketed, both read it as a
+// domain name and the node is simply dead (#1220).
+func TestSubEmitsBareIPv6Server(t *testing.T) {
+	setupSubDB(t)
+	seedLocalIPv6Client(t, "subv6", "")
+
+	raw, _, err := (&JsonService{}).GetJson("subv6", "json")
+	if err != nil {
+		t.Fatalf("GetJson: %v", err)
+	}
+	var found bool
+	for _, ob := range outboundsOf(t, *raw) {
+		if ob["type"] != "vless" {
+			continue
+		}
+		found = true
+		if ob["server"] != "2001:db8::1" {
+			t.Errorf("json server = %v, want %q", ob["server"], "2001:db8::1")
+		}
+	}
+	if !found {
+		t.Fatalf("no vless outbound emitted:\n%s", *raw)
+	}
+
+	clash, _, err := (&ClashService{}).GetClash("subv6")
+	if err != nil {
+		t.Fatalf("GetClash: %v", err)
+	}
+	if got := clashProxy(t, *clash, "v6-in")["server"]; got != "2001:db8::1" {
+		t.Errorf("clash server = %v, want a bare IPv6 literal:\n%s", got, *clash)
+	}
+}
+
+// clashProxy returns the named proxy from a generated Clash document. Reading
+// the parsed value rather than grepping the text keeps these assertions off
+// whatever the base config template happens to contain.
+func clashProxy(t *testing.T, doc, name string) map[string]interface{} {
+	t.Helper()
+	var cfg struct {
+		Proxies []map[string]interface{} `yaml:"proxies"`
+	}
+	if err := yaml.Unmarshal([]byte(doc), &cfg); err != nil {
+		t.Fatalf("unmarshal clash config: %v", err)
+	}
+	for _, proxy := range cfg.Proxies {
+		if proxy["name"] == name {
+			return proxy
+		}
+	}
+	t.Fatalf("no proxy named %q in:\n%s", name, doc)
+	return nil
+}
+
+// The Clash UDP default is opt-in: mihomo keeps UDP off unless the proxy says
+// otherwise, but turning it on for everyone would change every existing
+// subscription.
+func TestClashUdpDefaultIsOptIn(t *testing.T) {
+	setupSubDB(t)
+	seedLocalIPv6Client(t, "subv6", "")
+
+	clash, _, err := (&ClashService{}).GetClash("subv6")
+	if err != nil {
+		t.Fatalf("GetClash: %v", err)
+	}
+	if _, ok := clashProxy(t, *clash, "v6-in")["udp"]; ok {
+		t.Fatalf("udp must stay off until the setting is on:\n%s", *clash)
+	}
+
+	if err := database.GetDB().Create(&model.Setting{Key: "subClashUdp", Value: "true"}).Error; err != nil {
+		t.Fatalf("seed setting: %v", err)
+	}
+	clash, _, err = (&ClashService{}).GetClash("subv6")
+	if err != nil {
+		t.Fatalf("GetClash: %v", err)
+	}
+	proxy := clashProxy(t, *clash, "v6-in")
+	if proxy["udp"] != true {
+		t.Errorf("udp = %v with subClashUdp on, want true:\n%s", proxy["udp"], *clash)
+	}
+	if proxy["packet-encoding"] != "xudp" {
+		t.Errorf("packet-encoding = %v, want xudp so the proxy can carry UDP:\n%s", proxy["packet-encoding"], *clash)
+	}
+}
+
+// The packet encoding is a per-inbound choice the sing-box subscription serves
+// verbatim; the UDP default must not quietly replace it with xudp.
+func TestClashUdpKeepsConfiguredPacketEncoding(t *testing.T) {
+	setupSubDB(t)
+	db := database.GetDB()
+
+	inbound := &model.Inbound{
+		Type:    "vless",
+		Tag:     "pa-in",
+		Addrs:   json.RawMessage(`[]`),
+		OutJson: json.RawMessage(`{"type":"vless","tag":"pa-in","server":"example.com","server_port":443,"packet_encoding":"packetaddr"}`),
+		Options: json.RawMessage(`{}`),
+	}
+	if err := db.Create(inbound).Error; err != nil {
+		t.Fatalf("seed inbound: %v", err)
+	}
+	if err := db.Create(&model.Client{
+		Enable: true, Name: "subpa",
+		Config:   json.RawMessage(clientVlessConfig),
+		Inbounds: json.RawMessage(fmt.Sprintf(`[%d]`, inbound.Id)),
+		Links:    json.RawMessage(`[]`),
+	}).Error; err != nil {
+		t.Fatalf("seed client: %v", err)
+	}
+	if err := db.Create(&model.Setting{Key: "subClashUdp", Value: "true"}).Error; err != nil {
+		t.Fatalf("seed setting: %v", err)
+	}
+
+	clash, _, err := (&ClashService{}).GetClash("subpa")
+	if err != nil {
+		t.Fatalf("GetClash: %v", err)
+	}
+	if got := clashProxy(t, *clash, "pa-in")["packet-encoding"]; got != "packetaddr" {
+		t.Errorf("packet-encoding = %v, want the configured %q:\n%s", got, "packetaddr", *clash)
+	}
+}
+
+// A shadowsocks listener bound to TCP only must not be advertised as carrying
+// UDP. The restriction lives in the inbound's options, not in out_json, so the
+// Clash converter can only see it because getOutbounds copies it across.
+func TestClashUdpRespectsTcpOnlyListener(t *testing.T) {
+	setupSubDB(t)
+	db := database.GetDB()
+
+	inbound := &model.Inbound{
+		Type:    "shadowsocks",
+		Tag:     "ss-in",
+		Addrs:   json.RawMessage(`[]`),
+		OutJson: json.RawMessage(`{"type":"shadowsocks","tag":"ss-in","server":"example.com","server_port":443,"method":"aes-128-gcm"}`),
+		Options: json.RawMessage(`{"method":"aes-128-gcm","network":"tcp"}`),
+	}
+	if err := db.Create(inbound).Error; err != nil {
+		t.Fatalf("seed inbound: %v", err)
+	}
+	if err := db.Create(&model.Client{
+		Enable: true, Name: "subss",
+		Config:   json.RawMessage(`{"shadowsocks":{"password":"pw"}}`),
+		Inbounds: json.RawMessage(fmt.Sprintf(`[%d]`, inbound.Id)),
+		Links:    json.RawMessage(`[]`),
+	}).Error; err != nil {
+		t.Fatalf("seed client: %v", err)
+	}
+	if err := db.Create(&model.Setting{Key: "subClashUdp", Value: "true"}).Error; err != nil {
+		t.Fatalf("seed setting: %v", err)
+	}
+
+	clash, _, err := (&ClashService{}).GetClash("subss")
+	if err != nil {
+		t.Fatalf("GetClash: %v", err)
+	}
+	if _, ok := clashProxy(t, *clash, "ss-in")["udp"]; ok {
+		t.Errorf("a tcp-only listener must not be advertised with udp:\n%s", *clash)
+	}
+
+	// The same restriction belongs in the sing-box subscription, where it is a
+	// real outbound option rather than a hint.
+	raw, _, err := (&JsonService{}).GetJson("subss", "json")
+	if err != nil {
+		t.Fatalf("GetJson: %v", err)
+	}
+	var found bool
+	for _, ob := range outboundsOf(t, *raw) {
+		if ob["type"] != "shadowsocks" {
+			continue
+		}
+		found = true
+		if ob["network"] != "tcp" {
+			t.Errorf(`json network = %v, want "tcp":\n%s`, ob["network"], *raw)
+		}
+	}
+	if !found {
+		t.Fatalf("no shadowsocks outbound emitted:\n%s", *raw)
+	}
+}

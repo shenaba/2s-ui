@@ -1,8 +1,11 @@
 package util
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/shenaba/2s-ui/database/model"
 )
 
 func TestNaiveLinkSchemesFollowNetwork(t *testing.T) {
@@ -92,4 +95,65 @@ func TestNaiveLinkRemarksDistinguishTransport(t *testing.T) {
 			t.Errorf("link %d = %q, want suffix %q", i, links[i], fragment)
 		}
 	}
+}
+
+// An IPv6 hostname reaches LinkGenerator bracketed (api.normalizeHost does
+// that) or bare (an address row holds whatever the operator typed). Both have
+// to come out the same way: bracketed inside a URI authority, bare in the
+// vmess "add" field, which is JSON rather than a URI (#1220).
+func TestLinkGeneratorIPv6Hostname(t *testing.T) {
+	newInbound := func(inboundType, addrs string) *model.Inbound {
+		return &model.Inbound{
+			Type:    inboundType,
+			Tag:     "v6-in",
+			Addrs:   json.RawMessage(addrs),
+			Options: json.RawMessage(`{"listen_port":443}`),
+		}
+	}
+
+	t.Run("vless brackets the authority", func(t *testing.T) {
+		for _, hostname := range []string{"[2001:db8::1]", "2001:db8::1"} {
+			links := LinkGenerator(
+				json.RawMessage(`{"vless":{"uuid":"uuid-1"}}`),
+				newInbound("vless", "null"), hostname, "")
+
+			const want = "vless://uuid-1@[2001:db8::1]:443"
+			if len(links) != 1 || !strings.HasPrefix(links[0], want) {
+				t.Errorf("hostname %q gave %v, want a link starting with %q", hostname, links, want)
+			}
+		}
+	})
+
+	t.Run("vmess add stays bare", func(t *testing.T) {
+		links := LinkGenerator(
+			json.RawMessage(`{"vmess":{"uuid":"uuid-1"}}`),
+			newInbound("vmess", "null"), "[2001:db8::1]", "")
+
+		if len(links) != 1 {
+			t.Fatalf("got %d links %v, want 1", len(links), links)
+		}
+		raw, err := B64StrToByte(strings.TrimPrefix(links[0], "vmess://"))
+		if err != nil {
+			t.Fatalf("decoding %q: %v", links[0], err)
+		}
+		var obj map[string]interface{}
+		if err := json.Unmarshal(raw, &obj); err != nil {
+			t.Fatalf("unmarshalling %q: %v", raw, err)
+		}
+		if got := obj["add"]; got != "2001:db8::1" {
+			t.Errorf(`add = %q, want "2001:db8::1"`, got)
+		}
+	})
+
+	t.Run("address rows are normalised too", func(t *testing.T) {
+		addrs := `[{"server":"[2001:db8::2]","server_port":8443,"remark":"-alt"}]`
+		links := LinkGenerator(
+			json.RawMessage(`{"trojan":{"password":"pw"}}`),
+			newInbound("trojan", addrs), "example.com", "")
+
+		const want = "trojan://pw@[2001:db8::2]:8443"
+		if len(links) != 1 || !strings.HasPrefix(links[0], want) {
+			t.Errorf("got %v, want a link starting with %q", links, want)
+		}
+	})
 }

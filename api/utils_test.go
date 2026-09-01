@@ -107,10 +107,11 @@ func TestClientIPTrustsOnlyConfiguredProxyChain(t *testing.T) {
 	}
 }
 
-// normalizeHost feeds the server field of every generated link and the
-// advertised subscription URI, and now also sanitises the configured web
-// domain — which is whatever the operator pasted into the settings form.
-func TestNormalizeHost(t *testing.T) {
+// bareHost feeds the server field of every generated link and the advertised
+// subscription URI, and also sanitises the configured web domain — which is
+// whatever the operator pasted into the settings form. It hands back the host
+// on its own; util.HostForURI puts the brackets back where a URL is built.
+func TestBareHost(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
@@ -121,11 +122,14 @@ func TestNormalizeHost(t *testing.T) {
 		{"surrounding whitespace", "  example.com  ", "example.com"},
 		{"ipv4", "10.0.0.1", "10.0.0.1"},
 		{"ipv4 with port", "10.0.0.1:2053", "10.0.0.1"},
-		{"bracketed ipv6 with port", "[2001:db8::1]:2053", "[2001:db8::1]"},
+		// Every IPv6 spelling collapses to the bare literal: a Host header
+		// brackets one, the settings field takes it either way, and a config's
+		// server field wants neither the brackets nor the port.
+		{"bracketed ipv6 with port", "[2001:db8::1]:2053", "2001:db8::1"},
 		// Both used to come back empty: SplitHostPort errors without a port and
 		// its zero return was assigned unconditionally.
-		{"bare ipv6 gets bracketed", "2001:db8::1", "[2001:db8::1]"},
-		{"bracketed ipv6 without a port stays bracketed once", "[2001:db8::1]", "[2001:db8::1]"},
+		{"bare ipv6", "2001:db8::1", "2001:db8::1"},
+		{"bracketed ipv6 without a port", "[2001:db8::1]", "2001:db8::1"},
 		// Regression guard: SplitHostPort splits "https://example.com" at the
 		// scheme colon and returns "https", which used to be baked into every
 		// link as the server name. Empty makes the caller fall back to the
@@ -138,8 +142,8 @@ func TestNormalizeHost(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := normalizeHost(tc.in); got != tc.want {
-				t.Errorf("normalizeHost(%q) = %q, want %q", tc.in, got, tc.want)
+			if got := bareHost(tc.in); got != tc.want {
+				t.Errorf("bareHost(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
 	}

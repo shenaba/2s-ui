@@ -8,6 +8,7 @@ import (
 
 	"github.com/shenaba/2s-ui/logger"
 	"github.com/shenaba/2s-ui/service"
+	"github.com/shenaba/2s-ui/util"
 
 	"github.com/gin-gonic/gin"
 )
@@ -120,14 +121,19 @@ func addressInPrefixes(addr netip.Addr, prefixes []netip.Prefix) bool {
 }
 
 func getHostname(c *gin.Context) string {
-	return normalizeHost(c.Request.Host)
+	return bareHost(c.Request.Host)
 }
 
-// normalizeHost strips the port and brackets a bare IPv6 literal, so the result
-// is usable as the server field of a generated link. Anything reaching link
-// generation must pass through here — a configured domain included, since the
-// settings form accepts whatever was pasted into it.
-func normalizeHost(host string) string {
+// bareHost strips the port and any IPv6 brackets, so the result is the host on
+// its own — the shape a config file wants (sing-box's "server", Clash's
+// "server", the vmess "add"). Whoever builds a URL out of it brackets it back
+// with util.HostForURI; doing that here instead would mean every config-shaped
+// consumer had to undo it, which is how "[2001:db8::1]" ended up in generated
+// configs in the first place (#1220).
+//
+// Anything reaching link generation must pass through here — a configured
+// domain included, since the settings form accepts whatever was pasted in.
+func bareHost(host string) string {
 	host = strings.TrimSpace(host)
 	// A pasted URL is rejected outright rather than trimmed into shape:
 	// SplitHostPort on "https://example.com" splits at the scheme's colon and
@@ -143,13 +149,10 @@ func normalizeHost(host string) string {
 		} else {
 			// No port to split off, so this is a bare IPv6 literal — a Host
 			// header always brackets one, but the settings field takes it
-			// either way. Unwrap so the re-bracketing below is idempotent;
-			// discarding the value here (what SplitHostPort's zero return
-			// used to do) silently blanked the host instead of bracketing it.
-			host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
-		}
-		if strings.Contains(host, ":") {
-			host = "[" + host + "]"
+			// either way. Unwrapping here is what makes the result uniform;
+			// discarding the value (what SplitHostPort's zero return used to
+			// do) silently blanked the host instead.
+			host = util.NormalizeHost(host)
 		}
 	}
 	return host

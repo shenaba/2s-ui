@@ -343,6 +343,7 @@ export default {
     clashSub: "Clash đăng ký",
     clashNoDefGrp: "Tắt nhóm mặc định",
     clashSprtAll: "Hỗ trợ 'all'",
+    clashUdp: "Bật UDP mặc định (VMess/VLESS/Trojan/SS/SOCKS)",
     mixedPort: "Cổng khóa",
     tun: "Tun đăng ký",
 

@@ -69,7 +69,7 @@ func (s *ClashService) GetClash(subId string) (*string, []string, error) {
 		return nil, nil, err
 	}
 
-	outbounds, outTags, err := s.getOutbounds(client.Config, inDatas)
+	outbounds, outTags, err := s.getOutbounds(client.Config, inDatas, client.Remark)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -107,6 +107,9 @@ func (s *ClashService) getClashConfig() (string, error) {
 func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, basicConfig string) (string, error) {
 	var proxies []interface{}
 	proxyTags := make([]string, 0)
+	// One read for all three: they are needed on every subscription fetch and
+	// were three separate SELECTs on the settings table.
+	noDefGrp, sprtAll, defaultUdp, _ := s.SettingService.GetSubClashFlags()
 	for _, obMap := range *outbounds {
 
 		t, _ := obMap["type"].(string)
@@ -118,11 +121,11 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 		proxy["name"] = obMap["tag"]
 		proxy["type"] = t
 
+		// Bare form only: yaml.Marshal quotes an IPv6 literal by itself, while a
+		// bracketed one round-trips as the literal string "[::1]" and reaches
+		// mihomo as a domain name (#1220).
 		server, _ := obMap["server"].(string)
-		if len(server) > 0 && strings.Contains(server, ":") && !strings.Contains(server, ".") && !(strings.HasPrefix(server, "[") && strings.HasSuffix(server, "]")) {
-			server = "'[" + server + "]'"
-		}
-		proxy["server"] = server
+		proxy["server"] = util.NormalizeHost(server)
 
 		proxy["port"] = obMap["server_port"]
 
@@ -202,6 +205,32 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 			}
 		default:
 			continue
+		}
+
+		// Mihomo keeps UDP off unless the proxy opts in. A default, not an
+		// override: an outbound restricted to TCP keeps its answer, the same
+		// field the shadowsocks case above reads -- getOutbounds copies a
+		// TCP-only listener's network onto it, so this sees the restriction
+		// even when the operator never opened the client-config tab.
+		network, _ := obMap["network"].(string)
+		if defaultUdp && network != "tcp" {
+			switch proxy["type"] {
+			case "vmess", "vless":
+				proxy["udp"] = true
+				// The panel lets the operator pick the packet encoding per
+				// inbound and the sing-box subscription serves it verbatim;
+				// hardcoding xudp here would make the two subscriptions
+				// disagree about the same inbound. Absent means "none" in the
+				// form, and mihomo needs an encoding to carry UDP at all, so
+				// only that case falls back to xudp.
+				if pe, ok := obMap["packet_encoding"].(string); ok && pe != "" {
+					proxy["packet-encoding"] = pe
+				} else {
+					proxy["packet-encoding"] = "xudp"
+				}
+			case "trojan", "ss", "socks5":
+				proxy["udp"] = true
+			}
 		}
 
 		// TLS params
@@ -397,8 +426,6 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 		output["proxies"] = proxies
 	}
 
-	noDefGrp, _ := s.SettingService.GetSubClashNoDefGrp()
-	sprtAll, _ := s.SettingService.GetSubClashSprtAll()
 	if err := buildProxyGroups(output, proxyTags, noDefGrp, sprtAll); err != nil {
 		return "", err
 	}

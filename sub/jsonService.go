@@ -56,7 +56,7 @@ func (j *JsonService) GetJson(subId string, format string) (*string, []string, e
 		return nil, nil, err
 	}
 
-	outbounds, outTags, err := j.getOutbounds(client.Config, inDatas)
+	outbounds, outTags, err := j.getOutbounds(client.Config, inDatas, client.Remark)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -113,7 +113,7 @@ func (j *JsonService) getData(subId string) (*model.Client, []*model.Inbound, er
 	return client, inbounds, nil
 }
 
-func (j *JsonService) getOutbounds(clientConfig json.RawMessage, inbounds []*model.Inbound) (*[]map[string]interface{}, *[]string, error) {
+func (j *JsonService) getOutbounds(clientConfig json.RawMessage, inbounds []*model.Inbound, clientRemark string) (*[]map[string]interface{}, *[]string, error) {
 	var outbounds []map[string]interface{}
 	var configs map[string]interface{}
 	var outTags []string
@@ -135,6 +135,12 @@ func (j *JsonService) getOutbounds(clientConfig json.RawMessage, inbounds []*mod
 		if outTlsBase, ok := outbound["tls"].(map[string]interface{}); ok {
 			util.StripServerTlsFields(outTlsBase)
 		}
+		// Stored out_json may predate the IPv6 normalisation in FillOutJson and
+		// still hold a bracketed literal, which sing-box would resolve as a
+		// domain name (#1220). It is only rewritten when the inbound is saved.
+		if server, ok := outbound["server"].(string); ok {
+			outbound["server"] = util.NormalizeHost(server)
+		}
 		protocol, _ := outbound["type"].(string)
 
 		// Shadowsocks
@@ -153,6 +159,19 @@ func (j *JsonService) getOutbounds(clientConfig json.RawMessage, inbounds []*mod
 			pass, _ := configs[util.ShadowsocksClientConfigKey(method)].(map[string]interface{})["password"].(string)
 			userPass = append(userPass, pass)
 			outbound["password"] = strings.Join(userPass, ":")
+
+			// A shadowsocks listener restricted to one network can only carry
+			// that network, and "network" is an outbound option too -- so the
+			// restriction belongs in the client config rather than being left
+			// for the client to discover by timing out. It also feeds the Clash
+			// converter's udp decision, which has no other way to learn what
+			// the inbound actually listens on. An explicit out_json value is
+			// the operator's own override and wins.
+			if _, set := outbound["network"]; !set {
+				if network, ok := inbOptions["network"].(string); ok && network != "" {
+					outbound["network"] = network
+				}
+			}
 		} else { // Other protocols
 			config, _ := configs[protocol].(map[string]interface{})
 			for key, value := range config {
@@ -180,9 +199,10 @@ func (j *JsonService) getOutbounds(clientConfig json.RawMessage, inbounds []*mod
 		}
 		tag, _ := outbound["tag"].(string)
 		if len(addrs) == 0 {
+			tag = util.JoinRemark(clientRemark, tag)
+			outbound["tag"] = tag
 			// For mixed protocol, use separated socks and http
 			if protocol == "mixed" {
-				outbound["tag"] = tag
 				j.pushMixed(&outbounds, &outTags, outbound)
 			} else {
 				outTags = append(outTags, tag)
@@ -205,7 +225,8 @@ func (j *JsonService) getOutbounds(clientConfig json.RawMessage, inbounds []*mod
 					newOut["tls"] = tlsCopy
 				}
 				// Change and push copied config
-				newOut["server"], _ = addr["server"].(string)
+				server, _ := addr["server"].(string)
+				newOut["server"] = util.NormalizeHost(server)
 				port, _ := addr["server_port"].(float64)
 				newOut["server_port"] = int(port)
 
@@ -224,7 +245,7 @@ func (j *JsonService) getOutbounds(clientConfig json.RawMessage, inbounds []*mod
 				}
 
 				remark, _ := addr["remark"].(string)
-				newTag := fmt.Sprintf("%d.%s%s", index+1, tag, remark)
+				newTag := fmt.Sprintf("%d.%s", index+1, util.JoinRemark(clientRemark, tag+remark))
 				newOut["tag"] = newTag
 				// For mixed protocol, use separated socks and http
 				if protocol == "mixed" {

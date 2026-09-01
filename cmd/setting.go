@@ -11,6 +11,7 @@ import (
 	"github.com/shenaba/2s-ui/config"
 	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/service"
+	"github.com/shenaba/2s-ui/util"
 
 	"github.com/shirou/gopsutil/v4/net"
 )
@@ -189,12 +190,14 @@ func printAddresses(uri, domain, listen, path string, port int, tls bool) {
 	if (port == 443 && tls) || (port == 80 && !tls) {
 		portText = ""
 	}
+	// 域名和监听地址都是设置里的原始输入,IPv6 字面量不带方括号,直接拼进 URL 会让
+	// 端口被当成又一段 hextet。与下面枚举网卡时手工补的方括号是同一件事。
 	if domain != "" {
-		fmt.Println("  " + proto + domain + portText + path)
+		fmt.Println("  " + proto + util.HostForURI(domain) + portText + path)
 		return
 	}
 	if listen != "" {
-		fmt.Println("  " + proto + listen + portText + path)
+		fmt.Println("  " + proto + util.HostForURI(listen) + portText + path)
 		return
 	}
 	fmt.Println("  Local address:")
@@ -206,7 +209,7 @@ func printAddresses(uri, domain, listen, path string, port int, tls bool) {
 				IP := strings.Split(address.Addr, "/")[0]
 				if strings.Contains(address.Addr, ".") {
 					fmt.Println("    " + proto + IP + portText + path)
-				} else if address.Addr[0:6] != "fe80::" {
+				} else if !strings.HasPrefix(address.Addr, "fe80::") {
 					fmt.Println("    " + proto + "[" + IP + "]" + portText + path)
 				}
 			}

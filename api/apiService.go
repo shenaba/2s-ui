@@ -105,7 +105,7 @@ func (a *ApiService) canonicalHost(c *gin.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if host := normalizeHost(webDomain); host != "" {
+	if host := bareHost(webDomain); host != "" {
 		return host, nil
 	}
 	return getHostname(c), nil
