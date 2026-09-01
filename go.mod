@@ -1,6 +1,6 @@
 module github.com/shenaba/2s-ui
 
-go 1.26.4
+go 1.26.7
 
 require (
 	github.com/anytls/sing-anytls v0.0.13
