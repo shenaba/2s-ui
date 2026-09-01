@@ -57,6 +57,7 @@ export default {
   svcSub: "sing-box 輔助服務",
   tlsNew: "新建 TLS 設定",
   certProviderNew: "新建憑證提供者",
+  httpClientNew: "新建 HTTP 用戶端",
   tlsSub: "可重複使用的憑證設定",
   uuid: "UUID",
   flow: "流控",

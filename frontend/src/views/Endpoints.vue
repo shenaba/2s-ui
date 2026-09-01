@@ -4,6 +4,7 @@
     :id="drawer.id"
     :data="drawer.data"
     :tags="endpointTags"
+    :tls-configs="tlsConfigs"
     @close="drawer.visible = false"
   />
   <StatsModal
@@ -99,6 +100,8 @@ const dataStore = Data()
 const endpoints = computed((): Endpoint[] => <Endpoint[]>dataStore.endpoints)
 
 const endpointTags = computed((): string[] => endpoints.value?.map((o: Endpoint) => o.tag))
+// The OpenConnect/OpenVPN endpoints reference a panel TLS config by id.
+const tlsConfigs = computed((): any[] => dataStore.tlsConfigs)
 
 const onlines = computed(() => [
   ...dataStore.onlines.inbound ?? [],

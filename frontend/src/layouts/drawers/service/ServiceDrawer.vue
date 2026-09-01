@@ -22,11 +22,14 @@
       </Field>
     </div>
 
-    <Listen :data="srv" :inTags="inTags" />
+    <!-- oom-killer watches the process rather than listening on a socket. -->
+    <Listen v-if="srv.type != srvTypes.OOMKiller" :data="srv" :inTags="inTags" />
     <Derp v-if="srv.type == srvTypes.DERP" :data="srv" :tsTags="tsTags" :inTags="inTags" />
     <SSMapi v-if="srv.type == srvTypes.SSMAPI" :data="srv" :ssTags="ssTags" />
     <Ocm v-if="srv.type == srvTypes.OCM" :data="srv" />
     <Ccm v-if="srv.type == srvTypes.CCM" :data="srv" />
+    <Api v-if="srv.type == srvTypes.API" :data="srv" />
+    <OomKiller v-if="srv.type == srvTypes.OOMKiller" :data="srv" />
     <InTLS v-if="HasTls.includes(srv.type)" :inbound="srv" :tlsConfigs="tlsConfigs" />
     <MHint v-if="srv.type == srvTypes.Resolved">{{ $t('ui.noFields') }}</MHint>
   </MDrawer>
@@ -46,6 +49,8 @@ import Derp from '@/components/forms/out/services/Derp.vue'
 import Ocm from '@/components/forms/out/services/Ocm.vue'
 import Ccm from '@/components/forms/out/services/Ccm.vue'
 import SSMapi from '@/components/forms/out/services/SSMAPI.vue'
+import Api from '@/components/forms/out/services/Api.vue'
+import OomKiller from '@/components/forms/out/services/OomKiller.vue'
 import InTLS from '@/components/forms/in/InTLS.vue'
 
 const props = defineProps<{
@@ -60,7 +65,7 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>()
 
 const srvTypes = SrvTypes
-const HasTls = [SrvTypes.DERP, SrvTypes.SSMAPI, SrvTypes.OCM, SrvTypes.CCM]
+const HasTls = [SrvTypes.DERP, SrvTypes.SSMAPI, SrvTypes.OCM, SrvTypes.CCM, SrvTypes.API]
 
 const srv = ref<Srv>(createSrv('derp', { tag: '' }))
 const loading = ref(false)

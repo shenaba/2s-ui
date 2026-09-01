@@ -57,6 +57,7 @@ export default {
   svcSub: "Dịch vụ phụ trợ sing-box",
   tlsNew: "Cấu hình TLS mới",
   certProviderNew: "Nhà cung cấp chứng chỉ mới",
+  httpClientNew: "HTTP client mới",
   tlsSub: "Cấu hình chứng chỉ dùng lại được",
   uuid: "UUID",
   flow: "Luồng",

@@ -44,7 +44,9 @@
 
       <!-- ===================== Server side ===================== -->
       <template v-if="side === 's'">
-        <template v-if="inbound.type != inTypes.Tun">
+        <!-- tun brings its own interface options; cloudflared dials out to the
+             Cloudflare edge and sing-box rejects listen fields on it. -->
+        <template v-if="!NoListen.includes(inbound.type)">
           <Listen :data="inbound" :in-tags="inTags" />
           <hr class="form-divider" />
         </template>
@@ -57,6 +59,8 @@
         <Tuic v-if="inbound.type == inTypes.TUIC" direction="in" :data="inbound" />
         <Tun v-if="inbound.type == inTypes.Tun" :data="inbound" />
         <AnyTls v-if="inbound.type == inTypes.AnyTls" direction="in" :data="inbound" />
+        <Snell v-if="inbound.type == inTypes.Snell" direction="in" :data="inbound" />
+        <Cloudflared v-if="inbound.type == inTypes.Cloudflared" :data="inbound" />
         <TProxy v-if="inbound.type == inTypes.TProxy" :inbound="inbound" />
         <Transport v-if="Object.hasOwn(inbound, 'transport')" :data="inbound" />
         <Users v-if="hasUser" :clients="clients" :data="initUsers" />
@@ -123,6 +127,8 @@ import ShadowTls from '@/components/forms/in/ShadowTls.vue'
 import Tuic from '@/components/forms/in/Tuic.vue'
 import Tun from '@/components/forms/in/Tun.vue'
 import AnyTls from '@/components/forms/in/AnyTls.vue'
+import Cloudflared from '@/components/forms/in/Cloudflared.vue'
+import Snell from '@/components/forms/out/protocols/Snell.vue'
 import TProxy from '@/components/forms/in/TProxy.vue'
 import Transport from '@/components/forms/out/Transport.vue'
 import Users from '@/components/forms/in/Users.vue'
@@ -156,6 +162,7 @@ const proxyTypes = [
   InTypes.TUIC,
   InTypes.Naive,
   InTypes.AnyTls,
+  InTypes.Snell,
 ]
 const localTypes = [
   InTypes.Mixed,
@@ -165,6 +172,7 @@ const localTypes = [
   InTypes.Tun,
   InTypes.Redirect,
   InTypes.TProxy,
+  InTypes.Cloudflared,
 ]
 
 // same capability sets as the legacy modal (layouts/modals/Inbound.vue)
@@ -204,6 +212,7 @@ const MuxAvailable = [
   InTypes.Trojan,
   InTypes.Shadowsocks,
 ]
+const NoListen = [InTypes.Tun, InTypes.Cloudflared]
 
 const inbound = ref<any>(createInbound('direct', { id: 0, tag: '' }))
 const loading = ref(false)

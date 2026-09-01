@@ -192,8 +192,40 @@
           </template>
         </div>
       </div>
+
+      <!-- ================ HTTP clients ================ -->
+      <!-- Shared transports for everything sing-box downloads: remote
+           rule-sets, the API dashboard, certificate providers. Each is
+           referenced by its tag. -->
+      <div class="card panel">
+        <div class="panel-head">{{ $t('httpClient.title') }}</div>
+        <div class="panel-body">
+          <div class="toolbar" style="justify-content: flex-start; margin-bottom: 10px;">
+            <Btn variant="primary" sm @click="showHttpClient(-1)">
+              <Ico name="plus" :size="15" /> {{ $t('actions.add') }}
+            </Btn>
+          </div>
+          <MHint v-if="httpClients.length == 0">{{ $t('httpClient.none') }}</MHint>
+          <div v-for="(client, index) in httpClients" :key="client.tag" class="hc-row">
+            <span class="mono" style="flex: 1;">{{ client.tag }}</span>
+            <span style="color: var(--text-3); font-size: 12px;">{{ versionName(client.version) }}</span>
+            <span style="color: var(--text-3); font-size: 12px;">{{ client.detour ?? '-' }}</span>
+            <CardBtn icon="edit" :title="$t('actions.edit')" @click="showHttpClient(index)" />
+            <CardBtn icon="trash" border danger :title="$t('actions.del')" @click="delHttpClient(index)" />
+          </div>
+        </div>
+      </div>
     </template>
   </div>
+
+  <HttpClientDrawer
+    :open="httpClientDrawer.open"
+    :index="httpClientDrawer.index"
+    :data="httpClientDrawer.data"
+    :tags="httpClientTags"
+    @close="httpClientDrawer.open = false"
+    @save="saveHttpClient"
+  />
 </template>
 
 <script lang="ts" setup>
@@ -210,6 +242,10 @@ import Toggle from '@/components/ui/Toggle.vue'
 import SwitchLabel from '@/components/ui/SwitchLabel.vue'
 import ChipSelect from '@/components/ui/ChipSelect.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import MHint from '@/components/ui/MHint.vue'
+import CardBtn from '@/components/ui/CardBtn.vue'
+import HttpClientDrawer from '@/layouts/drawers/basics/HttpClientDrawer.vue'
+import { HttpClient } from '@/types/httpClient'
 
 const oldConfig = ref({})
 const loading = ref(false)
@@ -219,6 +255,36 @@ const failed = ref(false)
 const appConfig = computed((): Config => {
   return <Config>Data().config
 })
+
+// ---------------- HTTP clients ----------------
+// They live at the top level of the config, beside log and dns, and are saved
+// with the rest of this page rather than on their own.
+const httpClients = computed((): HttpClient[] => {
+  const config = <any>appConfig.value
+  if (!Array.isArray(config.http_clients)) config.http_clients = []
+  return config.http_clients
+})
+
+const httpClientTags = computed((): string[] => httpClients.value.map((c) => c.tag))
+
+const versionNames: Record<string, string> = { 0: 'Auto', 1: 'HTTP/1.1', 2: 'HTTP/2', 3: 'HTTP/3' }
+const versionName = (version?: number): string => versionNames[version ?? 0] ?? 'Auto'
+
+const httpClientDrawer = ref({ open: false, index: -1, data: '' })
+
+const showHttpClient = (index: number) => {
+  httpClientDrawer.value.index = index
+  httpClientDrawer.value.data = index == -1 ? '' : JSON.stringify(httpClients.value[index])
+  httpClientDrawer.value.open = true
+}
+
+const saveHttpClient = (data: HttpClient) => {
+  if (httpClientDrawer.value.index == -1) httpClients.value.push(data)
+  else httpClients.value[httpClientDrawer.value.index] = data
+  httpClientDrawer.value.open = false
+}
+
+const delHttpClient = (index: number) => { httpClients.value.splice(index, 1) }
 
 const init = () => {
   oldConfig.value = JSON.parse(JSON.stringify(Data().config))
@@ -498,6 +564,15 @@ const origin = computed({
 
 <style scoped>
 .panel { padding: 0; overflow: hidden; }
+.hc-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+.hc-row:last-child { border-bottom: none; }
+
 .panel-head {
   display: flex; align-items: center; gap: 10px;
   padding: 15px 18px;

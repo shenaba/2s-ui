@@ -39,6 +39,8 @@
       <Socks v-if="outbound.type == outTypes.SOCKS" :data="outbound" />
       <Http v-if="outbound.type == outTypes.HTTP" :data="outbound" />
       <Shadowsocks v-if="outbound.type == outTypes.Shadowsocks" :data="outbound" />
+      <Snell v-if="outbound.type == outTypes.Snell" direction="out" :data="outbound" />
+      <Bridge v-if="outbound.type == outTypes.Bridge" direction="out" :data="outbound" />
       <Vmess v-if="outbound.type == outTypes.VMess" :data="outbound" />
       <Trojan v-if="outbound.type == outTypes.Trojan" :data="outbound" />
       <Hysteria v-if="outbound.type == outTypes.Hysteria" :data="outbound" />
@@ -90,6 +92,8 @@ import Transport from '@/components/forms/out/Transport.vue'
 import OutTLS from '@/components/forms/out/OutTLS.vue'
 import Direct from '@/components/forms/out/protocols/Direct.vue'
 import Socks from '@/components/forms/out/protocols/Socks.vue'
+import Snell from '@/components/forms/out/protocols/Snell.vue'
+import Bridge from '@/components/forms/out/protocols/Bridge.vue'
 import Http from '@/components/forms/out/protocols/Http.vue'
 import Shadowsocks from '@/components/forms/out/protocols/Shadowsocks.vue'
 import Vmess from '@/components/forms/out/protocols/Vmess.vue'
@@ -118,7 +122,7 @@ const { t } = useI18n({ useScope: 'global' })
 
 const outTypes = OutTypes
 const NoDial = [OutTypes.Selector, OutTypes.URLTest]
-const NoServer = [OutTypes.Direct, OutTypes.Selector, OutTypes.URLTest, OutTypes.Tor]
+const NoServer = [OutTypes.Direct, OutTypes.Selector, OutTypes.URLTest, OutTypes.Tor, OutTypes.Bridge]
 
 const outbound = ref<Outbound>(createOutbound('direct', { tag: '' }))
 const tab = ref('basics')

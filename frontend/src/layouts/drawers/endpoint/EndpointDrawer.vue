@@ -36,7 +36,10 @@
     />
     <Warp v-if="endpoint.type == epTypes.Warp" :data="endpoint" />
     <TailscaleVue v-if="endpoint.type == epTypes.Tailscale" :data="endpoint" />
-    <Dial :dial="endpoint" />
+    <EndpointTls v-if="HasTls.includes(endpoint.type)" :endpoint="endpoint" :tls-configs="tlsConfigs" />
+    <OpenConnect v-if="endpoint.type == epTypes.OpenConnect" :data="endpoint" />
+    <OpenVpn v-if="isOpenVpn" :data="endpoint" />
+    <Dial v-if="!NoDial.includes(endpoint.type)" :dial="endpoint" />
   </MDrawer>
 </template>
 
@@ -56,18 +59,29 @@ import Dial from '@/components/forms/out/Dial.vue'
 import Wireguard from '@/components/forms/out/protocols/Wireguard.vue'
 import Warp from '@/components/forms/out/protocols/Warp.vue'
 import TailscaleVue from '@/components/forms/out/protocols/Tailscale.vue'
+import OpenConnect from '@/components/forms/out/protocols/OpenConnect.vue'
+import OpenVpn from '@/components/forms/out/protocols/OpenVpn.vue'
+import EndpointTls from '@/components/forms/out/tls/EndpointTls.vue'
 
 const props = defineProps<{
   visible: boolean
   id: number
   data: string
   tags?: string[]
+  tlsConfigs?: any[]
 }>()
 const emit = defineEmits<{ close: [] }>()
 
 const { t } = useI18n({ useScope: 'global' })
 
 const epTypes = EpTypes
+// Endpoints that terminate or present TLS can reuse a panel TLS config.
+const HasTls = [EpTypes.OpenConnect, EpTypes.OpenVPNClient, EpTypes.OpenVPNServer]
+// openvpn-server listens rather than dials, so it takes no dialer options.
+const NoDial = [EpTypes.OpenVPNServer]
+
+const isOpenVpn = computed((): boolean =>
+  [EpTypes.OpenVPNClient, EpTypes.OpenVPNServer].includes(endpoint.value.type))
 const endpoint = ref<Endpoint>(createEndpoint('wireguard', { tag: '' }))
 const loading = ref(false)
 
@@ -90,7 +104,9 @@ const changeType = async () => {
   // Tag change only in add endpoint
   const tag = endpoint.value.type + '-' + RandomUtil.randomSeq(3)
 
-  // Use previous data
+  // Use previous data. The TLS reference is kept only when the type being
+  // switched to can still use one, so it does not linger as a dead column.
+  const keepTls = HasTls.includes(endpoint.value.type) ? (<any>endpoint.value).tls_id : undefined
   let prevConfig = {}
   switch (endpoint.value.type) {
     case EpTypes.Wireguard: {
@@ -115,8 +131,21 @@ const changeType = async () => {
     case EpTypes.Tailscale:
       prevConfig = { tag: tag }
       break
+    case EpTypes.OpenConnect:
+    case EpTypes.OpenVPNClient:
+      prevConfig = { tag: tag }
+      break
+    case EpTypes.OpenVPNServer:
+      prevConfig = {
+        tag: tag,
+        listen: '::',
+        listen_port: (<any>endpoint.value).listen_port ?? RandomUtil.randomIntRange(10000, 60000),
+      }
+      break
   }
   endpoint.value = createEndpoint(endpoint.value.type, prevConfig)
+  // Carry the selected TLS config across only while the new type can use one.
+  if (keepTls != undefined) (<any>endpoint.value).tls_id = keepTls
 }
 
 const endpointType = computed({
