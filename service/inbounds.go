@@ -272,10 +272,23 @@ func (s *InboundService) GetAllConfig(db *gorm.DB) ([]json.RawMessage, error) {
 	return inboundsJson, nil
 }
 
+// inboundTypesWithUsers are the listeners whose config carries a per-client
+// credential. Every one of them needs a matching entry in NewClientConfig and
+// in randomConfigs (frontend/src/types/clients.ts): a client whose config has
+// no block for the protocol is dropped by fetchUsers and cannot connect, with
+// nothing reporting it. TestNewClientConfigCoversInboundTypesWithUsers pins the
+// Go half of that -- the list used to live inline here, where nothing could
+// check it against anything, and snell drifted out of NewClientConfig that way.
+var inboundTypesWithUsers = []string{
+	"mixed", "socks", "http", "shadowsocks", "snell", "vmess", "trojan",
+	"naive", "hysteria", "shadowtls", "tuic", "hysteria2", "vless", "anytls",
+}
+
 func (s *InboundService) hasUser(inboundType string) bool {
-	switch inboundType {
-	case "mixed", "socks", "http", "shadowsocks", "snell", "vmess", "trojan", "naive", "hysteria", "shadowtls", "tuic", "hysteria2", "vless", "anytls":
-		return true
+	for _, withUsers := range inboundTypesWithUsers {
+		if inboundType == withUsers {
+			return true
+		}
 	}
 	return false
 }

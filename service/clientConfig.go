@@ -56,9 +56,12 @@ func NewClientConfig(name string) (json.RawMessage, error) {
 		"shadowsocks":   {"name": name, "password": ss32},
 		"shadowsocks16": {"name": name, "password": ss16},
 		"shadowtls":     {"name": name, "password": ss32},
-		"hysteria":      {"name": name, "auth_str": shared},
-		"hysteria2":     {"name": name, "password": shared},
-		"tuic":          {"name": name, "uuid": uid, "password": shared},
+		// The listener's psk is shared by everyone on it and lives on the
+		// inbound; the userkey is what tells one client from another.
+		"snell":     {"name": name, "userkey": common.Random(32)},
+		"hysteria":  {"name": name, "auth_str": shared},
+		"hysteria2": {"name": name, "password": shared},
+		"tuic":      {"name": name, "uuid": uid, "password": shared},
 	}
 	return json.Marshal(cfg)
 }
