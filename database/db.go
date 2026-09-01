@@ -133,6 +133,35 @@ func InitDB(dbPath string) error {
 		return err
 	}
 
+	// The sing-box 1.14 option migrations. Each is one-shot and marks itself
+	// done with its own settings row, so they cost one indexed lookup per start
+	// after the first. Order matters only for the first two: migrateSingBox114
+	// rewrites an inline tls.acme block into a certificate_provider, which
+	// migrateCertificateProviders then hoists into the shared list.
+	err = migrateSingBox114()
+	if err != nil {
+		return err
+	}
+	err = migrateCertificateProviders()
+	if err != nil {
+		return err
+	}
+	err = repairRuleSetHTTPClients()
+	if err != nil {
+		return err
+	}
+	err = migrateHysteriaQUICFields()
+	if err != nil {
+		return err
+	}
+	err = migrateRemovedOptions()
+	if err != nil {
+		return err
+	}
+	// The two deprecations that cannot be migrated without changing how names
+	// resolve are reported for the operator instead; see migrateSingBox114.
+	reportSingBox114Manual()
+
 	return nil
 }
 
