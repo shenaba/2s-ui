@@ -21,11 +21,28 @@ fi
 
 echo "comparing core/protocol/*/inbound.go against sing-box $VERSION"
 
-# Lines each copy is expected to differ by, beyond the shared header comment:
-# vmess needs an explicit import alias because its own package is also `vmess`.
+# Lines each copy is expected to differ by, beyond the shared header comment.
+#
+# The six user-carrying protocols key their service by user name rather than by
+# list position (Service[string], not Service[int]) -- see the header of any of
+# those files. That patch is what these counts are: they are not a tolerance,
+# they are the exact size of a change we made on purpose, so a bump that alters
+# the file elsewhere still shows up. anytls has no user table and stays verbatim.
+#
+# vmess also carries 2 lines of import alias, since its own package is `vmess`.
+#
+# Re-copying after a sing-box bump will change these. Re-apply the patch, then
+# put the new counts here -- and read the diff first rather than just pasting
+# the number the script printed, which is how a real upstream change gets
+# rubber-stamped into the expected total.
 expect_diff() {
   case "$1" in
-    vmess) echo 2 ;;
+    hysteria) echo 28 ;;
+    hysteria2) echo 28 ;;
+    trojan) echo 33 ;;
+    tuic) echo 26 ;;
+    vless) echo 45 ;;
+    vmess) echo 43 ;;
     *) echo 0 ;;
   esac
 }

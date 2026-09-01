@@ -84,6 +84,12 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 		if err != nil {
 			return nil, err
 		}
+		// Before the rename check below, and not exempted for a cluster push:
+		// a nameless client breaks the inbound's user table wherever it came
+		// from, and the master never pushes one (the name is the map key).
+		if err = normalizeClientName(&client); err != nil {
+			return nil, err
+		}
 		if act == "edit" {
 			// Only a name actually changing is validated, so a duplicate that
 			// predates this check stays editable on its other fields — same
@@ -149,6 +155,9 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 		names := make([]string, 0, len(clients))
 		seen := make(map[string]bool, len(clients))
 		for _, client := range clients {
+			if err = normalizeClientName(client); err != nil {
+				return nil, err
+			}
 			if seen[client.Name] {
 				return nil, common.NewErrorf("duplicate client name in this batch: %q", client.Name)
 			}
@@ -214,6 +223,11 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 		}
 		renamedTo := make(map[string]bool)
 		for _, client := range clients {
+			// Trim first: an untrimmed copy of the stored name would otherwise
+			// read as a rename and be checked against the table for nothing.
+			if err = normalizeClientName(client); err != nil {
+				return nil, err
+			}
 			if oldNameById[client.Id] == client.Name {
 				continue
 			}
@@ -301,6 +315,27 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 	}
 
 	return inboundIds, nil
+}
+
+// normalizeClientName trims the name in place and rejects an empty one.
+//
+// The name stopped being merely a label when core/protocol switched its user
+// tables from list positions to names (upstream #1231): it is now the key the
+// running inbound identifies a session by. An empty one makes every nameless
+// client on an inbound the same user -- trojan's UpdateUsers rejects the
+// repeated identity outright and fails the whole update, vmess silently keeps
+// only the last, vless mis-attributes flow. Untrimmed is the same problem one
+// step removed: "alice" and "alice " are two keys here but one name to the
+// operator reading the traffic table.
+//
+// Trimming also has to happen before ensureNameAvailable, or a padded copy of
+// an existing name walks straight past the duplicate check.
+func normalizeClientName(client *model.Client) error {
+	client.Name = strings.TrimSpace(client.Name)
+	if client.Name == "" {
+		return common.NewError("client name must not be empty")
+	}
+	return nil
 }
 
 // ensureNameAvailable rejects a duplicate client name. The name is the cluster's

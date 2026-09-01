@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -453,4 +454,103 @@ func TestFindExpiringClients(t *testing.T) {
 	if len(got) != 0 {
 		t.Errorf("thresholds at zero still warned about %d clients", len(got))
 	}
+}
+
+// The client name became the running inbound's user key when core/protocol
+// moved off list positions, so an empty or padded name is no longer cosmetic:
+// two nameless clients on one inbound are one identity to the service.
+func TestSaveNormalizesClientName(t *testing.T) {
+	db := newTestDB(t)
+	var svc ClientService
+
+	t.Run("empty name is rejected on create", func(t *testing.T) {
+		data := json.RawMessage(`{"name":"","group":"user","inbounds":[],"links":[],"config":{}}`)
+		if _, err := svc.Save(db, "new", data, "example.com"); err == nil {
+			t.Fatal("a nameless client was accepted")
+		}
+	})
+
+	t.Run("whitespace-only name is rejected", func(t *testing.T) {
+		data := json.RawMessage(`{"name":"   ","group":"user","inbounds":[],"links":[],"config":{}}`)
+		if _, err := svc.Save(db, "new", data, "example.com"); err == nil {
+			t.Fatal("a whitespace-only name was accepted")
+		}
+	})
+
+	// Not exempted for a cluster push either: the master keys its client map by
+	// name, so it never pushes a nameless one, and one arriving anyway would
+	// break the node's own inbound rather than just the sync.
+	t.Run("cluster push is not exempt from the empty check", func(t *testing.T) {
+		data := json.RawMessage(`{"name":"","group":"@cluster","inbounds":[],"links":[],"config":{}}`)
+		if _, err := svc.Save(db, "new", data, "example.com"); err == nil {
+			t.Fatal("a nameless cluster push was accepted")
+		}
+	})
+
+	t.Run("the stored name is trimmed", func(t *testing.T) {
+		data := json.RawMessage(`{"name":"  alice  ","group":"user","inbounds":[],"links":[],"config":{}}`)
+		if _, err := svc.Save(db, "new", data, "example.com"); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+		var names []string
+		db.Model(model.Client{}).Pluck("name", &names)
+		if len(names) != 1 || names[0] != "alice" {
+			t.Fatalf("stored names = %q, want [alice]", names)
+		}
+	})
+
+	// Trimming has to happen before the duplicate check, or a padded copy of an
+	// existing name walks straight past it and lands as a second row.
+	t.Run("a padded duplicate is still a duplicate", func(t *testing.T) {
+		data := json.RawMessage(`{"name":" alice","group":"user","inbounds":[],"links":[],"config":{}}`)
+		if _, err := svc.Save(db, "new", data, "example.com"); err == nil {
+			t.Fatal("a padded copy of an existing name was accepted")
+		}
+	})
+}
+
+// The bulk paths carry the same rule: addbulk imports hundreds at a time and
+// editbulk is what apiv2 renames through.
+func TestSaveBulkNormalizesClientNames(t *testing.T) {
+	t.Run("addbulk rejects an empty name", func(t *testing.T) {
+		db := newTestDB(t)
+		var svc ClientService
+		data := json.RawMessage(`[{"name":"ok","inbounds":[],"links":[],"config":{}},` +
+			`{"name":"","inbounds":[],"links":[],"config":{}}]`)
+		if _, err := svc.Save(db, "addbulk", data, "example.com"); err == nil {
+			t.Fatal("a nameless client was accepted in a batch")
+		}
+		var n int64
+		db.Model(model.Client{}).Count(&n)
+		if n != 0 {
+			t.Errorf("the batch was rejected but %d rows were written", n)
+		}
+	})
+
+	t.Run("addbulk catches a duplicate that only trimming reveals", func(t *testing.T) {
+		db := newTestDB(t)
+		var svc ClientService
+		data := json.RawMessage(`[{"name":"bob","inbounds":[],"links":[],"config":{}},` +
+			`{"name":"bob ","inbounds":[],"links":[],"config":{}}]`)
+		if _, err := svc.Save(db, "addbulk", data, "example.com"); err == nil {
+			t.Fatal("two names differing only by padding were accepted in one batch")
+		}
+	})
+
+	t.Run("editbulk rejects an empty name", func(t *testing.T) {
+		db := newTestDB(t)
+		var svc ClientService
+		seed := model.Client{
+			Name: "carol", Group: "user",
+			Inbounds: json.RawMessage(`[]`), Links: json.RawMessage(`[]`), Config: json.RawMessage(`{}`),
+		}
+		if err := db.Create(&seed).Error; err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		data := json.RawMessage(`[{"id":` + strconv.Itoa(int(seed.Id)) +
+			`,"name":"","inbounds":[],"links":[],"config":{}}]`)
+		if _, err := svc.Save(db, "editbulk", data, "example.com"); err == nil {
+			t.Fatal("a client was renamed to nothing")
+		}
+	})
 }

@@ -6,18 +6,12 @@ import (
 )
 
 func (h *Inbound) UpdateUsers(users []option.VLESSUser) error {
-	// Grow before the service learns the new users, shrink after. See the
-	// comment in core/protocol/hysteria/users.go for why the order matters.
-	if len(users) > len(h.users) {
-		h.users = users
-	}
-	h.service.UpdateUsers(common.MapIndexed(users, func(index int, _ option.VLESSUser) int {
-		return index
+	h.service.UpdateUsers(common.Map(users, func(it option.VLESSUser) string {
+		return it.Name
 	}), common.Map(users, func(it option.VLESSUser) string {
 		return it.UUID
 	}), common.Map(users, func(it option.VLESSUser) string {
 		return it.Flow
 	}))
-	h.users = users
 	return nil
 }
