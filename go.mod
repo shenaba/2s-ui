@@ -9,7 +9,7 @@ require (
 	github.com/gin-contrib/gzip v1.2.6
 	github.com/gin-contrib/sessions v1.1.0
 	github.com/gin-gonic/gin v1.12.0
-	github.com/go-chi/chi/v5 v5.2.5
+	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-telegram/bot v1.24.0
 	github.com/gofrs/uuid/v5 v5.5.1
 	github.com/op/go-logging v0.0.0-20160315200505-970db520ece7
@@ -20,10 +20,10 @@ require (
 	github.com/sagernet/sing-quic v0.7.0-beta.4
 	github.com/sagernet/sing-tun v0.9.0-beta.4
 	github.com/sagernet/sing-vmess v0.2.8
-	github.com/shirou/gopsutil/v4 v4.26.7
+	github.com/shirou/gopsutil/v4 v4.26.8
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	go.uber.org/zap v1.28.0
-	golang.org/x/crypto v0.54.0
+	golang.org/x/crypto v0.55.0
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/sqlite v1.6.0
@@ -210,15 +210,15 @@ require (
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
 	golang.org/x/arch v0.22.0 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
-	golang.org/x/mod v0.37.0 // indirect
+	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	golang.org/x/tools v0.47.0 // indirect
+	golang.org/x/tools v0.48.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	golang.zx2c4.com/wireguard/windows v0.5.3 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260226221140-a57be14db171 // indirect
