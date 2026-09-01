@@ -22,8 +22,6 @@
           <option v-for="s in vmessSecurities" :key="s" :value="s">{{ s }}</option>
         </Select>
       </Field>
-      <!-- recv_window was hysteria's own name for the QUIC stream window; the
-           shared QUIC fields on the outbound form carry it now. -->
       <Field v-if="type == inTypes.TUIC" label="UDP Relay Mode">
         <Select v-model="udpRelayMode">
           <option value="">{{ $t('none') }}</option>
@@ -54,6 +52,12 @@
         <input class="input mono" v-model="pluginOpts" />
       </Field>
     </template>
+    <!-- The client's own QUIC transport tuning. These replaced hysteria's
+         recv_window_* options, and they are the client's to set: the listener's
+         values describe what the server receives, not what this config asks
+         for. -->
+    <QuicFields v-if="hasQuic" :data="inData.out_json" quic />
+    <MHint v-if="snellWithoutClient">{{ $t('types.snell.noClientConfig') }}</MHint>
     <Headers v-if="type == inTypes.HTTP" :data="inData.out_json" />
     <AnyTls v-if="type == inTypes.AnyTls" :data="inData.out_json" direction="out_json" />
     <Naive v-if="type == inTypes.Naive" :data="inData.out_json" direction="out_json" />
@@ -67,15 +71,27 @@ import { InTypes } from '@/types/inbounds'
 import Field from '@/components/ui/Field.vue'
 import SectionLabel from '@/components/ui/SectionLabel.vue'
 import SwitchLabel from '@/components/ui/SwitchLabel.vue'
+import MHint from '@/components/ui/MHint.vue'
 import Network from '../out/Network.vue'
 import UoT from '../out/UoT.vue'
 import Headers from '../out/Headers.vue'
+import QuicFields from '../out/QuicFields.vue'
 import AnyTls from './AnyTls.vue'
 import Naive from './Naive.vue'
 
 const props = defineProps<{ inData: any; type: string }>()
 
 const inTypes = InTypes
+
+// The protocols whose client config carries the shared QUIC options.
+const haveQuic = [InTypes.Hysteria, InTypes.Hysteria2, InTypes.TUIC]
+const hasQuic = computed((): boolean => haveQuic.includes(props.type))
+
+// snell's outbound speaks versions 4 and 6, its inbound 5 and 6, so a v5
+// listener has no client config the panel can generate at all.
+const snellWithoutClient = computed(
+  (): boolean => props.type == InTypes.Snell && props.inData.version != 6,
+)
 
 const vmessSecurities = [
   'auto',

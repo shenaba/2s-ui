@@ -591,6 +591,7 @@ export default {
       obfsMode: "混淆",
       obfsHost: "混淆主机",
       mode: "模式",
+      noClientConfig: "只有 v6 会生成客户端配置；v5 监听需要在 Surge 里手动配置。",
     },
     cloudflared: {
       token: "隧道令牌",

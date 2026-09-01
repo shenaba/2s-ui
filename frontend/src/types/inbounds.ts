@@ -97,6 +97,9 @@ export interface Trojan extends InboundBasics {
   transport?: Transport
 }
 export interface Naive extends InboundBasics {
+  // Still a sing-box 1.14 option, still written by the Network control in the
+  // naive form, and still what util/genLink.go picks the link scheme from.
+  network?: "udp" | "tcp"
   tls: iTls,
   quic_congestion_control?: "" | "bbr" | "bbr2" | "cubic" | "reno"
 }
@@ -183,6 +186,10 @@ export interface SnellUser {
   userkey: string
 }
 // Snell picks its extra options from the version: v5 carries obfs, v6 a mode.
+//
+// Only v6 has a generated client config: sing-box's snell outbound speaks 4 and
+// 6 while the inbound speaks 5 and 6, so a v5 listener is reachable by Surge,
+// configured by hand, and by nothing the panel can write (see util.snellOut).
 export interface Snell extends InboundBasics {
   version: 5 | 6
   psk: string

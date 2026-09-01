@@ -177,7 +177,7 @@ const localTypes = [
 
 // same capability sets as the legacy modal (layouts/modals/Inbound.vue)
 const inboundWithUsers = [
-  'mixed', 'socks', 'http', 'shadowsocks', 'vmess', 'trojan', 'naive',
+  'mixed', 'socks', 'http', 'shadowsocks', 'snell', 'vmess', 'trojan', 'naive',
   'hysteria', 'shadowtls', 'tuic', 'hysteria2', 'vless', 'anytls',
 ]
 const HasInData = [
@@ -185,6 +185,7 @@ const HasInData = [
   InTypes.HTTP,
   InTypes.Mixed,
   InTypes.Shadowsocks,
+  InTypes.Snell,
   InTypes.VMess,
   InTypes.ShadowTLS,
   InTypes.Trojan,

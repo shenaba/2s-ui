@@ -93,6 +93,9 @@ export function shuffleConfigs(configs: Config, key?: string) {
       case "shadowtls":
         configs[k].password = RandomUtil.randomShadowsocksPassword(32)
         break
+      case "snell":
+        configs[k].userkey = RandomUtil.randomSeq(32)
+        break
       case "hysteria":
         configs[k].auth_str = RandomUtil.randomSeq(10)
         break
@@ -137,6 +140,12 @@ export function randomConfigs(user: string): Config {
     shadowtls: {
       name: user,
       password: ssPassword32,
+    },
+    // Snell's per-client key. The listener's psk is shared by everyone on it
+    // and lives on the inbound; this is what tells one client from another.
+    snell: {
+      name: user,
+      userkey: RandomUtil.randomSeq(32),
     },
     vmess: {
       name: user,

@@ -591,6 +591,7 @@ export default {
       obfsMode: "Làm rối",
       obfsHost: "Host làm rối",
       mode: "Chế độ",
+      noClientConfig: "Chỉ phiên bản 6 có cấu hình client được tạo; listener v5 phải cấu hình thủ công trong Surge.",
     },
     cloudflared: {
       token: "Token đường hầm",

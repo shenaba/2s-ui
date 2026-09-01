@@ -591,6 +591,7 @@ export default {
       obfsMode: "Obfuscation",
       obfsHost: "Obfuscation host",
       mode: "Mode",
+      noClientConfig: "Only version 6 has a generated client config; a v5 listener is configured by hand in Surge.",
     },
     cloudflared: {
       token: "Tunnel token",

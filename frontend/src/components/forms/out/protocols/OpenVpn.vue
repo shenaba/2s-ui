@@ -35,10 +35,10 @@
 
     <div v-if="!isServer" class="grid2">
       <Field :label="$t('login.username')">
-        <input class="input mono" v-model="username" />
+        <input class="input mono" autocomplete="off" v-model="username" />
       </Field>
       <Field :label="$t('login.password')">
-        <input class="input mono" type="password" v-model="password" />
+        <input class="input mono" type="password" autocomplete="new-password" v-model="password" />
       </Field>
     </div>
 

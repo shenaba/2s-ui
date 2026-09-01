@@ -226,27 +226,45 @@ const openProviderDrawer = (index: number) => {
   providerDrawer.value.open = true
 }
 
-const saveProviders = async (): Promise<boolean> => {
+// Every provider edit has to be applied to the config object before it can be
+// saved, since the whole config is what gets sent. So each one snapshots the
+// list first and puts it back when the save fails: the config object is shared
+// with the Basics page, which diffs it against its own snapshot to decide
+// whether there is anything to save, so a change left behind after a failed
+// save would be committed later by an unrelated Save over there. Retrying also
+// has to start from the same list, or a second attempt appends a second copy.
+const snapshotProviders = (): certProvider[] =>
+  <certProvider[]>JSON.parse(JSON.stringify(providerList()))
+
+const saveProviders = async (snapshot: certProvider[]): Promise<boolean> => {
   providerSaving.value = true
   const success = await Data().save('config', 'set', appConfig.value)
   providerSaving.value = false
+
+  if (!success) {
+    const list = providerList()
+    list.splice(0, list.length, ...snapshot)
+  }
   return success
 }
 
 const saveProvider = async (data: certProvider) => {
+  const snapshot = snapshotProviders()
   const index = providerDrawer.value.index
   const list = providerList()
   if (index == -1) list.push(data)
   else list[index] = data
-  const success = await saveProviders()
+
+  const success = await saveProviders(snapshot)
   if (success) providerDrawer.value.open = false
 }
 
 const cloneProvider = async (index: number) => {
+  const snapshot = snapshotProviders()
   const copy = <certProvider>JSON.parse(JSON.stringify(providers.value[index]))
   while (providerTags.value.includes(copy.tag)) copy.tag += '-copy'
   providerList().push(copy)
-  await saveProviders()
+  await saveProviders(snapshot)
 }
 
 const askDeleteProvider = (index: number) => {
@@ -256,7 +274,8 @@ const askDeleteProvider = (index: number) => {
 
 const removeProvider = async (index: number): Promise<boolean> => {
   if (index < 0) return false
+  const snapshot = snapshotProviders()
   providerList().splice(index, 1)
-  return await saveProviders()
+  return await saveProviders(snapshot)
 }
 </script>

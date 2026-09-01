@@ -13,18 +13,18 @@
     </div>
     <div class="grid2">
       <Field :label="$t('login.username')">
-        <input class="input mono" v-model="username" />
+        <input class="input mono" autocomplete="off" v-model="username" />
       </Field>
       <Field :label="$t('login.password')">
-        <input class="input mono" type="password" v-model="password" />
+        <input class="input mono" type="password" autocomplete="new-password" v-model="password" />
       </Field>
     </div>
     <div class="grid2">
       <Field :label="$t('types.ovpn.authGroup')">
-        <input class="input mono" v-model="authGroup" />
+        <input class="input mono" autocomplete="off" v-model="authGroup" />
       </Field>
       <Field :label="$t('types.ovpn.cookie')">
-        <input class="input mono" type="password" v-model="cookie" />
+        <input class="input mono" type="password" autocomplete="new-password" v-model="cookie" />
       </Field>
     </div>
     <div class="grid2">

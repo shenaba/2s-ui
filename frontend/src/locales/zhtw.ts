@@ -591,6 +591,7 @@ export default {
       obfsMode: "混淆",
       obfsHost: "混淆主機",
       mode: "模式",
+      noClientConfig: "只有 v6 會產生用戶端設定；v5 監聽需要在 Surge 裡手動設定。",
     },
     cloudflared: {
       token: "通道權杖",

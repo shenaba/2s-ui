@@ -2,7 +2,7 @@
   <div>
     <SectionLabel style="margin-bottom: 12px;">API</SectionLabel>
     <Field :label="$t('types.api.secret')">
-      <input class="input mono" type="password" v-model="secret" />
+      <input class="input mono" type="password" autocomplete="new-password" v-model="secret" />
     </Field>
     <Field :label="$t('types.api.allowOrigin') + ' ' + $t('commaSeparated')">
       <input class="input mono" v-model="allowOrigin" />
@@ -40,7 +40,7 @@
 </template>
 
 <script lang="ts" setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import Field from '@/components/ui/Field.vue'
 import Select from '@/components/ui/Select.vue'
 import SectionLabel from '@/components/ui/SectionLabel.vue'
@@ -111,16 +111,31 @@ const dashboardPath = computed({
     props.data.dashboard = v ? v : true
   },
 })
+// Whether the download settings are shown is the operator's own state, not
+// something the config can carry: every field in that section is optional, so
+// there is nothing to write when the section is merely opened. It used to plant
+// an empty download_url to keep itself open, which stored a key the rest of this
+// form takes care to delete, and left the section open on reload with a blank
+// URL. Revealing the section now writes nothing at all.
+const downloadShown = ref(false)
+const hasDownloadSettings = (): boolean => {
+  const d = props.data?.dashboard
+  if (!d || typeof d !== 'object') return false
+  return d.download_url != undefined || d.http_client != undefined || d.update_interval != undefined
+}
+watch(
+  () => props.data,
+  () => { downloadShown.value = hasDownloadSettings() },
+  { immediate: true, deep: false },
+)
+
 // Turning this off drops the download settings and lets the value fall back to
 // its short form, so a dashboard that only needs a path does not keep an object.
 const dashboardDownload = computed({
-  get: (): boolean => {
-    const d = props.data?.dashboard
-    if (!d || typeof d !== 'object') return false
-    return d.download_url != undefined || d.http_client != undefined || d.update_interval != undefined
-  },
+  get: (): boolean => downloadShown.value || hasDownloadSettings(),
   set: (v: boolean) => {
-    if (v) { asObject().download_url = ''; return }
+    downloadShown.value = v
+    if (v) return
     const d = props.data?.dashboard
     if (!d || typeof d !== 'object') return
     props.data.dashboard = d.path ? d.path : true

@@ -592,6 +592,7 @@ export default {
       obfsMode: "Обфускация",
       obfsHost: "Хост обфускации",
       mode: "Режим",
+      noClientConfig: "Клиентский конфиг создаётся только для версии 6; слушатель v5 настраивается вручную в Surge.",
     },
     cloudflared: {
       token: "Токен туннеля",

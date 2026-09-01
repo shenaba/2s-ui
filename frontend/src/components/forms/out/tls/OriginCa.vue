@@ -1,17 +1,17 @@
 <template>
   <div class="fade-up">
     <Field :label="$t('rule.domain') + ' ' + $t('commaSeparated')">
-      <input class="input mono" v-model="domains" />
+      <input class="input mono" autocomplete="off" v-model="domains" />
     </Field>
 
     <!-- Either credential works on its own; the API token is the narrower of
          the two, so it is offered first. -->
     <div class="grid2">
       <Field :label="$t('tls.provider.apiToken')">
-        <input class="input mono" type="password" v-model="apiToken" />
+        <input class="input mono" type="password" autocomplete="new-password" v-model="apiToken" />
       </Field>
       <Field :label="$t('tls.provider.originCaKey')">
-        <input class="input mono" type="password" v-model="originCaKey" />
+        <input class="input mono" type="password" autocomplete="new-password" v-model="originCaKey" />
       </Field>
     </div>
 

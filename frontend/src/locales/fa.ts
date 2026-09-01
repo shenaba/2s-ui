@@ -591,6 +591,7 @@ export default {
       obfsMode: "مبهم‌سازی",
       obfsHost: "میزبان مبهم‌سازی",
       mode: "حالت",
+      noClientConfig: "فقط نسخهٔ ۶ پیکربندی کلاینت تولید می‌کند؛ شنوندهٔ v5 را باید دستی در Surge تنظیم کرد.",
     },
     cloudflared: {
       token: "توکن تونل",
