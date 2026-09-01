@@ -786,6 +786,17 @@ export default {
     kernelTx: "TX",
     kernelRx: "RX",
     queryServerName: "ECH имя сервера для запроса",
+    provider: {
+      title: "Поставщик сертификатов",
+      sub: "Выпускает и продлевает сертификаты",
+      hint: "Используется всеми конфигурациями TLS, которые на него ссылаются",
+      endpoint: "Точка доступа",
+      endpointHint: "Оставьте пустым для точки доступа Tailscale по умолчанию",
+      apiToken: "API-токен",
+      originCaKey: "Ключ Origin CA",
+      requestType: "Тип запроса",
+      validity: "Запрашиваемый срок действия",
+    },
     acme: {
       options: "Параметры ACME",
       dataDir: "Каталог данных",
@@ -833,6 +844,9 @@ export default {
     Mp: "Мп",
     Gp: "Гп",
     Mbps: "Мб/с",
+  },
+  httpClient: {
+    title: "HTTP-клиент",
   },
   date: {
     expiry: "Срок действия",

@@ -23,7 +23,8 @@ export interface iTls {
   client_certificate?: string[]
   client_certificate_path?: string[]
   client_certificate_public_key_sha256?: string[]
-  acme?: acme
+  // A tag referencing an entry in the config's certificate_providers list.
+  certificate_provider?: string
   ech?: ech
   reality?: reality
   store?: 'mozilla' | 'chrome'
@@ -31,7 +32,25 @@ export interface iTls {
   kernel_rx?: boolean
 }
 
-export interface acme {
+// Certificate providers issue and renew the certificates a TLS config serves.
+// Since sing-box 1.14 they are declared once at the top level of the config and
+// referenced by tag from tls.certificate_provider, so several TLS configs can
+// share one, and the panel edits them in a section of their own.
+export const CertProviderTypes = {
+  Acme: 'acme',
+  Tailscale: 'tailscale',
+  CloudflareOriginCA: 'cloudflare-origin-ca',
+} as const
+
+export type CertProviderType = typeof CertProviderTypes[keyof typeof CertProviderTypes]
+
+interface certProviderBasics {
+  type: CertProviderType
+  tag: string
+}
+
+export interface acme extends certProviderBasics {
+  type: 'acme'
   domain: string[]
   data_directory?: string
   default_server_name?: string
@@ -49,6 +68,43 @@ export interface acme {
     provider: string
     [key: string]: string
   }
+  // Tag of a shared client in the config's http_clients list.
+  http_client?: string
+}
+
+// Reads the certificate Tailscale issues for the node, so it carries no
+// material of its own.
+export interface tailscaleProvider extends certProviderBasics {
+  type: 'tailscale'
+  endpoint?: string
+}
+
+export interface originCaProvider extends certProviderBasics {
+  type: 'cloudflare-origin-ca'
+  domain: string[]
+  data_directory?: string
+  api_token?: string
+  origin_ca_key?: string
+  request_type?: 'origin-rsa' | 'origin-ecc'
+  requested_validity?: number
+  // Tag of a shared client in the config's http_clients list.
+  http_client?: string
+}
+
+export type certProvider = acme | tailscaleProvider | originCaProvider
+
+const defaultProviders: Record<CertProviderType, () => certProvider> = {
+  'acme': () => <acme>{ type: 'acme', tag: '', domain: [] },
+  'tailscale': () => <tailscaleProvider>{ type: 'tailscale', tag: '' },
+  'cloudflare-origin-ca': () => <originCaProvider>{ type: 'cloudflare-origin-ca', tag: '', domain: [] },
+}
+
+// Switching type keeps the tag, since it names the provider rather than
+// describing it, and drops every field belonging to the type being left.
+export function createCertProvider(type: CertProviderType, tag?: string): certProvider {
+  const provider = defaultProviders[type]()
+  if (tag) provider.tag = tag
+  return provider
 }
 
 export interface ech {
@@ -99,8 +155,6 @@ export interface oTls {
   record_fragment?: boolean
   ech?: {
     enabled: boolean
-    pq_signature_schemes_enabled?: boolean
-    dynamic_record_sizing_disabled?: boolean
     config?: string[]
     config_path?: string
     query_server_name?: string
@@ -132,8 +186,6 @@ export const defaultOutTls: oTls = {
   },
   ech: {
     enabled: true,
-    pq_signature_schemes_enabled: false,
-    dynamic_record_sizing_disabled: false,
     config_path: "",
   }
 }

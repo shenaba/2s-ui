@@ -785,6 +785,17 @@ export default {
     kernelTx: "發送",
     kernelRx: "接收",
     queryServerName: "ECH 查詢伺服器名稱",
+    provider: {
+      title: "憑證提供者",
+      sub: "簽發並續期憑證",
+      hint: "引用它的每個 TLS 設定共用同一個",
+      endpoint: "端點",
+      endpointHint: "留空使用預設 Tailscale 端點",
+      apiToken: "API 權杖",
+      originCaKey: "Origin CA 金鑰",
+      requestType: "請求類型",
+      validity: "申請有效期",
+    },
     acme: {
       options: "ACME 選項",
       dataDir: "數據目錄",
@@ -832,6 +843,9 @@ export default {
     Mp: "Mp",
     Gp: "Gp",
     Mbps: "Mbps",
+  },
+  httpClient: {
+    title: "HTTP 用戶端",
   },
   date: {
     expiry: "到期",

@@ -28,7 +28,7 @@ const RandomUtil = {
     }
     let str = ''
     for (let i = 0; i < count; ++i) {
-        str += seq[this.randomInt(62)]
+        str += seq[this.randomInt(seq.length)]
     }
     return str
   },
@@ -64,7 +64,7 @@ const RandomUtil = {
   randomShortId(): string[] {
     const shortIds = new Array(24).fill('')
     for (let ii = 1; ii < 24; ii++) {
-      for (let jj = 0; jj <= this.randomInt(7); jj++){
+      for (let jj = 0; jj <= this.randomInt(8); jj++){
           const randomNum = this.randomInt(256)
           shortIds[ii] += ('0' + randomNum.toString(16)).slice(-2)
       }

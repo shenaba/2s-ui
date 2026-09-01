@@ -793,6 +793,17 @@ export default {
     kernelTx: "TX",
     kernelRx: "RX",
     queryServerName: "ECH Query Server Name",
+    provider: {
+      title: "Certificate Provider",
+      sub: "Issues and renews certificates",
+      hint: "Shared by every TLS config that names it",
+      endpoint: "Endpoint",
+      endpointHint: "Leave empty for the default Tailscale endpoint",
+      apiToken: "API Token",
+      originCaKey: "Origin CA Key",
+      requestType: "Request Type",
+      validity: "Requested Validity",
+    },
     acme: {
       options: "ACME Options",
       dataDir: "Data Directory",
@@ -840,6 +851,9 @@ export default {
     Mp: "Mp",
     Gp: "Gp",
     Mbps: "Mbps",
+  },
+  httpClient: {
+    title: "HTTP Client",
   },
   date: {
     expiry: "Expiry",

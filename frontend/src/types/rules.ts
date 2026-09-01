@@ -1,3 +1,5 @@
+import { HttpClientRef } from './httpClient'
+
 interface generalRule {
   invert: boolean
   action: 'route' | 'route-options' | 'reject' | 'hijack-dns' | 'sniff' | 'resolve' | 'bypass'
@@ -70,12 +72,17 @@ export interface rule extends generalRule {
   default_interface_address?: string[]
 }
 
+// Transport used to download a remote rule-set. Replaces the download_detour
+// option deprecated in sing-box 1.14. Leaving it out downloads over the
+// default outbound, which is what a detour to a plain direct outbound meant.
+export type { HttpClientRef } from './httpClient'
+
 export interface ruleset {
   type: 'local' | 'remote'
   tag: string
   format: 'source' | 'binary'
   path?: string
   url?: string
-  download_detour?: string
+  http_client?: HttpClientRef
   update_interval?: string
 }

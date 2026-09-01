@@ -785,6 +785,17 @@ export default {
     kernelTx: "TX",
     kernelRx: "RX",
     queryServerName: "Tên máy chủ truy vấn ECH",
+    provider: {
+      title: "Nhà cung cấp chứng chỉ",
+      sub: "Cấp và gia hạn chứng chỉ",
+      hint: "Mọi cấu hình TLS tham chiếu đến nó đều dùng chung",
+      endpoint: "Điểm cuối",
+      endpointHint: "Để trống để dùng điểm cuối Tailscale mặc định",
+      apiToken: "API Token",
+      originCaKey: "Khóa Origin CA",
+      requestType: "Loại yêu cầu",
+      validity: "Thời hạn yêu cầu",
+    },
     acme: {
       options: "Tùy chọn ACME",
       dataDir: "Thư mục Dữ liệu",
@@ -832,6 +843,9 @@ export default {
     Mp: "Mph",
     Gp: "Gph",
     Mbps: "Mbps",
+  },
+  httpClient: {
+    title: "HTTP Client",
   },
   date: {
     expiry: "Hết hạn",

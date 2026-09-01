@@ -18,6 +18,15 @@
       <input class="input mono" v-model="acme.provider" />
     </Field>
 
+    <!-- Reaching the CA over a shared HTTP client rather than the default
+         outbound, for a panel whose own egress is proxied. -->
+    <Field :label="$t('httpClient.title')">
+      <Select v-model="httpClient">
+        <option value="">{{ $t('none') }}</option>
+        <option v-for="c in httpClients" :key="c" :value="c">{{ c }}</option>
+      </Select>
+    </Field>
+
     <div class="grid2" v-if="optionDir || optionDefault">
       <Field v-if="optionDir" :label="$t('tls.acme.dataDir')">
         <input class="input mono" v-model="acme.data_directory" />
@@ -93,12 +102,16 @@
 import Select from '@/components/ui/Select.vue'
 import { computed } from 'vue'
 import { acme as acmeType } from '@/types/tls'
+import { httpClientTags } from '@/plugins/httpClient'
 import Field from '@/components/ui/Field.vue'
 import Btn from '@/components/ui/Btn.vue'
 import Pop from '@/components/ui/Pop.vue'
 import SwitchLabel from '@/components/ui/SwitchLabel.vue'
 
-const props = defineProps<{ tls: any }>()
+// The provider object itself. Since sing-box 1.14 ACME is a certificate
+// provider in the config's own list rather than a block inside a TLS config,
+// so this form edits the provider directly instead of reaching through `tls`.
+const props = defineProps<{ data: any }>()
 
 const providerList = [
   { title: "Let's Encrypt", value: 'letsencrypt' },
@@ -111,7 +124,13 @@ const dnsProviders = [
   { provider: 'acmedns', params: ['username', 'password', 'subdomain', 'server_url'] },
 ]
 
-const acme = computed((): acmeType => props.tls.acme)
+const acme = computed((): acmeType => props.data)
+
+const httpClients = computed((): string[] => httpClientTags())
+const httpClient = computed({
+  get: () => acme.value?.http_client ?? '',
+  set: (v: string) => { acme.value.http_client = v.length > 0 ? v : undefined },
+})
 
 const domains = computed({
   get: () => acme.value?.domain ? acme.value.domain.join(',') : '',

@@ -785,6 +785,17 @@ export default {
     kernelTx: "ارسال",
     kernelRx: "دریافت",
     queryServerName: "نام سرور ECH برای جستجو",
+    provider: {
+      title: "ارائه‌دهندهٔ گواهی",
+      sub: "گواهی را صادر و تمدید می‌کند",
+      hint: "هر پیکربندی TLS که به آن اشاره کند از همان استفاده می‌کند",
+      endpoint: "نقطهٔ پایانی",
+      endpointHint: "برای نقطهٔ پایانی پیش‌فرض Tailscale خالی بگذارید",
+      apiToken: "توکن API",
+      originCaKey: "کلید Origin CA",
+      requestType: "نوع درخواست",
+      validity: "مدت اعتبار درخواستی",
+    },
     acme: {
       options: "گزینه‌های ACME",
       dataDir: "مسیر داده‌ها",
@@ -832,6 +843,9 @@ export default {
     Mp: "م‌پ",
     Gp: "گ‌پ",
     Mbps: "م‌ب/ث",
+  },
+  httpClient: {
+    title: "کلاینت HTTP",
   },
   date: {
     expiry: "انقضا",

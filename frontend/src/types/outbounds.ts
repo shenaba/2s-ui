@@ -2,12 +2,14 @@ import { oTls } from "./tls"
 import { oMultiplex } from "./multiplex"
 import { Transport } from "./transport"
 import { Dial } from "./dial"
+import { QuicFields } from './httpClient'
 
 export const OutTypes = {
   Direct: 'direct',
   SOCKS: 'socks',
   HTTP: 'http',
   Shadowsocks: 'shadowsocks',
+  Snell: 'snell',
   VMess: 'vmess',
   Trojan: 'trojan',
   Naive: 'naive',
@@ -21,6 +23,7 @@ export const OutTypes = {
   SSH: 'ssh',
   Selector: 'selector',
   URLTest: 'urltest',
+  Bridge: 'bridge',
 }
 
 type OutType = typeof OutTypes[keyof typeof OutTypes]
@@ -120,7 +123,9 @@ export interface Naive extends OutboundBasics, Dial {
   tls: oTls
 }
 
-export interface Hysteria extends OutboundBasics, Dial {
+// The QUIC fields replace hysteria's own recv_window_conn, recv_window and
+// disable_mtu_discovery, which sing-box still reads but has deprecated.
+export interface Hysteria extends OutboundBasics, Dial, QuicFields {
   server: string
   server_port: number
   server_ports?: string[]
@@ -129,9 +134,6 @@ export interface Hysteria extends OutboundBasics, Dial {
   down_mbps: number
   obfs?: string
   auth_str?: string
-  recv_window_conn?: number
-  recv_window?: number
-  disable_mtu_discovery?: boolean
   network?: "udp" | "tcp"
   tls: oTls
 }
@@ -156,7 +158,7 @@ export interface VLESS extends OutboundBasics, Dial {
   transport?: Transport
 }
 
-export interface TUIC extends OutboundBasics, Dial {
+export interface TUIC extends OutboundBasics, Dial, QuicFields {
   server: string
   server_port: number
   uuid: string
@@ -170,7 +172,7 @@ export interface TUIC extends OutboundBasics, Dial {
   tls: oTls
 }
 
-export interface Hysteria2 extends OutboundBasics, Dial {
+export interface Hysteria2 extends OutboundBasics, Dial, QuicFields {
   server: string
   server_port: number
   server_ports?: string[]
@@ -248,9 +250,11 @@ export type Outbound = InterfaceMap[keyof InterfaceMap]
 // Create defaultValues object dynamically
 const defaultValues: Record<OutType, Outbound> = {
   direct: { type: OutTypes.Direct },
+  bridge: { type: OutTypes.Bridge },
   socks: { type: OutTypes.SOCKS, version: "5" },
   http: { type: OutTypes.HTTP, tls: {} },
   shadowsocks: { type: OutTypes.Shadowsocks, method: 'none', multiplex: {} },
+  snell: { type: OutTypes.Snell, version: 6, psk: '' },
   vmess: { type: OutTypes.VMess, tls: {}, multiplex: {}, transport: {}, security: 'auto', global_padding: false },
   trojan: { type: OutTypes.Trojan, tls: {}, multiplex: {}, transport: {} },
   naive: { type: OutTypes.Naive, tls: { enabled: true } },

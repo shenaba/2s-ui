@@ -2,6 +2,7 @@ import { Inbound } from './inbounds'
 import { Outbound } from './outbounds'
 import { Dns } from './dns'
 import { Dial } from './dial'
+import { HttpClient, HttpClientRef } from './httpClient'
 
 interface Log {
   disabled?: boolean
@@ -25,6 +26,9 @@ interface Route {
   default_interface?: string
   default_mark?: number
   default_domain_resolver: string
+  // Tag of a shared client in http_clients, used by remote rule-sets that
+  // name none of their own.
+  default_http_client?: string
 }
 
 interface RouteRule       {
@@ -65,7 +69,7 @@ interface RouteRuleSet {
   format: string
   path?: string
   url?: string
-  download_detour?: string
+  http_client?: HttpClientRef
   update_interval?: string
 }
 
@@ -109,6 +113,9 @@ export interface Config {
   log: Log
   dns: Dns
   ntp?: Ntp
+  // Shared HTTP clients, referenced by tag wherever sing-box downloads
+  // something: remote rule-sets, the API dashboard, certificate providers.
+  http_clients?: HttpClient[]
   inbounds: Inbound[]
   outbounds: Outbound[]
   route: Route

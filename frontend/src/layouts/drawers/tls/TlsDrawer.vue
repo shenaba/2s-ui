@@ -49,35 +49,39 @@
         <ChipSelect v-model="cipherSuites" :options="CIPHER_SUITES" />
       </Field>
 
-      <!-- certificate: path / text + self-signed generator -->
-      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
-        <Segmented
-          v-model="usePath"
-          :options="[[0, $t('tls.usePath')], [1, $t('tls.useText')]]"
-          @update:model-value="switchCertMode"
-        />
-        <div style="flex: 1;" />
-        <Btn variant="subtle" sm :loading="loading" :title="$t('actions.generate')" @click="genSelfSigned">
-          <Ico name="key" :size="14" /> {{ $t('actions.generate') }}
-        </Btn>
-      </div>
-      <template v-if="usePath == 0">
-        <div class="grid2">
-          <Field :label="$t('tls.certPath')">
-            <input class="input mono" v-model="inTls.certificate_path" />
-          </Field>
-          <Field :label="$t('tls.keyPath')">
-            <input class="input mono" v-model="inTls.key_path" />
-          </Field>
+      <!-- certificate: path / text + self-signed generator. A certificate
+           provider issues and renews the certificate itself, so these are
+           hidden while one is selected rather than left to contradict it. -->
+      <template v-if="certificateProvider === ''">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+          <Segmented
+            v-model="usePath"
+            :options="[[0, $t('tls.usePath')], [1, $t('tls.useText')]]"
+            @update:model-value="switchCertMode"
+          />
+          <div style="flex: 1;" />
+          <Btn variant="subtle" sm :loading="loading" :title="$t('actions.generate')" @click="genSelfSigned">
+            <Ico name="key" :size="14" /> {{ $t('actions.generate') }}
+          </Btn>
         </div>
-      </template>
-      <template v-else>
-        <Field :label="$t('tls.cert')">
-          <textarea class="input mono" rows="4" spellcheck="false" v-model="certText"></textarea>
-        </Field>
-        <Field :label="$t('tls.key')">
-          <textarea class="input mono" rows="4" spellcheck="false" v-model="keyText"></textarea>
-        </Field>
+        <template v-if="usePath == 0">
+          <div class="grid2">
+            <Field :label="$t('tls.certPath')">
+              <input class="input mono" v-model="inTls.certificate_path" />
+            </Field>
+            <Field :label="$t('tls.keyPath')">
+              <input class="input mono" v-model="inTls.key_path" />
+            </Field>
+          </div>
+        </template>
+        <template v-else>
+          <Field :label="$t('tls.cert')">
+            <textarea class="input mono" rows="4" spellcheck="false" v-model="certText"></textarea>
+          </Field>
+          <Field :label="$t('tls.key')">
+            <textarea class="input mono" rows="4" spellcheck="false" v-model="keyText"></textarea>
+          </Field>
+        </template>
       </template>
 
       <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 14px;">
@@ -163,15 +167,18 @@
 
     <hr class="form-divider" />
 
-    <!-- ===================== ACME ===================== -->
-    <!-- Hidden on a Windows server: sing-box's built-in ACME does not work
-         there, and offering it silently does nothing (upstream #1189).
-         An entry that already has ACME configured still shows the section, or
-         it would be invisible and impossible to turn off from the panel. -->
-    <template v-if="!isWindows || acmeEnabled">
-      <MSwitchRow v-model="acmeEnabled" :label="$t('ui.acmeTitle')" :desc="$t('ui.acmeDesc')" />
-      <Acme :tls="inTls" />
-    </template>
+    <!-- ================ certificate provider ================ -->
+    <!-- Since sing-box 1.14 the issuer is a provider declared once in the
+         config and referenced here by tag, so several TLS configs can share
+         one. Providers are created on the TLS page itself. A provider issues
+         the certificate, so the manual certificate fields above are hidden
+         while one is selected. -->
+    <Field :label="$t('tls.provider.title')" :hint="$t('tls.provider.hint')">
+      <Select v-model="certificateProvider">
+        <option value="">{{ $t('ui.none') }}</option>
+        <option v-for="p in providers" :key="p" :value="p">{{ p }}</option>
+      </Select>
+    </Field>
 
     <!-- ===================== ECH ===================== -->
     <MSwitchRow v-model="echEnabled" :label="$t('ui.echTitle')" :desc="$t('ui.echDesc')" />
@@ -200,13 +207,13 @@ import SectionLabel from '@/components/ui/SectionLabel.vue'
 import MultiPick from '@/components/ui/MultiPick.vue'
 import ChipSelect from '@/components/ui/ChipSelect.vue'
 import KeyInput from '@/components/ui/KeyInput.vue'
-import Acme from '@/components/forms/out/tls/Acme.vue'
 import Ech from '@/components/forms/out/tls/Ech.vue'
 
 const props = defineProps<{
   visible: boolean
   id: number
   data: string
+  providers: string[]
 }>()
 const emit = defineEmits<{ close: [] }>()
 
@@ -472,11 +479,10 @@ const optionTime = computed({
   set: (v: boolean) => { if (inTls.value.reality) inTls.value.reality.max_time_difference = v ? '1m' : undefined },
 })
 
-// ---------------- ACME / ECH section toggles ----------------
-const isWindows = computed((): boolean => Data().os === 'windows')
-const acmeEnabled = computed({
-  get: (): boolean => inTls.value.acme != undefined,
-  set: (v: boolean) => { inTls.value.acme = v ? { domain: [] } : undefined },
+// ---------------- provider / ECH section toggles ----------------
+const certificateProvider = computed({
+  get: (): string => inTls.value.certificate_provider ?? '',
+  set: (v: string) => { inTls.value.certificate_provider = v.length > 0 ? v : undefined },
 })
 const echEnabled = computed({
   get: (): boolean => inTls.value.ech != undefined,

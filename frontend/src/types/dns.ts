@@ -5,7 +5,6 @@ export interface Dns {
   strategy?: string
   disable_cache?: boolean,
   disable_expire?: boolean,
-  independent_cache?: boolean,
   cache_capacity?: number,
   reverse_mapping?: boolean,
   client_subnet?: string,
@@ -13,6 +12,7 @@ export interface Dns {
 
 export const DnsTypes = {
   Local: 'local',
+  MDNS: 'mdns',
   Hosts: 'hosts',
   TCP: 'tcp',
   UDP: 'udp',
@@ -39,6 +39,7 @@ export type DnsServer = InterfaceMap[keyof InterfaceMap]
 
 const defaultValues: Record<DnsType, DnsServer> = {
   local: { type: 'local' },
+  mdns: { type: 'mdns' },
   hosts: { type: 'hosts', path: ['/etc/hosts'] },
   tcp: { type: 'tcp', server_port: 53 },
   udp: { type: 'udp', server_port: 53 },
@@ -129,5 +130,4 @@ export interface dnsRule extends generalDnsRule {
   clash_mode?: string
   rule_set?: string[]
   rule_set_ip_cidr_match_source?: boolean
-  rule_set_ip_cidr_accept_empty?: boolean
 }

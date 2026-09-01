@@ -2,6 +2,8 @@ import { iMultiplex } from "./multiplex"
 import { iTls } from "./tls"
 import { Dial } from "./dial"
 import { Transport } from "./transport"
+import RandomUtil from "@/plugins/randomUtil"
+import { QuicFields } from './httpClient'
 
 export const InTypes = {
   Direct: 'direct',
@@ -9,6 +11,7 @@ export const InTypes = {
   SOCKS: 'socks',
   HTTP: 'http',
   Shadowsocks: 'shadowsocks',
+  Snell: 'snell',
   VMess: 'vmess',
   Trojan: 'trojan',
   Naive: 'naive',
@@ -21,6 +24,7 @@ export const InTypes = {
   Tun: 'tun',
   Redirect: 'redirect',
   TProxy: 'tproxy',
+  Cloudflared: 'cloudflared',
 }
 
 type InType = typeof InTypes[keyof typeof InTypes]
@@ -93,18 +97,16 @@ export interface Trojan extends InboundBasics {
   transport?: Transport
 }
 export interface Naive extends InboundBasics {
-  network?: "udp" | "tcp"
   tls: iTls,
   quic_congestion_control?: "" | "bbr" | "bbr2" | "cubic" | "reno"
 }
-export interface Hysteria extends InboundBasics {
+// The QUIC fields replace hysteria's own recv_window_conn, recv_window_client,
+// max_conn_client and disable_mtu_discovery, which sing-box still reads but has
+// deprecated.
+export interface Hysteria extends InboundBasics, QuicFields {
   up_mbps: number
   down_mbps: number
   obfs?: string
-  recv_window_conn?: number
-  recv_window_client?: number
-  max_conn_client?: number
-  disable_mtu_discovery?: boolean
 }
 export interface ShadowTLS extends InboundBasics {
   version: 1|2|3
@@ -126,13 +128,13 @@ export interface AnyTls extends InboundBasics {
   padding_scheme: string[]
   tls: iTls
 }
-export interface TUIC extends InboundBasics {
+export interface TUIC extends InboundBasics, QuicFields {
   congestion_control: ""|"cubic"|"new_reno"|"bbr"
   auth_timeout?: string
   zero_rtt_handshake?: boolean
   heartbeat?: string
 }
-export interface Hysteria2 extends InboundBasics {
+export interface Hysteria2 extends InboundBasics, QuicFields {
   up_mbps?: number
   down_mbps?: number
   obfs?: {
@@ -155,7 +157,6 @@ export interface Tun extends InboundBasics {
   interface_name?: string
   address?: string[]
   mtu?: number
-  endpoint_independent_nat?: boolean
   udp_timeout?: string
   stack?: string
   auto_route?: boolean
@@ -177,6 +178,28 @@ export interface Tun extends InboundBasics {
   // include_package?: string[]
   // exclude_package?: string[]
 }
+export interface SnellUser {
+  name?: string
+  userkey: string
+}
+// Snell picks its extra options from the version: v5 carries obfs, v6 a mode.
+export interface Snell extends InboundBasics {
+  version: 5 | 6
+  psk: string
+  users?: SnellUser[]
+  obfs_mode?: 'none' | 'http' | 'tls'
+  mode?: 'default' | 'unshaped' | 'unsafe-raw'
+}
+export interface Cloudflared extends InboundBasics {
+  token: string
+  ha_connections?: number
+  protocol?: 'auto' | 'quic' | 'http2' | 'h2mux'
+  post_quantum?: boolean
+  edge_ip_version?: 0 | 4 | 6
+  datagram_version?: 'v2' | 'v3'
+  grace_period?: string
+  region?: string
+}
 export interface Redirect extends InboundBasics {}
 export interface TProxy extends InboundBasics {
   network?: "udp" | "tcp"
@@ -189,6 +212,7 @@ type InterfaceMap = {
   socks: SOCKS
   http: HTTP
   shadowsocks: Shadowsocks
+  snell: Snell
   vmess: VMess
   trojan: Trojan
   naive: Naive
@@ -201,6 +225,7 @@ type InterfaceMap = {
   tun: Tun
   redirect: Redirect
   tproxy: TProxy
+  cloudflared: Cloudflared
 }
 
 // Create union type from InterfaceMap
@@ -213,13 +238,11 @@ const defaultValues: Record<InType, Inbound> = {
   socks: <SOCKS>{ type: InTypes.SOCKS },
   http: <HTTP>{ type: InTypes.HTTP, tls_id: 0 },
   shadowsocks: <Shadowsocks>{ type: InTypes.Shadowsocks, method: 'none' },
+  snell: <Snell>{ type: InTypes.Snell, version: 6 },
   vmess: <VMess>{ type: InTypes.VMess, tls_id: 0, transport: {} },
   trojan: <Trojan>{ type: InTypes.Trojan, tls_id: 0, transport: {} },
   naive: <Naive>{ type: InTypes.Naive, tls_id: 0 },
   hysteria: <Hysteria>{ type: InTypes.Hysteria, up_mbps: 100, down_mbps: 100, tls_id: 0 },
-  // handshake.server_port has no sing-box default; leaving it unset makes the
-  // inbound fail to start, so seed the port the handshake server almost always
-  // listens on.
   shadowtls: <ShadowTLS>{ type: InTypes.ShadowTLS, version: 3, handshake: { server_port: 443 }, handshake_for_server_name: {} },
   tuic: <TUIC>{ type: InTypes.TUIC, congestion_control: "cubic", tls_id: 0 },
   hysteria2: <Hysteria2>{ type: InTypes.Hysteria2, tls_id: 0 },
@@ -238,6 +261,24 @@ const defaultValues: Record<InType, Inbound> = {
   tun: <Tun>{ type: InTypes.Tun, mtu: 9000, stack: 'system', udp_timeout: '5m', auto_route: false },
   redirect: <Redirect>{ type: InTypes.Redirect },
   tproxy: <TProxy>{ type: InTypes.TProxy },
+  cloudflared: <Cloudflared>{ type: InTypes.Cloudflared, token: '', protocol: 'auto' },
+}
+
+// Secrets sing-box requires on the inbound itself (as opposed to per-client
+// credentials, which the client system fills in). They are generated whenever
+// an inbound of that type is created so switching protocol never leaves an
+// inbound that cannot start.
+function generateSecrets(inbound: any) {
+  switch (inbound.type) {
+    case InTypes.Snell:
+      // sing-box requires a psk of 12-255 bytes.
+      if (!inbound.psk) inbound.psk = RandomUtil.randomSeq(32)
+      break
+    case InTypes.ShadowTLS:
+      // Only v2 carries an inbound-level password; v3 uses users.
+      if (inbound.version === 2 && !inbound.password) inbound.password = RandomUtil.randomSeq(16)
+      break
+  }
 }
 
 export function createInbound<T extends Inbound>(type: InType,json?: Partial<T>): Inbound {
@@ -248,5 +289,6 @@ export function createInbound<T extends Inbound>(type: InType,json?: Partial<T>)
   // stop TypeScript from checking it.
   const base: Inbound = JSON.parse(JSON.stringify(defaultValues[type] ?? {}))
   const defaultObject: Inbound = { ...base, ...(json ?? {}) }
+  generateSecrets(defaultObject)
   return defaultObject
 }

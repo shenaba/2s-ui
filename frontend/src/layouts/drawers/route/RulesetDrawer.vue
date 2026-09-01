@@ -33,17 +33,25 @@
       <Field label="URL">
         <input class="input mono" style="font-size: 12px;" v-model="form.url" placeholder="https://…/geosite-ads.srs" />
       </Field>
+      <!-- A shared client and a single outbound are alternatives: http_client
+           holds one or the other, so picking either clears the other. -->
       <div class="grid2">
+        <Field :label="$t('httpClient.title')">
+          <Select v-model="httpClient">
+            <option value="">{{ $t('ui.none') }}</option>
+            <option v-for="c in httpClients" :key="c" :value="c">{{ c }}</option>
+          </Select>
+        </Field>
         <Field :label="$t('objects.outbound')">
           <Select v-model="downloadDetour">
             <option value="">{{ $t('ui.none') }}</option>
             <option v-for="o in outTags" :key="o" :value="o">{{ o }}</option>
           </Select>
         </Field>
-        <Field :label="$t('ruleset.interval') + ' (' + $t('date.d') + ')'">
-          <input class="input mono" type="number" min="0" v-model.number="updateIntervals" />
-        </Field>
       </div>
+      <Field :label="$t('ruleset.interval') + ' (' + $t('date.d') + ')'">
+        <input class="input mono" type="number" min="0" v-model.number="updateIntervals" />
+      </Field>
     </template>
   </MDrawer>
 </template>
@@ -56,6 +64,7 @@ import Segmented from '@/components/ui/Segmented.vue'
 import Field from '@/components/ui/Field.vue'
 import RandomUtil from '@/plugins/randomUtil'
 import { ruleset } from '@/types/rules'
+import { downloadHttpClient, httpClientTags, refDetour, refTag } from '@/plugins/httpClient'
 
 const props = defineProps<{
   open: boolean
@@ -85,7 +94,7 @@ const kind = computed({
     form.value.type = <'local' | 'remote'>t
     if (t === 'local') {
       delete form.value.url
-      delete form.value.download_detour
+      delete form.value.http_client
       delete form.value.update_interval
     } else {
       delete form.value.path
@@ -93,11 +102,27 @@ const kind = computed({
   },
 })
 
-const downloadDetour = computed({
-  get: () => form.value.download_detour ?? '',
+const httpClients = computed(() => httpClientTags())
+
+// Naming a shared client replaces any inline options: http_client is either a
+// tag or an options object, never both.
+const httpClient = computed({
+  get: () => refTag(form.value.http_client) ?? '',
   set: (v: string) => {
-    if (v.length > 0) form.value.download_detour = v
-    else delete form.value.download_detour
+    if (v.length > 0) form.value.http_client = v
+    else delete form.value.http_client
+  },
+})
+
+// The inline form, carrying only the outbound to download over. An outbound
+// that would dial exactly what no detour dials is dropped rather than written
+// out -- sing-box rejects that as pointless (see downloadHttpClient).
+const downloadDetour = computed({
+  get: () => refDetour(form.value.http_client) ?? '',
+  set: (v: string) => {
+    const client = v.length > 0 ? downloadHttpClient(v) : undefined
+    if (client) form.value.http_client = client
+    else delete form.value.http_client
   },
 })
 

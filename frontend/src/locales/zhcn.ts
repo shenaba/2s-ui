@@ -785,6 +785,17 @@ export default {
     kernelTx: "发送",
     kernelRx: "接收",
     queryServerName: "ECH 查询服务器名称",
+    provider: {
+      title: "证书提供者",
+      sub: "签发并续期证书",
+      hint: "引用它的每个 TLS 配置共用同一个",
+      endpoint: "端点",
+      endpointHint: "留空使用默认 Tailscale 端点",
+      apiToken: "API 令牌",
+      originCaKey: "Origin CA 密钥",
+      requestType: "请求类型",
+      validity: "申请有效期",
+    },
     acme: {
       options: "ACME 选项",
       dataDir: "数据目录",
@@ -832,6 +843,9 @@ export default {
     Mp: "Mp",
     Gp: "Gp",
     Mbps: "Mbps",
+  },
+  httpClient: {
+    title: "HTTP 客户端",
   },
   date: {
     expiry: "到期",
