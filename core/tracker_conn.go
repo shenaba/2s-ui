@@ -12,6 +12,7 @@ import (
 
 	"github.com/gofrs/uuid/v5"
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
 	"github.com/sagernet/sing/common/network"
@@ -500,4 +501,11 @@ func (w *wrappedPacketConn) Close() error {
 
 func (w *wrappedPacketConn) Upstream() any {
 	return w.PacketConn
+}
+
+// RoutedFlow is sing-box 1.14's hook for tracking a TUN flow. The panel tracks
+// connections, not flows -- nil opts this tracker out without affecting the
+// connection tracking above.
+func (t *ConnTracker) RoutedFlow(ctx context.Context, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) tun.FlowTracker {
+	return nil
 }

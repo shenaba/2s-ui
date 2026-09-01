@@ -39,10 +39,10 @@ expect_diff() {
   case "$1" in
     hysteria) echo 28 ;;
     hysteria2) echo 28 ;;
-    trojan) echo 33 ;;
+    trojan) echo 25 ;;
     tuic) echo 26 ;;
-    vless) echo 45 ;;
-    vmess) echo 43 ;;
+    vless) echo 29 ;;
+    vmess) echo 27 ;;
     *) echo 0 ;;
   esac
 }

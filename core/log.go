@@ -240,3 +240,10 @@ func (l *observableLogger) FatalContext(ctx context.Context, args ...any) {
 func (l *observableLogger) PanicContext(ctx context.Context, args ...any) {
 	l.Log(ctx, log.LevelPanic, args)
 }
+
+// AttachPlatformWriter is sing-box 1.14's hook for the Android/iOS platform
+// log sink. The panel serves its own log buffer over the API instead, so this
+// is deliberately a no-op -- the method exists only to satisfy
+// log.ObservableFactory.
+func (f *defaultFactory) AttachPlatformWriter(platformWriter log.PlatformWriter) {
+}

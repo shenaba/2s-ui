@@ -34,7 +34,7 @@ jobs:
       # Same tags release.yml uses for its non-naive platforms. The naive tags are
       # left out on purpose: they need the Chromium/cronet toolchain, which costs
       # minutes to fetch and adds nothing to this gate.
-      BUILD_TAGS: with_quic,with_grpc,with_utls,with_acme,with_gvisor,badlinkname,tfogo_checklinkname0,with_tailscale
+      BUILD_TAGS: with_quic,with_grpc,with_utls,with_acme,with_gvisor,badlinkname,tfogo_checklinkname0,with_tailscale,with_cloudflared,with_openconnect,with_openvpn,with_usbip
     steps:
       # The frontend is not needed to compile the backend, so this job never
       # builds it: web/html is gitignored, and web.go's `//go:embed *` matches

@@ -9,6 +9,7 @@ import (
 	"github.com/shenaba/2s-ui/database/model"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/atomic"
 	"github.com/sagernet/sing/common/bufio"
 	"github.com/sagernet/sing/common/network"
@@ -111,4 +112,10 @@ func (c *StatsTracker) GetStats() *[]model.Stats {
 		appendStat("user", user, counter.write.Swap(0), counter.read.Swap(0))
 	}
 	return &s
+}
+
+// RoutedFlow is sing-box 1.14's hook for tracking a TUN flow. Counters here are
+// per inbound/outbound tag, which a flow does not add to; see ConnTracker.
+func (c *StatsTracker) RoutedFlow(ctx context.Context, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) tun.FlowTracker {
+	return nil
 }
