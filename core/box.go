@@ -636,33 +636,66 @@ func (s *Box) Close() error {
 		{"dns-transport", s.dnsTransport},
 		{"network", s.network},
 	} {
-		done := adapter.LogElapsed(s.logger, "close ", closeItem.name)
-		err = E.Append(err, closeItem.service.Close(), func(err error) error {
+		if closeItem.service == nil {
+			continue
+		}
+		err = E.Append(err, s.closeGuarded(closeItem.name, closeItem.service.Close), func(err error) error {
 			return E.Cause(err, "close ", closeItem.name)
 		})
-		done()
 	}
 	if s.httpClientService != nil {
-		s.logger.Trace("close ", s.httpClientService.Name())
-		startTime := time.Now()
-		err = E.Append(err, s.httpClientService.Close(), func(err error) error {
+		err = E.Append(err, s.closeGuarded(s.httpClientService.Name(), s.httpClientService.Close), func(err error) error {
 			return E.Cause(err, "close ", s.httpClientService.Name())
 		})
-		s.logger.Trace("close ", s.httpClientService.Name(), " completed (", F.Seconds(time.Since(startTime).Seconds()), "s)")
 	}
 	for _, lifecycleService := range s.internalService {
-		done := adapter.LogElapsed(s.logger, "close ", lifecycleService.Name())
-		err = E.Append(err, lifecycleService.Close(), func(err error) error {
+		if lifecycleService == nil {
+			continue
+		}
+		err = E.Append(err, s.closeGuarded(lifecycleService.Name(), lifecycleService.Close), func(err error) error {
 			return E.Cause(err, "close ", lifecycleService.Name())
 		})
-		done()
 	}
-	done := adapter.LogElapsed(s.logger, "close logger")
-	err = E.Append(err, s.logFactory.Close(), func(err error) error {
+	err = E.Append(err, s.closeGuarded("logger", s.logFactory.Close), func(err error) error {
 		return E.Cause(err, "close logger")
 	})
-	done()
+	if s.statsTracker != nil {
+		s.statsTracker.Reset()
+	}
+	if s.connTracker != nil {
+		s.connTracker.Reset()
+	}
 	return err
+}
+
+// closeGuarded runs one component's Close, turning a panic into an error so the
+// rest of the teardown still runs.
+//
+// Upstream lets a panic here escape, which is fine when the process is
+// sing-box: it dies either way. Here the box is an object the panel tears down
+// and rebuilds in-process, and Core.Stop has already published "stopped" and
+// dropped its pointer to this box by the time Close runs -- so an escaping
+// panic leaks every component after the failing one with nothing left holding a
+// reference to them, and on the paths that restart the core off the main
+// goroutine (cronjob/resetTrafficJob, service/tgbot) there is no recover above
+// us, so it takes the whole panel down.
+func (s *Box) closeGuarded(name string, close func() error) (err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			// The stack is the whole point of surviving this. Recovering keeps
+			// the panel up, which also means the same panic comes back on every
+			// core restart -- and a bare "invalid memory address" repeated every
+			// few seconds names nothing anyone can fix. Logged separately from
+			// the returned error so it reaches the log even when the caller
+			// only reports err.Error() on one line.
+			stack := debug.Stack()
+			err = E.New("panic: ", v)
+			s.logger.Error("panic closing ", name, ": ", v, "\n", string(stack))
+		}
+	}()
+	done := adapter.LogElapsed(s.logger, "close ", name)
+	defer done()
+	return close()
 }
 
 func (s *Box) Network() adapter.NetworkManager {
