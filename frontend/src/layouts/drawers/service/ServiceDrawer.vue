@@ -23,7 +23,7 @@
     </div>
 
     <!-- oom-killer watches the process rather than listening on a socket. -->
-    <Listen v-if="srv.type != srvTypes.OOMKiller" :data="srv" :inTags="inTags" />
+    <Listen v-if="!NoListen.includes(srv.type)" :data="srv" :inTags="inTags" />
     <Derp v-if="srv.type == srvTypes.DERP" :data="srv" :tsTags="tsTags" :inTags="inTags" />
     <SSMapi v-if="srv.type == srvTypes.SSMAPI" :data="srv" :ssTags="ssTags" />
     <Ocm v-if="srv.type == srvTypes.OCM" :data="srv" />
@@ -66,6 +66,7 @@ const emit = defineEmits<{ close: [] }>()
 
 const srvTypes = SrvTypes
 const HasTls = [SrvTypes.DERP, SrvTypes.SSMAPI, SrvTypes.OCM, SrvTypes.CCM, SrvTypes.API]
+const NoListen = [SrvTypes.OOMKiller]
 
 const srv = ref<Srv>(createSrv('derp', { tag: '' }))
 const loading = ref(false)
@@ -91,7 +92,11 @@ const srvType = computed({
   get: () => srv.value.type,
   set: (v: string) => {
     const tag = props.id > 0 ? srv.value.tag : v + '-' + RandomUtil.randomSeq(3)
-    const prevConfig = { id: srv.value.id, tag: tag, listen: srv.value.listen, listen_port: srv.value.listen_port }
+    // Same list the Listen section is gated on: oom-killer watches the process
+    // rather than binding a socket, and sing-box rejects listen options on it.
+    const prevConfig = NoListen.includes(v)
+      ? { id: srv.value.id, tag: tag }
+      : { id: srv.value.id, tag: tag, listen: srv.value.listen, listen_port: srv.value.listen_port }
     srv.value = createSrv(v, prevConfig)
   },
 })
@@ -102,6 +107,15 @@ const saveChanges = async () => {
   // check duplicate tag
   const isDuplicatedTag = Data().checkTag('service', srv.value.id, srv.value.tag)
   if (isDuplicatedTag) return
+
+  // An existing row edited into oom-killer still carries whatever the previous
+  // type stored, and updateData loads it back the same way, so the type switch
+  // alone cannot guarantee these are gone.
+  if (NoListen.includes(srv.value.type)) {
+    delete (<any>srv.value).listen
+    delete (<any>srv.value).listen_port
+    delete (<any>srv.value).tls_id
+  }
 
   // save data
   loading.value = true

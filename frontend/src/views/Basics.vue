@@ -259,11 +259,20 @@ const appConfig = computed((): Config => {
 // ---------------- HTTP clients ----------------
 // They live at the top level of the config, beside log and dns, and are saved
 // with the rest of this page rather than on their own.
+// Reading must not write: this computed is evaluated during render, after
+// init() has snapshotted oldConfig, so seeding the key here would leave the two
+// differing by one key and light up the Save button on a page nobody edited.
+// The list is created only when something is actually added to it.
 const httpClients = computed((): HttpClient[] => {
+  const list = (<any>appConfig.value).http_clients
+  return Array.isArray(list) ? list : []
+})
+
+const httpClientList = (): HttpClient[] => {
   const config = <any>appConfig.value
   if (!Array.isArray(config.http_clients)) config.http_clients = []
   return config.http_clients
-})
+}
 
 const httpClientTags = computed((): string[] => httpClients.value.map((c) => c.tag))
 
@@ -279,12 +288,13 @@ const showHttpClient = (index: number) => {
 }
 
 const saveHttpClient = (data: HttpClient) => {
-  if (httpClientDrawer.value.index == -1) httpClients.value.push(data)
-  else httpClients.value[httpClientDrawer.value.index] = data
+  const list = httpClientList()
+  if (httpClientDrawer.value.index == -1) list.push(data)
+  else list[httpClientDrawer.value.index] = data
   httpClientDrawer.value.open = false
 }
 
-const delHttpClient = (index: number) => { httpClients.value.splice(index, 1) }
+const delHttpClient = (index: number) => { httpClientList().splice(index, 1) }
 
 const init = () => {
   oldConfig.value = JSON.parse(JSON.stringify(Data().config))

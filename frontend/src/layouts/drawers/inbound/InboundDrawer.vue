@@ -281,16 +281,26 @@ const updateData = (id: number) => {
 
 const changeType = () => {
   if (!inbound.value.listen_port) inbound.value.listen_port = RandomUtil.randomIntRange(10000, 60000)
-  // Tag change only in add inbound
-  const tag = props.id > 0 ? inbound.value.tag : inbound.value.type + '-' + inbound.value.listen_port
-  // Use previous data
-  const prevConfig = {
-    id: inbound.value.id,
-    tag: tag,
-    listen: inbound.value.listen ?? '::',
-    listen_port: inbound.value.listen_port,
-  }
-  inbound.value = createInbound(inbound.value.type, inbound.value.type != InTypes.Tun ? prevConfig : { tag: tag })
+  // Same list the Listen section is gated on: a type that does not listen must
+  // not carry the listen settings over either, or sing-box rejects them as
+  // unknown fields on a form that no longer shows them.
+  const noListen = NoListen.includes(inbound.value.type)
+  // Tag change only in add inbound. Without a port there is nothing to make the
+  // tag unique, so fall back to a random suffix.
+  const tag = props.id > 0
+    ? inbound.value.tag
+    : inbound.value.type + '-' + (noListen ? RandomUtil.randomSeq(3) : inbound.value.listen_port)
+  // Use previous data. `id` is kept in both branches: dropping it turns the
+  // save into a create and leaves the original row behind.
+  const prevConfig = noListen
+    ? { id: inbound.value.id, tag: tag }
+    : {
+        id: inbound.value.id,
+        tag: tag,
+        listen: inbound.value.listen ?? '::',
+        listen_port: inbound.value.listen_port,
+      }
+  inbound.value = createInbound(inbound.value.type, prevConfig)
   if (HasInData.includes(inbound.value.type)) {
     inbound.value.addrs = []
     inbound.value.out_json = {}

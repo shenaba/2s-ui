@@ -135,13 +135,17 @@ const changeType = async () => {
     case EpTypes.OpenVPNClient:
       prevConfig = { tag: tag }
       break
-    case EpTypes.OpenVPNServer:
+    case EpTypes.OpenVPNServer: {
+      // `> 0`, not `??`: wireguard's default listen_port is 0, and nullish
+      // coalescing would carry that straight through as the listen port.
+      const previousPort = (<any>endpoint.value).listen_port
       prevConfig = {
         tag: tag,
         listen: '::',
-        listen_port: (<any>endpoint.value).listen_port ?? RandomUtil.randomIntRange(10000, 60000),
+        listen_port: previousPort > 0 ? previousPort : RandomUtil.randomIntRange(10000, 60000),
       }
       break
+    }
   }
   endpoint.value = createEndpoint(endpoint.value.type, prevConfig)
   // Carry the selected TLS config across only while the new type can use one.

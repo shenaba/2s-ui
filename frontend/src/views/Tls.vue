@@ -181,11 +181,20 @@ const confirmDelete = async () => {
 // config object as a whole, the same way the rules page does it.
 const appConfig = computed((): any => dataStore.config)
 
+// Reading must not write. This page shares the config object with Basics, which
+// compares it against a snapshot to decide whether there is anything to save --
+// seeding the key here would make merely opening the TLS page show unsaved
+// changes over there. The list is created only when something is added to it.
 const providers = computed((): certProvider[] => {
+  const list = appConfig.value.certificate_providers
+  return Array.isArray(list) ? list : []
+})
+
+const providerList = (): certProvider[] => {
   const config = appConfig.value
   if (!Array.isArray(config.certificate_providers)) config.certificate_providers = []
   return config.certificate_providers
-})
+}
 
 const providerTags = computed((): string[] => providers.value.map((p) => p.tag))
 
@@ -226,8 +235,9 @@ const saveProviders = async (): Promise<boolean> => {
 
 const saveProvider = async (data: certProvider) => {
   const index = providerDrawer.value.index
-  if (index == -1) providers.value.push(data)
-  else providers.value[index] = data
+  const list = providerList()
+  if (index == -1) list.push(data)
+  else list[index] = data
   const success = await saveProviders()
   if (success) providerDrawer.value.open = false
 }
@@ -235,7 +245,7 @@ const saveProvider = async (data: certProvider) => {
 const cloneProvider = async (index: number) => {
   const copy = <certProvider>JSON.parse(JSON.stringify(providers.value[index]))
   while (providerTags.value.includes(copy.tag)) copy.tag += '-copy'
-  providers.value.push(copy)
+  providerList().push(copy)
   await saveProviders()
 }
 
@@ -246,7 +256,7 @@ const askDeleteProvider = (index: number) => {
 
 const removeProvider = async (index: number): Promise<boolean> => {
   if (index < 0) return false
-  providers.value.splice(index, 1)
+  providerList().splice(index, 1)
   return await saveProviders()
 }
 </script>
