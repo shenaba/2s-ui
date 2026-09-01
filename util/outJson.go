@@ -11,7 +11,10 @@ import (
 // Fill Inbound's out_json
 func FillOutJson(i *model.Inbound, hostname string) error {
 	switch i.Type {
-	case "direct", "tun", "redirect", "tproxy":
+	// Listeners with no client half at all: they either accept nothing from
+	// outside (direct, tun, redirect, tproxy) or dial out to reach their own
+	// edge (cloudflared).
+	case "direct", "tun", "redirect", "tproxy", "cloudflared":
 		return nil
 	}
 	var outJson map[string]interface{}
@@ -46,6 +49,8 @@ func FillOutJson(i *model.Inbound, hostname string) error {
 		naiveOut(&outJson, *inbound)
 	case "shadowsocks":
 		shadowsocksOut(&outJson, *inbound)
+	case "snell":
+		snellOut(&outJson, *inbound)
 	case "shadowtls":
 		shadowTlsOut(&outJson, *inbound)
 	case "hysteria":
@@ -76,10 +81,16 @@ func FillOutJson(i *model.Inbound, hostname string) error {
 
 // serverOnlyTlsFields are inbound-side TLS fields that must never reach a
 // client: certificate_path/key_path point at files on the panel host, key is
-// the server private key and acme is the panel's issuance config. A leaked
-// certificate_path makes sing-box clients fail outright on a missing file
-// (issue #51).
-var serverOnlyTlsFields = []string{"certificate_path", "key", "key_path", "acme"}
+// the server private key, and acme / certificate_provider are the panel's
+// issuance config. A leaked certificate_path makes sing-box clients fail
+// outright on a missing file (issue #51); a leaked certificate_provider is a
+// tag that names nothing in the client's own config, which sing-box refuses to
+// start on.
+//
+// acme stays listed even though sing-box 1.14 replaced it with
+// certificate_provider: rows written before the migration still carry it, and
+// the panel is not the only thing that ever wrote this column.
+var serverOnlyTlsFields = []string{"certificate_path", "key", "key_path", "acme", "certificate_provider"}
 
 // serverOnlyEchFields hold the server's ECH private key inside the nested
 // ech object; the client-side ech fields (config, config_path, ...) stay.
@@ -201,12 +212,49 @@ func shadowTlsOut(out *map[string]interface{}, inbound map[string]interface{}) {
 	(*out)["tls"] = map[string]interface{}{"enabled": true}
 }
 
+// hysteriaQUICFieldsFromInbound are the transport options seeded from the
+// listener into the client config. sing-box 1.14 gives both sides the same
+// names, so they copy across unchanged -- unlike the bandwidths, which swap.
+// They are the same two the deprecated recv_window_conn / disable_mtu_discovery
+// used to carry, which is why the stream window is not among them: that one has
+// always been the client's own, set in the client-config tab.
+//
+// A value already in out_json is the operator's override and wins, the same way
+// an explicit network does on a shadowsocks client config. Clearing the field
+// there lets the listener's value seed it again on the next save.
+var hysteriaQUICFieldsFromInbound = []string{"connection_receive_window", "disable_path_mtu_discovery"}
+
+// hysteriaDeprecatedOutFields are the names hysteria used before sing-box 1.14
+// gave every QUIC protocol the same ones, mapped to their replacements as the
+// outbound side spells them -- what an inbound calls recv_window_client an
+// outbound calls recv_window, and both mean the stream window.
+//
+// migrateHysteriaQUICFields renames these in every stored row once, so a client
+// config only carries one afterwards if it was hand-edited or restored from a
+// pre-1.14 backup. Folding it in rather than deleting it means such a row heals
+// itself on the next save instead of silently losing the value; the modern name
+// wins when both are present, matching how sing-box reads them.
+var hysteriaDeprecatedOutFields = map[string]string{
+	"recv_window_conn":      "connection_receive_window",
+	"recv_window":           "stream_receive_window",
+	"disable_mtu_discovery": "disable_path_mtu_discovery",
+}
+
 func hysteriaOut(out *map[string]interface{}, inbound map[string]interface{}) {
 	delete(*out, "down_mbps")
 	delete(*out, "up_mbps")
 	delete(*out, "obfs")
-	delete(*out, "recv_window_conn")
-	delete(*out, "disable_mtu_discovery")
+
+	for deprecated, quic := range hysteriaDeprecatedOutFields {
+		value, carried := (*out)[deprecated]
+		if !carried {
+			continue
+		}
+		delete(*out, deprecated)
+		if _, set := (*out)[quic]; !set {
+			(*out)[quic] = value
+		}
+	}
 
 	if upMbps, ok := inbound["down_mbps"]; ok {
 		(*out)["up_mbps"] = upMbps
@@ -217,11 +265,49 @@ func hysteriaOut(out *map[string]interface{}, inbound map[string]interface{}) {
 	if obfs, ok := inbound["obfs"]; ok {
 		(*out)["obfs"] = obfs
 	}
-	if recvWindow, ok := inbound["recv_window_conn"]; ok {
-		(*out)["recv_window_conn"] = recvWindow
+	for _, field := range hysteriaQUICFieldsFromInbound {
+		if _, set := (*out)[field]; set {
+			continue
+		}
+		if value, ok := inbound[field]; ok {
+			(*out)[field] = value
+		}
 	}
-	if disableMTU, ok := inbound["disable_mtu_discovery"]; ok {
-		(*out)["disable_mtu_discovery"] = disableMTU
+}
+
+// snellOut builds the client half of a snell listener.
+//
+// Only version 6 has one: sing-box's snell outbound speaks 4 and 6 while the
+// inbound speaks 5 and 6, so a v5 listener has no generated client config at
+// all -- Surge is what still talks to it, configured by hand. Wiping out_json
+// is how the rest of this file says "no client config", and getOutbounds skips
+// an inbound whose out_json is empty.
+func snellOut(out *map[string]interface{}, inbound map[string]interface{}) {
+	version, _ := inbound["version"].(float64)
+	if int(version) != 6 {
+		for key := range *out {
+			delete(*out, key)
+		}
+		return
+	}
+	(*out)["version"] = 6
+	// snell has no TLS options on either side -- its outbound is dialer, server,
+	// psk, userkey, reuse and network -- so a tls block addTls left here would
+	// be an unknown field, and sing-box rejects the whole config over one of
+	// those, not just the outbound. Same for the v5-only obfs options, which a
+	// listener switched from v5 to v6 can still be carrying.
+	delete(*out, "tls")
+	delete(*out, "obfs_mode")
+	delete(*out, "obfs_host")
+
+	// The psk is shared by every client on the listener; the per-client userkey
+	// is folded in by the subscription from the client's own config.
+	if psk, ok := inbound["psk"]; ok {
+		(*out)["psk"] = psk
+	}
+	delete(*out, "mode")
+	if mode, ok := inbound["mode"]; ok {
+		(*out)["mode"] = mode
 	}
 }
 
