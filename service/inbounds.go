@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/shenaba/2s-ui/database"
@@ -273,13 +274,20 @@ func (s *InboundService) GetAllConfig(db *gorm.DB) ([]json.RawMessage, error) {
 
 func (s *InboundService) hasUser(inboundType string) bool {
 	switch inboundType {
-	case "mixed", "socks", "http", "shadowsocks", "vmess", "trojan", "naive", "hysteria", "shadowtls", "tuic", "hysteria2", "vless", "anytls":
+	case "mixed", "socks", "http", "shadowsocks", "snell", "vmess", "trojan", "naive", "hysteria", "shadowtls", "tuic", "hysteria2", "vless", "anytls":
 		return true
 	}
 	return false
 }
 
-func (s *InboundService) fetchUsers(db *gorm.DB, inboundType string, condition string, inbound map[string]interface{}) ([]json.RawMessage, error) {
+// fetchUsers collects the per-client config for one inbound type. condition is
+// a WHERE fragment and args are its placeholders -- callers must not build
+// values into the fragment, since one of them comes from a request.
+//
+// inboundType is still interpolated, and safely: it is one of the literals in
+// hasUser or one of the two ShadowsocksClientConfigKey returns, never anything
+// from a request. It has to be, since it names a JSON path rather than a value.
+func (s *InboundService) fetchUsers(db *gorm.DB, inboundType string, condition string, inbound map[string]interface{}, args ...any) ([]json.RawMessage, error) {
 	if inboundType == "shadowtls" {
 		version, _ := inbound["version"].(float64)
 		if int(version) < 3 {
@@ -293,10 +301,17 @@ func (s *InboundService) fetchUsers(db *gorm.DB, inboundType string, condition s
 
 	var users []string
 
+	// IS NOT NULL is load-bearing, not tidiness: json_extract returns NULL for a
+	// client whose config predates the protocol, and Scan into []string fails
+	// the whole query on it ("converting NULL to string is unsupported") rather
+	// than skipping the row. Every existing client is one of those the moment a
+	// protocol is added to hasUser, so without this the first inbound of a new
+	// type silently comes up with no users at all.
 	err := db.Raw(
 		fmt.Sprintf(`SELECT json_extract(clients.config, "$.%s")
-		FROM clients WHERE enable = true AND %s`,
-			inboundType, condition)).Scan(&users).Error
+		FROM clients WHERE enable = true AND %s
+		AND json_extract(clients.config, "$.%s") IS NOT NULL`,
+			inboundType, condition, inboundType), args...).Scan(&users).Error
 	if err != nil {
 		return nil, err
 	}
@@ -313,6 +328,12 @@ func (s *InboundService) fetchUsers(db *gorm.DB, inboundType string, condition s
 
 	var usersJson []json.RawMessage
 	for _, user := range users {
+		// The query already drops a missing key; this catches a config that
+		// stores the key as an empty string. An empty RawMessage is not valid
+		// JSON and would fail the whole inbound's marshal.
+		if user == "" {
+			continue
+		}
 		if stripVision {
 			user = strings.ReplaceAll(user, "xtls-rprx-vision", "")
 		}
@@ -332,8 +353,8 @@ func (s *InboundService) addUsers(db *gorm.DB, inboundJson []byte, inboundId uin
 		return nil, err
 	}
 
-	condition := fmt.Sprintf("%d IN (SELECT json_each.value FROM json_each(clients.inbounds))", inboundId)
-	inbound["users"], err = s.fetchUsers(db, inboundType, condition, inbound)
+	const condition = "? IN (SELECT json_each.value FROM json_each(clients.inbounds))"
+	inbound["users"], err = s.fetchUsers(db, inboundType, condition, inbound, inboundId)
 	if err != nil {
 		return nil, err
 	}
@@ -341,8 +362,35 @@ func (s *InboundService) addUsers(db *gorm.DB, inboundJson []byte, inboundId uin
 	return json.Marshal(inbound)
 }
 
+// parseClientIds turns the comma-separated `initUsers` request field into ids
+// the query can be given as placeholders.
+//
+// It used to be split on commas and joined straight back -- a round trip that
+// changed nothing -- and the result was formatted into the WHERE clause, so the
+// field reached SQLite verbatim. An empty field is normal and means "no users
+// yet"; anything else that is not a number is a caller that has gone wrong, and
+// is reported rather than dropped.
+func parseClientIds(raw string) ([]uint, error) {
+	var ids []uint
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		id, err := strconv.ParseUint(part, 10, 32)
+		if err != nil {
+			return nil, common.NewErrorf("invalid client id %q", part)
+		}
+		ids = append(ids, uint(id))
+	}
+	return ids, nil
+}
+
 func (s *InboundService) initUsers(db *gorm.DB, inboundJson []byte, clientIds string, inboundType string) ([]byte, error) {
-	ClientIds := strings.Split(clientIds, ",")
+	ClientIds, err := parseClientIds(clientIds)
+	if err != nil {
+		return nil, err
+	}
 	if len(ClientIds) == 0 {
 		return inboundJson, nil
 	}
@@ -352,13 +400,11 @@ func (s *InboundService) initUsers(db *gorm.DB, inboundJson []byte, clientIds st
 	}
 
 	var inbound map[string]interface{}
-	err := json.Unmarshal(inboundJson, &inbound)
-	if err != nil {
+	if err = json.Unmarshal(inboundJson, &inbound); err != nil {
 		return nil, err
 	}
 
-	condition := fmt.Sprintf("id IN (%s)", strings.Join(ClientIds, ","))
-	inbound["users"], err = s.fetchUsers(db, inboundType, condition, inbound)
+	inbound["users"], err = s.fetchUsers(db, inboundType, "id IN ?", inbound, ClientIds)
 	if err != nil {
 		return nil, err
 	}
