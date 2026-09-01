@@ -18,8 +18,10 @@ const migratedKeyHTTPClientFix = "migratedHTTPClientFix"
 //
 //   - disable_empty_direct_check, which is an internal flag with no JSON field
 //     of its own. sing-box rejects the whole config over the unknown key.
-//   - a detour to `direct`, which sing-box refuses as pointless because it
-//     dials exactly what it would have dialled anyway.
+//   - a detour to an optionless direct outbound, which sing-box refuses as
+//     pointless because it dials exactly what it would have dialled anyway. A
+//     direct outbound that carries dialer options is not one of those and keeps
+//     its detour.
 //
 // Both come from an earlier rewrite of the deprecated download_detour option,
 // which set the internal flag rather than exposing it.
@@ -68,7 +70,13 @@ func repairRuleSetHTTPClientsIn(tx *gorm.DB) (int, error) {
 		return 0, nil
 	}
 
-	changed := repairRuleSetList(route)
+	// A failed read stops the migration and, through InitDB, the panel -- same
+	// as every other read in these migrations. See migrateSingBox114Config.
+	noopDetours, err := plainDirectOutboundTags(tx)
+	if err != nil {
+		return 0, err
+	}
+	changed := repairRuleSetList(route, noopDetours)
 	if changed == 0 {
 		return 0, nil
 	}
@@ -89,7 +97,11 @@ func repairRuleSetHTTPClientsIn(tx *gorm.DB) (int, error) {
 	return changed, nil
 }
 
-func repairRuleSetList(route map[string]any) int {
+// repairRuleSetList strips the two options sing-box cannot parse. noopDetours
+// names the direct outbounds a detour must not point at -- see
+// plainDirectOutboundTags; matching the literal tag "direct" would also strip a
+// detour to a direct outbound that carries real dialer options.
+func repairRuleSetList(route map[string]any, noopDetours map[string]struct{}) int {
 	ruleSets, ok := route["rule_set"].([]any)
 	if !ok {
 		return 0
@@ -109,9 +121,11 @@ func repairRuleSetList(route map[string]any) int {
 			delete(httpClient, "disable_empty_direct_check")
 			fixed = true
 		}
-		if detour, isString := httpClient["detour"].(string); isString && detour == "direct" {
-			delete(httpClient, "detour")
-			fixed = true
+		if detour, isString := httpClient["detour"].(string); isString {
+			if _, noop := noopDetours[detour]; noop {
+				delete(httpClient, "detour")
+				fixed = true
+			}
 		}
 		if !fixed {
 			continue

@@ -3,6 +3,7 @@ package database
 import (
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/shenaba/2s-ui/database/model"
@@ -25,7 +26,9 @@ func openTestDB(t *testing.T) {
 			t.Errorf("close test db: %v", err)
 		}
 	})
-	if err := db.AutoMigrate(&model.Setting{}, &model.Tls{}); err != nil {
+	// Outbound is here because the rule-set migrations resolve a download
+	// detour against the outbound it names before deciding to drop it.
+	if err := db.AutoMigrate(&model.Setting{}, &model.Tls{}, &model.Outbound{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -68,6 +71,13 @@ func TestMigrateSingBox114Config(t *testing.T) {
 		}
 	}`
 	if err := db.Create(&model.Setting{Key: "config", Value: legacy}).Error; err != nil {
+		t.Fatal(err)
+	}
+	// The detour named "direct" is dropped because this outbound carries no
+	// options, not because of what it is called.
+	if err := db.Create(&model.Outbound{
+		Type: "direct", Tag: "direct", Options: json.RawMessage(`{}`),
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -208,5 +218,92 @@ func TestMigrateSingBox114Idempotent(t *testing.T) {
 	}
 	if setting.Value != clean {
 		t.Errorf("config with nothing to migrate was rewritten:\n got %s\nwant %s", setting.Value, clean)
+	}
+}
+
+// A direct outbound that carries dialer options is a real routing choice, so
+// the detour to it has to survive. Only an optionless one is the no-op sing-box
+// refuses a detour to.
+func TestMigrateSingBox114KeepsConfiguredDirectDetour(t *testing.T) {
+	openTestDB(t)
+	legacy := `{"route": {"rule_set": [
+		{"type": "remote", "tag": "a", "url": "https://e.com/a.srs", "download_detour": "direct"},
+		{"type": "remote", "tag": "b", "url": "https://e.com/b.srs", "download_detour": "direct-plain"}
+	]}}`
+	if err := db.Create(&model.Setting{Key: "config", Value: legacy}).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, outbound := range []model.Outbound{
+		{Type: "direct", Tag: "direct", Options: json.RawMessage(`{"bind_interface":"eth1"}`)},
+		{Type: "direct", Tag: "direct-plain", Options: json.RawMessage(`{}`)},
+	} {
+		if err := db.Create(&outbound).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := migrateSingBox114(); err != nil {
+		t.Fatal(err)
+	}
+
+	ruleSets, ok := section(t, readConfig(t), "route")["rule_set"].([]any)
+	if !ok || len(ruleSets) != 2 {
+		t.Fatalf("expected 2 rule sets, got %v", ruleSets)
+	}
+	configured, _ := ruleSets[0].(map[string]any)
+	httpClient, isObject := configured["http_client"].(map[string]any)
+	if !isObject {
+		t.Fatalf("a direct outbound with dialer options must keep its detour, got %v", configured)
+	}
+	if httpClient["detour"] != "direct" {
+		t.Errorf("unexpected http_client: %v", httpClient)
+	}
+	plain, _ := ruleSets[1].(map[string]any)
+	if _, hasClient := plain["http_client"]; hasClient {
+		t.Errorf("an optionless direct outbound is a no-op detour, got %v", plain)
+	}
+}
+
+// A database read that fails must stop the migration and, through InitDB, the
+// panel: it should say it cannot read its own tables rather than come up having
+// quietly skipped an upgrade step. This is also what upstream s-ui does, and
+// what every other read in these five migrations does.
+//
+// The scenario is not hypothetical -- a row whose options column had been
+// written as TEXT rather than BLOB crash-looped a real install nine times, and
+// the log line above is what said why. Normal panel writes are always BLOB;
+// TEXT only comes from editing the database by hand or importing one.
+func TestMigrateSingBox114FailsOnUnreadableOutbounds(t *testing.T) {
+	openTestDB(t)
+	legacy := `{"dns": {"independent_cache": true},
+		"route": {"rule_set": [
+			{"type": "remote", "tag": "a", "url": "https://e.com/a.srs", "download_detour": "direct"}
+		]}}`
+	if err := db.Create(&model.Setting{Key: "config", Value: legacy}).Error; err != nil {
+		t.Fatal(err)
+	}
+	// json.RawMessage has no Scanner, so a TEXT value fails the row scan.
+	if err := db.Exec(
+		`INSERT INTO outbounds (type, tag, options) VALUES ('direct','direct',?)`, "{}",
+	).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	err := migrateSingBox114()
+	if err == nil {
+		t.Fatal("an unreadable outbounds table must fail the migration, not be skipped")
+	}
+	if !strings.Contains(err.Error(), "unsupported Scan") {
+		t.Errorf("expected the scan failure to be reported as-is, got %v", err)
+	}
+
+	// Nothing was written: the migration runs in a transaction, so a failure
+	// leaves the config exactly as it was rather than half-migrated.
+	if _, ok := section(t, readConfig(t), "dns")["independent_cache"]; !ok {
+		t.Error("a failed migration must not leave a partly-rewritten config")
+	}
+	var flag model.Setting
+	if err := db.Where("key = ?", migratedKeySingBox114).First(&flag).Error; err == nil {
+		t.Error("a failed migration must not mark itself done")
 	}
 }

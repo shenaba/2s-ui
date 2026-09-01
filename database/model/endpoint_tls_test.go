@@ -303,3 +303,32 @@ func mustProject(t *testing.T, endpointType string, tlsConfig *Tls) json.RawMess
 	}
 	return projected
 }
+
+// A referenced config that projects to nothing must not take the inline block
+// down with it. Silently dropping it hands sing-box an endpoint with no TLS at
+// all and no trace of what was meant; leaving it is either right, or a loud
+// failure the operator can act on.
+func TestEndpointMarshalKeepsInlineTLSWhenProjectionIsEmpty(t *testing.T) {
+	endpoint := Endpoint{
+		Type: "openvpn-server",
+		Tag:  "ovpn",
+		// Client-only config: an openvpn-server reads the server side, which
+		// this one does not have, so the projection comes back empty.
+		TlsId:   1,
+		Tls:     &Tls{Client: json.RawMessage(`{"enabled": true, "server_name": "vpn.example.com"}`)},
+		Options: json.RawMessage(`{"listen":"::","listen_port":1194,"tls":{"certificate_path":"/inline.pem"}}`),
+	}
+
+	raw, err := endpoint.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := decode(t, raw)
+	tlsBlock, ok := got["tls"].(map[string]any)
+	if !ok {
+		t.Fatalf("the inline tls block must survive an empty projection, got %v", got)
+	}
+	if tlsBlock["certificate_path"] != "/inline.pem" {
+		t.Errorf("inline tls must be untouched, got %v", tlsBlock)
+	}
+}

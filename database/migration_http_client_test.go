@@ -1,6 +1,7 @@
 package database
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/shenaba/2s-ui/database/model"
@@ -39,6 +40,13 @@ func TestRepairRuleSetHTTPClients(t *testing.T) {
 		}
 	}`
 	if err := db.Create(&model.Setting{Key: "config", Value: broken}).Error; err != nil {
+		t.Fatal(err)
+	}
+	// "direct" is dropped because this outbound carries no options of its own,
+	// not because of what it is called.
+	if err := db.Create(&model.Outbound{
+		Type: "direct", Tag: "direct", Options: json.RawMessage(`{}`),
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -99,5 +107,41 @@ func TestRepairRuleSetHTTPClientsRunsOnce(t *testing.T) {
 	sets := ruleSets(t, readConfig(t))
 	if _, ok := sets[0]["http_client"]; !ok {
 		t.Error("the repair should not run a second time")
+	}
+}
+
+// Only an optionless direct outbound is the no-op sing-box refuses a detour to.
+// One carrying dialer options is a routing choice, and stripping it would take
+// rule-set downloads off the interface the operator put them on.
+func TestRepairRuleSetHTTPClientsKeepsConfiguredDirect(t *testing.T) {
+	openTestDB(t)
+	config := `{"route": {"rule_set": [
+		{"type": "remote", "tag": "a", "url": "https://e.com/a.srs",
+		 "http_client": {"detour": "direct", "disable_empty_direct_check": true}}
+	]}}`
+	if err := db.Create(&model.Setting{Key: "config", Value: config}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Outbound{
+		Type: "direct", Tag: "direct", Options: json.RawMessage(`{"bind_interface":"eth1"}`),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repairRuleSetHTTPClients(); err != nil {
+		t.Fatal(err)
+	}
+
+	sets := ruleSets(t, readConfig(t))
+	httpClient, ok := sets[0]["http_client"].(map[string]any)
+	if !ok {
+		t.Fatalf("the detour must survive, got %v", sets[0])
+	}
+	if httpClient["detour"] != "direct" {
+		t.Errorf("unexpected http_client: %v", httpClient)
+	}
+	// The unparseable flag still goes, whatever the detour turned out to be.
+	if _, present := httpClient["disable_empty_direct_check"]; present {
+		t.Errorf("the unparseable flag must be gone, got %v", httpClient)
 	}
 }

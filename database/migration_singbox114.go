@@ -72,6 +72,17 @@ func migrateSingBox114Config(tx *gorm.DB) (int, error) {
 		return 0, nil
 	}
 
+	// A database read that fails stops the migration, and InitDB passes that up
+	// so the panel does not start. That is deliberate and it is what every
+	// other read in these five migrations does: a panel that cannot read its
+	// own tables should say so rather than come up having quietly skipped an
+	// upgrade step. A malformed *value* is different -- those are logged and
+	// skipped above, since one unreadable config should not hold the rest back.
+	noopDetours, err := plainDirectOutboundTags(tx)
+	if err != nil {
+		return 0, err
+	}
+
 	changed := 0
 	sections := []struct {
 		key     string
@@ -79,7 +90,7 @@ func migrateSingBox114Config(tx *gorm.DB) (int, error) {
 	}{
 		{"dns", migrateDNSSection},
 		{"experimental", migrateExperimentalSection},
-		{"route", migrateRouteSection},
+		{"route", func(route map[string]any) int { return migrateRouteSection(route, noopDetours) }},
 	}
 	for _, section := range sections {
 		if err = migrateSection(root, section.key, section.migrate, &changed); err != nil {
@@ -154,12 +165,14 @@ func migrateExperimentalSection(experimental map[string]any) int {
 // migrateRouteSection converts each remote rule-set's download_detour into the
 // equivalent http_client.
 //
-// A detour to `direct` is the one case that does not carry over as a detour:
-// download_detour set the internal disable_empty_direct_check flag, which has
-// no JSON field of its own, and without it sing-box rejects a detour to an
-// empty direct outbound as pointless. Downloading over the default outbound is
-// what that detour meant anyway, so the field is simply dropped.
-func migrateRouteSection(route map[string]any) int {
+// A detour to an optionless direct outbound is the one case that does not carry
+// over as a detour: download_detour set the internal disable_empty_direct_check
+// flag, which has no JSON field of its own, and without it sing-box rejects
+// such a detour as pointless. Downloading over the default outbound is what it
+// meant anyway, so the field is dropped -- but only for the outbounds
+// noopDetours actually names, not for anything tagged "direct". One carrying
+// bind_interface or a domain_resolver is a real routing choice.
+func migrateRouteSection(route map[string]any, noopDetours map[string]struct{}) int {
 	ruleSets, ok := route["rule_set"].([]any)
 	if !ok {
 		return 0
@@ -181,7 +194,7 @@ func migrateRouteSection(route map[string]any) int {
 			changed++
 			continue
 		}
-		if detour != "" && detour != "direct" {
+		if _, noop := noopDetours[detour]; detour != "" && !noop {
 			ruleSet["http_client"] = map[string]any{"detour": detour}
 		}
 		changed++
@@ -260,8 +273,9 @@ func reportSingBox114Manual() {
 	}
 	if addressFilter > 0 {
 		log.Printf("sing-box 1.14: %d DNS rule(s) use legacy address filters (ip_cidr, ip_is_private, "+
-			"ip_accept_any or an IP rule-set). They still work but are removed in 1.16; migrate them to "+
-			"match_response: https://sing-box.sagernet.org/migration/#migrate-address-filter-fields-to-response-matching",
+			"ip_accept_any, rule_set_ip_cidr_accept_empty). They still work but are removed in 1.16; migrate "+
+			"them to match_response: https://sing-box.sagernet.org/migration/#migrate-address-filter-fields-to-response-matching. "+
+			"A rule_set holding ip_cidr rules counts too, but only the set itself says whether it does, so it is not counted here",
 			addressFilter)
 	}
 	if strategy > 0 {
@@ -274,11 +288,18 @@ func reportSingBox114Manual() {
 
 // dnsRuleUsesAddressFilter reports whether a DNS rule matches on the resolved
 // address without opting into response matching.
+//
+// rule_set is deliberately not one of the fields checked. On a DNS rule it is
+// almost always a domain set (geosite), and only an IP set counts as an address
+// filter -- which cannot be told apart from the tag, since the rules live in the
+// set, not in the config. Counting every rule_set made the warning fire on
+// essentially every configured panel, on every start, about rules that need no
+// migration; the message says what is not covered instead.
 func dnsRuleUsesAddressFilter(rule map[string]any) bool {
 	if matchResponse, ok := rule["match_response"].(bool); ok && matchResponse {
 		return false
 	}
-	for _, field := range []string{"ip_cidr", "rule_set", "ip_is_private", "ip_accept_any", "rule_set_ip_cidr_accept_empty"} {
+	for _, field := range []string{"ip_cidr", "ip_is_private", "ip_accept_any", "rule_set_ip_cidr_accept_empty"} {
 		value, ok := rule[field]
 		if !ok {
 			continue
