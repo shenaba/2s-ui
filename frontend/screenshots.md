@@ -32,3 +32,6 @@
 
 ### Settings — Interface
 ![settings-interface](./media/settings-interface.png "settings-interface")
+
+### Telegram Bot
+<img src="./media/tgbot.jpg" width="360" alt="telegram-bot">

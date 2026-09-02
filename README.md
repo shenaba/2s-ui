@@ -33,6 +33,12 @@
   ([details](#multi-node-cluster)).
 - **Automatic HTTPS** — Let's Encrypt issuance and renewal, plus an automatic
   nginx reverse proxy ([details](#domains--certificates)).
+- **Notifications** — node, core, outbound, client, resource and login events
+  pushed to Telegram, a webhook or e-mail, plus a Telegram bot that runs the
+  panel from a phone ([details](#notifications--telegram-bot)).
+- **Login protection** — persistent failure rate limiting, TOTP two-factor
+  authentication, and every session retired on a credential change
+  ([details](#login-protection)).
 - **One-click updates** — in-place upgrades from the panel, checksum-verified.
 - **Rebuilt interface** — a from-scratch frontend, hand-built components, dark
   and light themes, six languages including RTL.
@@ -42,14 +48,19 @@
 
 - General: Mixed, SOCKS, HTTP/HTTPS, Direct, Tun, Redirect, TProxy
 - V2Ray based: VLESS, VMess, Trojan, Shadowsocks (incl. `plugin` / `plugin_opts`)
-- Other protocols: ShadowTLS, Hysteria, Hysteria2, Naive¹, TUIC, AnyTLS
-- Outbound only: Tor, SSH, Selector, URLTest
-- Endpoints: WireGuard, WARP, Tailscale — with a latency test per endpoint or for all at once
+- Other protocols: ShadowTLS, Hysteria, Hysteria2, Naive¹, TUIC, AnyTLS, Snell²
+- Inbound only: Cloudflared
+- Outbound only: Tor, SSH, Bridge, Selector, URLTest
+- Endpoints: WireGuard, WARP, Tailscale, OpenConnect, OpenVPN — with a latency test per endpoint or for all at once
 - XTLS is supported, and Hysteria port hopping is available on the outbound form
 
 <sup>1</sup> Naive needs the cronet toolchain, which does not build everywhere: official Linux
 releases ship it on amd64, arm64, armv7 and 386 only. On armv6, armv5 and s390x a Naive
 outbound reports that the binary was built without it.
+
+<sup>2</sup> sing-box's Snell inbound speaks v5 and v6 while its outbound speaks v4 and v6, so
+only a v6 listener gets a generated client config; a v5 listener is for clients configured by
+hand (Surge).
 
 </details>
 
@@ -323,6 +334,59 @@ with nginx's own error message if anything fails. The subscription server can
 sit behind the same proxy.
 
 </details>
+
+## Notifications & Telegram Bot
+
+Everything lives in the **Notifications** tab of Panel Settings. Turn it on,
+pick the events, and give it at least one channel:
+
+- **Telegram** — a bot token and one or more chat IDs, optionally through a
+  proxy or a self-hosted Bot API server.
+- **Webhook** — every event delivered to a URL of your own.
+- **E-mail** — plain SMTP.
+
+Each channel has its own queue, so one that hangs cannot hold up the others.
+The events: a node or the sing-box core going down or coming back, an outbound
+failing its probe URL, a client running out of traffic or nearing expiry, CPU
+or memory over a threshold, and logins — successful, failed and banned. The
+thresholds, and how many failed probes make a node count as down, are settings
+on the same tab; a condition that keeps repeating is reported once and then
+not again for 24 hours. A scheduled report (cron or `@daily`) summarises the
+panel, optionally with a database backup attached.
+
+**Telegram bot**, on the same tab, turns those chat IDs into admin chats that
+run the panel from a phone: `/status`, `/nodes`, `/clients` (those nearing a
+limit, or `/clients <name>` to search), `/online`, `/traffic` for the last 24
+hours, `/inbounds`, `/bans` and `/backup`. From a client card the operator can
+hand out the subscription or a single inbound's link, as text and as a QR
+code, and bind the client to a Telegram account by picking the contact. A
+bound client can then ask the bot for their own usage and links, in their own
+language, and is told directly when their subscription is about to run out —
+a different message from the operator's, with no panel hostname on it. Anyone
+else gets `/id` (their own Telegram ID, for the operator to bind) and nothing
+that says which panel is behind the bot.
+
+<img src="frontend/media/tgbot.jpg" width="360" alt="Telegram bot">
+
+## Login Protection
+
+Three things guard the login, all on by default:
+
+- **Rate limiting** — five failures within five minutes lock an identity out
+  for fifteen, counted against both the source IP and the username, so
+  spreading attempts across either buys no fresh budget. The state is in the
+  database, so a restart does not clear a lockout. The three numbers are on
+  the **Interface** tab of Panel Settings; `0` in any of them disables it.
+  Behind a reverse proxy the panel takes the client address from
+  `X-Forwarded-For` only when its reverse-proxy mode is on — otherwise every
+  attempt would be attributed to the proxy and share one budget.
+- **Two-factor authentication** — TOTP, compatible with any authenticator
+  app. Enable it from the shield icon on the **Admins** page. The secret is
+  stored only once a code from it has been verified, so an abandoned enrolment
+  cannot lock you out; if the authenticator itself is lost, `sui admin
+  -disable-2fa` on the host turns it off.
+- **Session invalidation** — changing a password or username retires every
+  session issued before it, including open WebSocket connections.
 
 ## Contributing
 
