@@ -28,6 +28,10 @@
   （[詳見下文](#多節點叢集)）。
 - **HTTPS 自動化** —— Let's Encrypt 自動簽發與續期，以及自動產生的 nginx 反向代理
   （[詳見下文](#網域與憑證)）。
+- **通知** —— 節點、核心、出站、用戶端、資源與登入事件推送到 Telegram、webhook 或郵件，
+  外加一個可以在手機上操作面板的 Telegram 機器人（[詳見下文](#通知與-telegram-機器人)）。
+- **登入防護** —— 落庫的失敗次數限速、TOTP 兩步驟驗證，以及改憑證後作廢所有已簽發的工作階段
+  （[詳見下文](#登入防護)）。
 - **一鍵更新** —— 面板內原地升級，帶總和檢查碼驗證。
 - **全新介面** —— 從零重寫的前端、自研元件、深淺雙佈景主題、六種語言（含 RTL）。
 
@@ -36,14 +40,18 @@
 
 - 通用協定：Mixed, SOCKS, HTTP/HTTPS, Direct, Tun, Redirect, TProxy
 - V2Ray 系列：VLESS, VMess, Trojan, Shadowsocks（支援 `plugin` / `plugin_opts`）
-- 其他協定：ShadowTLS, Hysteria, Hysteria2, Naive¹, TUIC, AnyTLS
-- 僅出站：Tor, SSH, Selector, URLTest
-- Endpoints：WireGuard、WARP、Tailscale——可單獨測延遲，也可一鍵測全部
+- 其他協定：ShadowTLS, Hysteria, Hysteria2, Naive¹, TUIC, AnyTLS, Snell²
+- 僅入站：Cloudflared
+- 僅出站：Tor, SSH, Bridge, Selector, URLTest
+- Endpoints：WireGuard、WARP、Tailscale、OpenConnect、OpenVPN——可單獨測延遲，也可一鍵測全部
 - 支援 XTLS 協定，出站表單支援 Hysteria 連接埠跳躍
 
 <sup>1</sup> Naive 依賴 cronet 工具鏈，並非所有平台都能編譯：官方 Linux 發佈版只在
 amd64、arm64、armv7 與 386 上帶這個協定。在 armv6、armv5、s390x 上使用 Naive 出站會提示
 該執行檔未編譯此協定。
+
+<sup>2</sup> sing-box 的 Snell 入站只支援 v5 和 v6，出站只支援 v4 和 v6，所以只有 v6 監聽會產生
+用戶端設定；v5 監聽面向手動設定的用戶端（Surge）。
 
 </details>
 
@@ -296,6 +304,43 @@ certbot certonly --standalone --register-unsafely-without-email --non-interactiv
 服務也可以放在同一個反向代理後方。
 
 </details>
+
+## 通知與 Telegram 機器人
+
+所有設定都在面板設定的 **通知** 分頁裡。打開開關、勾選事件，再至少設定一個管道：
+
+- **Telegram** —— 一個 bot token 和一個或多個 chat ID，可選擇走代理或自建的 Bot API 伺服器。
+- **Webhook** —— 每個事件投遞到你自己的 URL。
+- **郵件** —— 一般 SMTP。
+
+每個管道有自己的佇列，一個卡住不會拖累其他的。事件包括：節點或 sing-box 核心斷線與恢復、
+出站探測 URL 失敗、用戶端流量耗盡或即將到期、CPU 或記憶體超過閾值，以及登入——成功、失敗
+和被封鎖。閾值和「連續幾次探測失敗算斷線」都是同一分頁裡的設定；持續重複的狀況只報一次，
+之後 24 小時內不再重複。排程報告（cron 或 `@daily`）彙整面板狀態，可附上一份資料庫備份。
+
+同一分頁裡的 **Telegram 機器人** 開關把上面的 chat ID 變成管理員對話，可以在手機上操作
+面板：`/status`、`/nodes`、`/clients`（接近限額的用戶端，或 `/clients <名稱>` 搜尋）、
+`/online`、`/traffic`（最近 24 小時）、`/inbounds`、`/bans` 和 `/backup`。在用戶端卡片上，
+管理員可以把訂閱或某個入站的連結以文字和 QR code 兩種形式送出，也可以直接從聯絡人裡選人
+完成 Telegram 綁定。綁定後的用戶可以向機器人查自己的用量和連結（用他自己的語言），訂閱
+快用完時會直接收到通知——跟管理員收到的不是同一則訊息，也不帶面板主機名稱。其他任何人
+只能得到 `/id`（自己的 Telegram ID，供管理員綁定用），看不到任何暴露面板身分的資訊。
+
+<img src="frontend/media/tgbot.jpg" width="360" alt="Telegram 機器人">
+
+## 登入防護
+
+三道防線，預設全部開啟：
+
+- **限速** —— 五分鐘內失敗五次，該身分鎖定十五分鐘；按來源 IP 和使用者名稱雙軸計數，換哪一邊
+  都換不來新額度。狀態存在資料庫裡，重新啟動不會清除鎖定。三個數值在面板設定的 **介面**
+  分頁裡，任一設為 `0` 即關閉。經反向代理時，面板只在反向代理模式開啟後才從
+  `X-Forwarded-For` 取用戶端位址——否則所有嘗試都會算到代理頭上、共用一份額度。
+- **兩步驟驗證** —— TOTP，相容任何驗證器 App。在 **管理員** 頁面的盾牌圖示處開啟。金鑰只在
+  用它產生的驗證碼通過檢查後才會儲存，所以中途放棄的綁定不會把你鎖在門外；驗證器本身遺失，
+  在主機上執行 `sui admin -disable-2fa` 關閉它。
+- **工作階段作廢** —— 修改密碼或使用者名稱會讓之前簽發的所有工作階段失效，包括已開啟的
+  WebSocket 連線。
 
 ## 參與貢獻
 

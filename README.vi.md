@@ -33,6 +33,12 @@
   gộp máy chủ của chúng vào cùng một subscription ([chi tiết](#cụm-đa-node)).
 - **HTTPS tự động** — cấp phát và gia hạn chứng chỉ Let's Encrypt, kèm reverse
   proxy nginx tự động ([chi tiết](#tên-miền-và-chứng-chỉ)).
+- **Thông báo** — sự kiện về node, core, outbound, client, tài nguyên và đăng nhập được
+  đẩy tới Telegram, webhook hoặc e-mail, kèm một Telegram bot để điều khiển bảng từ điện
+  thoại ([chi tiết](#thông-báo-và-telegram-bot)).
+- **Bảo vệ đăng nhập** — giới hạn số lần đăng nhập thất bại (lưu trong CSDL), xác thực
+  hai yếu tố TOTP, và huỷ mọi phiên khi đổi thông tin đăng nhập
+  ([chi tiết](#bảo-vệ-đăng-nhập)).
 - **Cập nhật một cú nhấp** — nâng cấp tại chỗ ngay trong bảng điều khiển, có xác
   thực checksum.
 - **Giao diện viết mới** — frontend viết lại từ đầu, component tự dựng, chế độ
@@ -43,14 +49,18 @@
 
 - Chung: Mixed, SOCKS, HTTP/HTTPS, Direct, Tun, Redirect, TProxy
 - Dựa trên V2Ray: VLESS, VMess, Trojan, Shadowsocks (kèm `plugin` / `plugin_opts`)
-- Các giao thức khác: ShadowTLS, Hysteria, Hysteria2, Naive¹, TUIC, AnyTLS
-- Chỉ outbound: Tor, SSH, Selector, URLTest
-- Endpoints: WireGuard, WARP, Tailscale — có kiểm tra độ trễ cho từng endpoint hoặc cho tất cả cùng lúc
+- Các giao thức khác: ShadowTLS, Hysteria, Hysteria2, Naive¹, TUIC, AnyTLS, Snell²
+- Chỉ inbound: Cloudflared
+- Chỉ outbound: Tor, SSH, Bridge, Selector, URLTest
+- Endpoints: WireGuard, WARP, Tailscale, OpenConnect, OpenVPN — có kiểm tra độ trễ cho từng endpoint hoặc cho tất cả cùng lúc
 - Hỗ trợ XTLS, và form outbound có Hysteria port hopping
 
 <sup>1</sup> Naive cần bộ công cụ cronet, vốn không build được ở mọi nơi: các bản phát hành
 Linux chính thức chỉ kèm nó trên amd64, arm64, armv7 và 386. Trên armv6, armv5 và s390x, một
 outbound Naive sẽ báo rằng binary được build mà không có nó.
+
+<sup>2</sup> Inbound Snell của sing-box nói v5 và v6 còn outbound nói v4 và v6, nên chỉ listener v6
+mới được sinh cấu hình client; listener v5 dành cho client cấu hình bằng tay (Surge).
 
 </details>
 
@@ -320,6 +330,52 @@ thông báo lỗi của nginx nếu có bước nào thất bại. Máy chủ su
 cùng một proxy.
 
 </details>
+
+## Thông báo và Telegram bot
+
+Mọi thứ nằm trong tab **Thông báo** của Cài đặt bảng. Bật lên, chọn sự kiện và cấp ít
+nhất một kênh:
+
+- **Telegram** — một bot token và một hoặc nhiều chat ID, tuỳ chọn qua proxy hoặc Bot API
+  server tự dựng.
+- **Webhook** — mỗi sự kiện được gửi tới URL của bạn.
+- **E-mail** — SMTP thông thường.
+
+Mỗi kênh có hàng đợi riêng, nên một kênh treo không chặn các kênh khác. Các sự kiện: node
+hoặc core sing-box sập hay hồi phục, outbound không qua được URL thăm dò, client hết lưu
+lượng hoặc sắp hết hạn, CPU hay bộ nhớ vượt ngưỡng, và đăng nhập — thành công, thất bại
+và bị chặn. Các ngưỡng, cùng số lần thăm dò thất bại để coi node là sập, là cài đặt trên
+cùng tab; một tình trạng lặp lại chỉ được báo một lần rồi im trong 24 giờ. Báo cáo theo
+lịch (cron hoặc `@daily`) tóm tắt bảng, tuỳ chọn đính kèm bản sao lưu CSDL.
+
+**Telegram bot** trên cùng tab biến các chat ID đó thành chat quản trị điều khiển bảng từ
+điện thoại: `/status`, `/nodes`, `/clients` (những client sắp chạm giới hạn, hoặc
+`/clients <tên>` để tìm), `/online`, `/traffic` cho 24 giờ qua, `/inbounds`, `/bans` và
+`/backup`. Từ thẻ client, người vận hành có thể gửi subscription hoặc link của một inbound
+— dạng văn bản và mã QR — và gắn client với một tài khoản Telegram bằng cách chọn liên hệ.
+Client đã gắn có thể hỏi bot về mức dùng và link của chính mình, bằng ngôn ngữ của họ, và
+được báo trực tiếp khi subscription sắp hết — một thông điệp khác với của người vận hành,
+không kèm hostname của bảng. Bất kỳ ai khác chỉ nhận được `/id` (Telegram ID của họ, để
+người vận hành gắn) và không gì cho biết bảng nào đứng sau bot.
+
+<img src="frontend/media/tgbot.jpg" width="360" alt="Telegram bot">
+
+## Bảo vệ đăng nhập
+
+Ba lớp bảo vệ đăng nhập, mặc định đều bật:
+
+- **Giới hạn tần suất** — năm lần thất bại trong năm phút khoá danh tính đó mười lăm phút,
+  tính theo cả IP nguồn lẫn tên người dùng, nên đổi bên nào cũng không có thêm hạn mức.
+  Trạng thái lưu trong CSDL, khởi động lại không xoá khoá. Ba con số nằm ở tab **Giao diện**
+  của Cài đặt bảng; đặt `0` cho bất kỳ số nào sẽ tắt. Sau reverse proxy, bảng chỉ lấy địa
+  chỉ client từ `X-Forwarded-For` khi chế độ reverse proxy được bật — nếu không mọi lần thử
+  đều bị quy cho proxy và dùng chung một hạn mức.
+- **Xác thực hai yếu tố** — TOTP, tương thích mọi ứng dụng xác thực. Bật từ biểu tượng
+  chiếc khiên trên trang **Quản trị viên**. Bí mật chỉ được lưu sau khi một mã từ nó được
+  xác minh, nên đăng ký bỏ dở không thể khoá bạn ở ngoài; nếu mất chính ứng dụng xác thực,
+  chạy `sui admin -disable-2fa` trên máy chủ để tắt.
+- **Huỷ phiên** — đổi mật khẩu hoặc tên người dùng sẽ thu hồi mọi phiên cấp trước đó, kể
+  cả các kết nối WebSocket đang mở.
 
 ## Đóng góp
 
