@@ -818,7 +818,7 @@ export default {
     optimisticTimeout: "樂觀快取逾時",
     acceptSearchDomain: "接受搜尋網域",
     domainStrategy: "域名策略",
-    local: { preferGo: "優先使用 Go" },
+    local: { preferGo: "優先使用 Go", neighborDomain: "鄰居網域" },
     rule: {
       add: "添加 DNS 規則",
       title: "DNS 規則",
@@ -872,6 +872,8 @@ export default {
       defaultRm: "默認路由標記",
       defaultDns: "默認 DNS 解析器",
       autoBind: "自動綁定網卡",
+      findNeighbor: "探索鄰居裝置",
+      dhcpLeaseFiles: "DHCP 租約檔案",
     },
     exp: {
       storeFakeIp: "存儲假 IP",

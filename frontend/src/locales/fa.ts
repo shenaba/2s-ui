@@ -818,7 +818,7 @@ export default {
     optimisticTimeout: "مهلت خوش‌بینانه",
     acceptSearchDomain: "پذیرش دامنهٔ جستجو",
     domainStrategy: "استراتژی دامنه",
-    local: { preferGo: "ترجیح Go" },
+    local: { preferGo: "ترجیح Go", neighborDomain: "دامنهٔ همسایه" },
     rule: {
       add: "ایجاد قانون DNS",
       title: "قوانین DNS",
@@ -872,6 +872,8 @@ export default {
       defaultRm: "Routing Mark پیش‌فرض",
       defaultDns: "DNS پیش‌فرض",
       autoBind: "انتخاب اتوماتیک کارت شبکه",
+      findNeighbor: "یافتن همسایه‌ها",
+      dhcpLeaseFiles: "فایل‌های اجارهٔ DHCP",
     },
     exp: {
       storeFakeIp: "ذخیره آدرس‌های نامعتبر",

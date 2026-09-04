@@ -826,6 +826,7 @@ export default {
     domainStrategy: "Domain Strategy",
     local: {
       preferGo: "Prefer Go",
+      neighborDomain: "Neighbour domain",
     },
     rule: {
       add: "Add Dns Rule",
@@ -880,6 +881,8 @@ export default {
       defaultRm: "Default Routing Mark",
       defaultDns: "Default DNS Resolver",
       autoBind: "Auto Bind NIC",
+      findNeighbor: "Find neighbours",
+      dhcpLeaseFiles: "DHCP lease files",
     },
     exp: {
       storeFakeIp: "Store Fake IP",

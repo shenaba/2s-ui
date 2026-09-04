@@ -818,7 +818,7 @@ export default {
     optimisticTimeout: "Thời gian chờ lạc quan",
     acceptSearchDomain: "Chấp nhận search domain",
     domainStrategy: "Chiến lược Domain",
-    local: { preferGo: "Ưu tiên Go" },
+    local: { preferGo: "Ưu tiên Go", neighborDomain: "Miền lân cận" },
     rule: {
       add: "Thêm Quy tắc DNS",
       title: "Quy tắc DNS",
@@ -872,6 +872,8 @@ export default {
       defaultRm: "Đánh dấu Định tuyến Mặc định",
       defaultDns: "Máy chủ DNS Mặc định",
       autoBind: "Tự động Ràng buộc NIC",
+      findNeighbor: "Tìm thiết bị lân cận",
+      dhcpLeaseFiles: "Tệp lease DHCP",
     },
     exp: {
       storeFakeIp: "Lưu IP Giả mạo",
