@@ -760,7 +760,6 @@ export default {
     cacheCapacity: "Nội dung bộ nhớ",
     disableCache: "Vô hiệu hóa bộ nhớ đệm",
     disableExpire: "Vô hiệu hóa hệ thống",
-    independentCache: "Bộ nhớ rẽ",
     reverseMapping: "Màm mạng tên lập",
     domainStrategy: "Chiến lược Domain",
     local: { preferGo: "Ưu tiên Go" },
@@ -770,6 +769,8 @@ export default {
       inet4Range: "Dải CIDR IPv4",
       inet6Range: "Dải CIDR IPv6",
       acceptDefault: "Chấp nhận Mặc định",
+      legacyStrategy: "Không dùng nữa từ sing-box 1.14, bị xóa ở 1.16. Hãy tách quy tắc theo query_type.",
+      legacyStrategyConflict: "Một hành động quy tắc vẫn đặt strategy cũ trong khi quy tắc khác đặt ip_version hoặc query_type. sing-box 1.14 từ chối khởi động với tổ hợp này — hãy xóa strategy.",
       action: {
         title: "Hành động",
         route: "Định tuyến",

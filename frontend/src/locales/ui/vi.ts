@@ -153,7 +153,6 @@ export default {
   cacheCapacity: "Dung lượng bộ nhớ đệm",
   disableCache: "Tắt bộ nhớ đệm",
   disableExpire: "Tắt hết hạn",
-  independentCache: "Bộ nhớ đệm độc lập",
   reverseMapping: "Ánh xạ ngược",
   log: "Nhật ký",
   logLevel: "Mức",

@@ -766,7 +766,6 @@ export default {
     cacheCapacity: "Cache Capacity",
     disableCache: "Disable Cache",
     disableExpire: "Disable Expire",
-    independentCache: "Independent Cache",
     reverseMapping: "Reverse Mapping",
     domainStrategy: "Domain Strategy",
     local: {
@@ -778,6 +777,8 @@ export default {
       inet4Range: "IPv4 Range",
       inet6Range: "IPv6 Range",
       acceptDefault: "Accept Default Resolvers",
+      legacyStrategy: "Deprecated in sing-box 1.14, removed in 1.16. Split the rule by query_type instead.",
+      legacyStrategyConflict: "A rule action still sets the legacy strategy while another rule sets ip_version or query_type. sing-box 1.14 refuses to start on that combination — clear the strategy.",
       action: {
         title: "Action",
         route: "Route",

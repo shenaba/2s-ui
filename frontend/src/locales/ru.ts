@@ -761,7 +761,6 @@ export default {
     cacheCapacity: "Вместимость кэша",
     disableCache: "Отключить кэш",
     disableExpire: "Отключить истечение",
-    independentCache: "Независимый кэш",
     reverseMapping: "Обратное отображение",
     domainStrategy: "Стратегия домена",
     local: { preferGo: "Предпочитать Go" },
@@ -771,6 +770,8 @@ export default {
       inet4Range: "Диапазон IPv4",
       inet6Range: "Диапазон IPv6",
       acceptDefault: "Принять резолверы по умолчанию",
+      legacyStrategy: "Устарело в sing-box 1.14, удалено в 1.16. Вместо него разделяйте правило по query_type.",
+      legacyStrategyConflict: "Действие правила всё ещё задаёт устаревший strategy, а другое правило задаёт ip_version или query_type. sing-box 1.14 не запустится с таким сочетанием — очистите strategy.",
       action: {
         title: "Действие",
         route: "Маршрутизация",

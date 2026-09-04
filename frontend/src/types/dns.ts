@@ -68,6 +68,10 @@ interface generalDnsRule {
   invert: boolean
   action: 'route' | 'route-options' | 'reject' | 'predefined'
   server?: string
+  // Deprecated in sing-box 1.14, removed in 1.16, and rejected outright when
+  // the same config sets ip_version or query_type anywhere. Kept so a stored
+  // rule still round-trips and can be cleared; the drawer no longer offers it
+  // to a rule that has none.
   strategy?: string
   disable_cache?: boolean
   rewrite_ttl?: number
@@ -104,7 +108,7 @@ export interface logicalDnsRule extends generalDnsRule {
 export interface dnsRule extends generalDnsRule {
   inbound?: string[]
   ip_version?: 4 | 6
-  query_type?: string
+  query_type?: string[]
   network?: string[]
   auth_user?: string[]
   protocol?: string[]

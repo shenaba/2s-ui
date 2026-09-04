@@ -153,7 +153,6 @@ export default {
   cacheCapacity: "Cache capacity",
   disableCache: "Disable cache",
   disableExpire: "Disable expire",
-  independentCache: "Independent cache",
   reverseMapping: "Reverse mapping",
   log: "Log",
   logLevel: "Level",

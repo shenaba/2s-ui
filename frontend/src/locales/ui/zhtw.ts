@@ -153,7 +153,6 @@ export default {
   cacheCapacity: "快取容量",
   disableCache: "停用快取",
   disableExpire: "停用過期",
-  independentCache: "獨立快取",
   reverseMapping: "反向對應",
   log: "日誌",
   logLevel: "層級",

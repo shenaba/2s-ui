@@ -196,3 +196,44 @@ func TestConfigCompatClean(t *testing.T) {
 		})
 	}
 }
+
+// TestDNSLegacyStrategyConflict pins the one 1.14 DNS deprecation that is not a
+// warning: a legacy rule-action strategy in the same config as anything that
+// turns legacy DNS mode off -- here ip_version -- is refused outright, and the
+// panel retries a refused config every five seconds. Both halves are reachable
+// from the DNS rule drawer, so views/Dns.vue warns about the combination; this
+// is what says the condition it encodes is still the condition sing-box uses.
+func TestDNSLegacyStrategyConflict(t *testing.T) {
+	const config = `{
+		"log": {"level": "error"},
+		"dns": {
+			"servers": [{"type": "udp", "tag": "google", "server": "8.8.8.8"}],
+			"rules": [
+				{"domain": ["example.com"], "action": "route", "server": "google", "strategy": "ipv4_only"},
+				{"ip_version": 4, "action": "route", "server": "google"}
+			]
+		},
+		"outbounds": [{"type": "direct", "tag": "direct"}]
+	}`
+
+	ctx := Context(context.Background(), InboundRegistry(), OutboundRegistry(),
+		EndpointRegistry(), DNSTransportRegistry(), ServiceRegistry(), CertificateProviderRegistry())
+	ctx = service.ContextWith[deprecated.Manager](ctx, &collectManager{})
+
+	var opts option.Options
+	if err := opts.UnmarshalJSONContext(ctx, []byte(config)); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	instance, err := NewBox(Options{Context: ctx, Options: opts})
+	if err == nil {
+		err = instance.Start()
+		instance.Close()
+	}
+	if err == nil {
+		t.Fatal("expected the legacy strategy / ip_version combination to be refused")
+	}
+	if !strings.Contains(err.Error(), deprecated.OptionLegacyDNSRuleStrategy.Description) {
+		t.Fatalf("refused for the wrong reason: %v", err)
+	}
+}

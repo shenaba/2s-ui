@@ -153,7 +153,6 @@ export default {
   cacheCapacity: "缓存容量",
   disableCache: "禁用缓存",
   disableExpire: "禁用过期",
-  independentCache: "独立缓存",
   reverseMapping: "反向映射",
   log: "日志",
   logLevel: "级别",

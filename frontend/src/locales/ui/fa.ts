@@ -153,7 +153,6 @@ export default {
   cacheCapacity: "ظرفیت کش",
   disableCache: "غیرفعال‌سازی کش",
   disableExpire: "غیرفعال‌سازی انقضا",
-  independentCache: "کش مستقل",
   reverseMapping: "نگاشت معکوس",
   log: "لاگ",
   logLevel: "سطح",

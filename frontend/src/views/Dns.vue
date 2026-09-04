@@ -71,7 +71,6 @@
           <div style="display: flex; gap: 24px; flex-wrap: wrap; margin-top: 16px;">
             <CheckLabel v-model="disableCache" :label="$t('dns.disableCache')" />
             <CheckLabel v-model="disableExpire" :label="$t('dns.disableExpire')" />
-            <CheckLabel v-model="independentCache" :label="$t('dns.independentCache')" />
             <CheckLabel v-model="reverseMapping" :label="$t('dns.reverseMapping')" />
           </div>
         </div>
@@ -109,6 +108,9 @@
       <!-- ===================== dns rules ===================== -->
       <div>
         <SectionLabel>{{ $t('ui.dnsRules') }}</SectionLabel>
+        <MHint v-if="legacyStrategyConflict" style="margin-top: 10px;">
+          <span style="color: var(--amber);">{{ $t('dns.rule.legacyStrategyConflict') }}</span>
+        </MHint>
         <div class="entity-grid" style="margin-top: 10px;">
           <div
             v-for="(item, index) in dnsRules"
@@ -169,6 +171,7 @@ import EntityCard from '@/components/ui/EntityCard.vue'
 import RuleCard from '@/components/ui/RuleCard.vue'
 import CardBtn from '@/components/ui/CardBtn.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import MHint from '@/components/ui/MHint.vue'
 
 const oldConfig = ref(<any>{})
 const loading = ref(false)
@@ -289,14 +292,42 @@ const disableExpire = computed({
   set: (v: boolean) => { dns.value.disable_expire = v },
 })
 
-const independentCache = computed({
-  get: () => dns.value?.independent_cache ?? false,
-  set: (v: boolean) => { dns.value.independent_cache = v },
-})
-
 const reverseMapping = computed({
   get: () => dns.value?.reverse_mapping ?? false,
   set: (v: boolean) => { dns.value.reverse_mapping = v },
+})
+
+// sing-box 1.14 refuses to start when a legacy rule-action `strategy` appears
+// in the same DNS config as anything that turns legacy DNS mode off -- and
+// ip_version is offered by the rule drawer right next to the strategy select,
+// so the panel can build that config without a word. Saying so here is the only
+// warning the operator gets before StartCore fails and checkCoreJob retries it
+// every five seconds.
+//
+// This sees what is stored. sing-box also turns legacy mode off for a rule-set
+// carrying query_type items, which cannot be known until the set is downloaded.
+const disablesLegacyDnsMode = (rule: any): boolean =>
+  rule.match_response != undefined ||
+  rule.response_rcode != undefined ||
+  rule.response_answer?.length > 0 ||
+  rule.response_ns?.length > 0 ||
+  rule.response_extra?.length > 0 ||
+  rule.action == 'evaluate' ||
+  rule.action == 'respond' ||
+  rule.ip_version > 0 ||
+  rule.query_type?.length > 0
+
+const legacyStrategyConflict = computed((): boolean => {
+  let hasStrategy = false
+  let disabled = false
+  const walk = (rule: any) => {
+    if (!rule || typeof rule != 'object') return
+    if (rule.strategy) hasStrategy = true
+    if (disablesLegacyDnsMode(rule)) disabled = true
+    ;(rule.rules ?? []).forEach(walk)
+  }
+  dnsRules.value.forEach(walk)
+  return hasStrategy && disabled
 })
 
 /* ---------------- dns server / rule drawers ---------------- */

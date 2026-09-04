@@ -50,7 +50,11 @@
     <!-- route / route-options extras -->
     <template v-if="['route', 'route-options'].includes(form.action)">
       <div class="grid2">
-        <Field v-if="form.action === 'route'" :label="$t('rule.strategy')">
+        <!-- Deprecated in sing-box 1.14 and removed in 1.16, and it stops the
+             core outright once any rule sets ip_version or query_type. Shown
+             only for a rule that already carries one, so it can be cleared
+             without offering it to a rule that does not. -->
+        <Field v-if="form.action === 'route' && hadStrategy" :label="$t('rule.strategy')" :hint="$t('dns.rule.legacyStrategy')">
           <Select v-model="routeStrategy">
             <option value="">{{ $t('ui.none') }}</option>
             <option v-for="s in strategies" :key="s.value" :value="s.value">{{ s.title }}</option>
@@ -191,7 +195,7 @@ const isNew = computed(() => props.index === -1)
 
 // match condition keys — full set of the legacy DNS RuleOptions component (components/DnsRule.vue)
 const MATCH_KEYS = [
-  'inbound', 'auth_user', 'ip_version', 'protocol',
+  'inbound', 'auth_user', 'ip_version', 'query_type', 'protocol',
   'domain', 'domain_suffix', 'domain_keyword', 'domain_regex',
   'port', 'port_range', 'source_ip_cidr', 'source_ip_is_private', 'source_port', 'source_port_range',
   'rule_set',
@@ -210,6 +214,11 @@ const NUM_KEYS = ['port', 'source_port']
 const NEWLINE_ONLY_KEYS = ['domain_regex']
 const MULTI_OPTIONS: Record<string, string[]> = {
   protocol: ['http', 'tls', 'quic', 'stun', 'dns'],
+  // The replacement for the action strategy this drawer no longer offers:
+  // splitting a rule by record type is how 1.14 wants an A/AAAA preference
+  // expressed. sing-box takes any name miekg/dns knows, or a number; these are
+  // the ones a routing rule realistically names.
+  query_type: ['A', 'AAAA', 'CNAME', 'HTTPS', 'SVCB', 'MX', 'TXT', 'SRV', 'PTR', 'NS', 'SOA'],
 }
 
 const actions = [
@@ -262,6 +271,7 @@ function init() {
       server: props.serverTags[0] ?? 'local',
     }
   }
+  hadStrategy.value = !!form.value.strategy
   seq.value++
 }
 watch(() => props.open, (v) => { if (v) init() })
@@ -275,6 +285,9 @@ const rejectMethod = computed({
   get: () => form.value.method ?? '',
   set: (v: string) => { if (v.length > 0) form.value.method = v; else delete form.value.method },
 })
+// Latched at load rather than tracking form.strategy, so clearing the select
+// leaves the row on screen instead of removing the control mid-edit.
+const hadStrategy = ref(false)
 const routeStrategy = computed({
   get: () => form.value.strategy ?? '',
   set: (v: string) => { if (v.length > 0) form.value.strategy = v; else delete form.value.strategy },

@@ -760,7 +760,6 @@ export default {
     cacheCapacity: "ظرفیت cache",
     disableCache: "غیرفعال‌سازی cache",
     disableExpire: "بدون انقضا",
-    independentCache: "استقلال cache",
     reverseMapping: "نگاشت معکوس",
     domainStrategy: "استراتژی دامنه",
     local: { preferGo: "ترجیح Go" },
@@ -770,6 +769,8 @@ export default {
       inet4Range: "محدوده IPv4",
       inet6Range: "محدوده IPv6",
       acceptDefault: "پذیرش پیش‌فرض",
+      legacyStrategy: "در sing-box 1.14 منسوخ و در 1.16 حذف می‌شود. به‌جای آن قانون را با query_type جدا کنید.",
+      legacyStrategyConflict: "یک اکشن قانون هنوز strategy قدیمی را تنظیم می‌کند در حالی که قانون دیگری ip_version یا query_type دارد. sing-box 1.14 با این ترکیب بالا نمی‌آید — strategy را پاک کنید.",
       action: {
         title: "عملیات",
         route: "مسیریابی",

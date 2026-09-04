@@ -153,7 +153,6 @@ export default {
   cacheCapacity: "Ёмкость кэша",
   disableCache: "Отключить кэш",
   disableExpire: "Отключить истечение",
-  independentCache: "Независимый кэш",
   reverseMapping: "Обратное сопоставление",
   log: "Журнал",
   logLevel: "Уровень",
