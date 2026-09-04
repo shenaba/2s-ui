@@ -115,9 +115,15 @@ const optionHostKey = computed({
 })
 const CRYPTO_KEYS = ['cipher', 'mac', 'kex_algorithm']
 
+// Switching on seeds the first key, the way optionAlgorithms does: this getter
+// reads the data rather than holding state of its own, so writing nothing would
+// leave it false and the section it gates would never open.
 const optionCrypto = computed({
   get: (): boolean => CRYPTO_KEYS.some((k) => props.data[k] != undefined),
-  set: (v: boolean) => { if (!v) CRYPTO_KEYS.forEach((k) => delete props.data[k]) },
+  set: (v: boolean) => {
+    if (v) props.data.cipher = props.data.cipher ?? []
+    else CRYPTO_KEYS.forEach((k) => delete props.data[k])
+  },
 })
 
 const cryptoList = (key: string) =>

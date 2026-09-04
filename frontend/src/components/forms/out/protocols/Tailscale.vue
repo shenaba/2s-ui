@@ -82,13 +82,18 @@
     <Field :label="$t('types.ts.advRoutes') + ' ' + $t('commaSeparated')">
       <input class="input mono" v-model="advertiseRoutes" />
     </Field>
-    <Field :label="$t('types.ts.advTags') + ' ' + $t('commaSeparated')">
-      <input class="input mono" placeholder="tag:server" v-model="advertiseTags" />
-    </Field>
     <div style="margin-bottom: 15px;">
       <SwitchLabel v-model="advertiseExitNode" :label="$t('types.ts.advExitNode')" />
     </div>
   </template>
+
+  <!-- The ACL tags the node claims for itself, which is unrelated to whether it
+       advertises routes: optionAdvRoutes only clears advertise_routes and
+       advertise_exit_node, so a tag left inside that section outlived it with
+       nothing on screen to remove it. -->
+  <Field :label="$t('types.ts.advTags') + ' ' + $t('commaSeparated')">
+    <input class="input mono" placeholder="tag:server" v-model="advertiseTags" />
+  </Field>
 
   <div class="grid2">
     <Field :label="$t('ui.listenPort')">
