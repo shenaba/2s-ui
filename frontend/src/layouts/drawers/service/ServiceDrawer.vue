@@ -119,9 +119,18 @@ const saveChanges = async () => {
     delete (<any>srv.value).tls_id
   }
 
+  // A realm user with a blank name or token stops the core from starting, so an
+  // unfinished row is dropped on the way out rather than saved. The filter runs
+  // on a copy: dropping a half-typed row from srv itself would lose the name
+  // the operator had entered if the save then failed.
+  let payload: any = srv.value
+  if (srv.value.type === SrvTypes.HysteriaRealm && Array.isArray((<any>srv.value).users)) {
+    payload = { ...srv.value, users: (<any>srv.value).users.filter((u: any) => u?.name && u?.token) }
+  }
+
   // save data
   loading.value = true
-  const success = await Data().save('services', props.id == 0 ? 'new' : 'edit', srv.value)
+  const success = await Data().save('services', props.id == 0 ? 'new' : 'edit', payload)
   if (success) emit('close')
   loading.value = false
 }
