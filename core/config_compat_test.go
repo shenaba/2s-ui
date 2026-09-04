@@ -200,9 +200,11 @@ func TestConfigCompatClean(t *testing.T) {
 // TestDNSLegacyStrategyConflict pins the one 1.14 DNS deprecation that is not a
 // warning: a legacy rule-action strategy in the same config as anything that
 // turns legacy DNS mode off -- here ip_version -- is refused outright, and the
-// panel retries a refused config every five seconds. Both halves are reachable
-// from the DNS rule drawer, so views/Dns.vue warns about the combination; this
-// is what says the condition it encodes is still the condition sing-box uses.
+// panel retries a refused config every five seconds. This is why the rule
+// drawer stopped offering a strategy to a rule that carries none, and it is the
+// only place the rejection can be verified: resolveLegacyDNSMode reads more of
+// the config than a form can see, so a reimplementation in the SPA would drift
+// against sing-box with nothing to catch it.
 func TestDNSLegacyStrategyConflict(t *testing.T) {
 	const config = `{
 		"log": {"level": "error"},

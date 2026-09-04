@@ -770,7 +770,6 @@ export default {
       inet6Range: "IPv6 范围",
       acceptDefault: "接受默认",
       legacyStrategy: "sing-box 1.14 已弃用，1.16 移除。改用 query_type 拆分规则。",
-      legacyStrategyConflict: "有规则动作仍设置了旧的 strategy，同时另有规则设置了 ip_version 或 query_type。sing-box 1.14 遇到这种组合会拒绝启动 —— 请清空 strategy。",
       action: {
         title: "操作",
         route: "路由",
