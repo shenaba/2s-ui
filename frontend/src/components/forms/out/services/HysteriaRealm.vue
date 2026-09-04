@@ -18,11 +18,14 @@
       </Btn>
     </div>
     <div class="grid2">
+      <!-- Chrome pairs the text field beside a password input with the password
+           itself and fills both from the saved panel login, so the name would
+           arrive as the operator's username and the token as their password. -->
       <Field :label="$t('types.hysteriaRealm.userName')" :mb="0">
-        <input class="input mono" v-model="user.name" />
+        <input class="input mono" autocomplete="off" v-model="user.name" />
       </Field>
       <Field :label="$t('types.hysteriaRealm.userToken')" :mb="0">
-        <input class="input mono" type="password" v-model="user.token" />
+        <input class="input mono" type="password" autocomplete="new-password" v-model="user.token" />
       </Field>
       <Field :label="$t('types.hysteriaRealm.maxRealms')" :mb="0">
         <input class="input mono" type="number" min="0" :value="user.max_realms ?? 0" @input="setMaxRealms(user, $event)" />
@@ -52,10 +55,12 @@ const delUser = (i: number | string) => {
   props.data.users?.splice(Number(i), 1)
 }
 // 0 already means "no limit" to sing-box, so an untouched field leaves no key
-// rather than storing the number that says nothing.
+// rather than storing the number that says nothing. A fraction leaves none
+// either: max_realms is an int there, and json.Unmarshal refuses 2.5 outright,
+// which would take the whole config down rather than this one field.
 const setMaxRealms = (user: any, event: Event) => {
   const value = Number((event.target as HTMLInputElement).value)
-  if (value > 0) user.max_realms = value
+  if (Number.isInteger(value) && value > 0) user.max_realms = value
   else delete user.max_realms
 }
 </script>
