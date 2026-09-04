@@ -577,7 +577,7 @@ export default {
     },
     hysteriaRealm: {
       users: "用户",
-      usersHint: "realm 至少需要一个用户。每台 Hysteria2 服务端用其中一个令牌注册。",
+      usersHint: "realm 至少需要一个同时填了名称和令牌的用户。缺任一项的行在保存时会被丢弃。",
       userName: "名称",
       userToken: "令牌",
       maxRealms: "最大 realm 数（0 为不限）",

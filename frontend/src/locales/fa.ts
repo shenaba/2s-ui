@@ -577,7 +577,7 @@ export default {
     },
     hysteriaRealm: {
       users: "کاربران",
-      usersHint: "هر realm دست‌کم به یک کاربر نیاز دارد. هر سرور Hysteria2 با یکی از این توکن‌ها ثبت می‌شود.",
+      usersHint: "هر realm دست‌کم به یک کاربر با نام و توکن نیاز دارد. سطرهایی که یکی از این دو را ندارند هنگام ذخیره حذف می‌شوند.",
       userName: "نام",
       userToken: "توکن",
       maxRealms: "بیشینهٔ realm (۰ یعنی نامحدود)",

@@ -577,7 +577,7 @@ export default {
     },
     hysteriaRealm: {
       users: "Users",
-      usersHint: "A realm needs at least one user. Each Hysteria2 server registers with one of these tokens.",
+      usersHint: "A realm needs at least one user with both a name and a token. Rows missing either are dropped when you save.",
       userName: "Name",
       userToken: "Token",
       maxRealms: "Max realms (0 = unlimited)",

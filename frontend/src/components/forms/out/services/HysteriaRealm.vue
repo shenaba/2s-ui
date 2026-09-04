@@ -3,7 +3,7 @@
     <SectionLabel>{{ $t('types.hysteriaRealm.users') }}</SectionLabel>
     <Btn variant="subtle" sm @click="addUser"><Ico name="plus" :size="14" /> {{ $t('actions.add') }}</Btn>
   </div>
-  <MHint v-if="!hasUsableUser">{{ $t('types.hysteriaRealm.usersHint') }}</MHint>
+  <MHint v-if="usersNeedAttention">{{ $t('types.hysteriaRealm.usersHint') }}</MHint>
   <div
     v-for="(user, index) in (data.users || [])"
     :key="index"
@@ -49,12 +49,15 @@ import QuicFields from '@/components/forms/out/QuicFields.vue'
 const props = defineProps<{ data: any }>()
 
 // sing-box rejects a blank name or token by index, as hard as it rejects an
-// empty list, so the hint tracks whether a usable user exists rather than
-// whether the list is empty -- gating it on length made the warning disappear
-// the moment Add created the row that would stop the core.
-const hasUsableUser = computed(() =>
-  (props.data.users ?? []).some((u: any) => u?.name && u?.token),
-)
+// empty list, and saveChanges drops the rows that carry one. The hint covers
+// both halves: no usable user at all, and any row still incomplete -- gating it
+// on the first alone let a name typed beside an empty token be dropped on save
+// with nothing on screen having said so.
+const usersNeedAttention = computed(() => {
+  const users = props.data.users ?? []
+  return !users.some((u: any) => u?.name && u?.token) ||
+    users.some((u: any) => !u?.name || !u?.token)
+})
 
 const addUser = () => {
   if (!props.data.users) props.data.users = []

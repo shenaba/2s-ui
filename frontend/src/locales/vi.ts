@@ -577,7 +577,7 @@ export default {
     },
     hysteriaRealm: {
       users: "Người dùng",
-      usersHint: "Realm cần ít nhất một người dùng. Mỗi máy chủ Hysteria2 đăng ký bằng một trong các token này.",
+      usersHint: "Realm cần ít nhất một người dùng có cả tên và token. Các dòng thiếu một trong hai sẽ bị bỏ khi lưu.",
       userName: "Tên",
       userToken: "Token",
       maxRealms: "Số realm tối đa (0 = không giới hạn)",
