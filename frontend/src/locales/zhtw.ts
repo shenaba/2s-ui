@@ -452,6 +452,10 @@ export default {
       hostKey: "主機密鑰",
       algorithm: "密鑰算法",
       clientVer: "客戶端版本",
+      crypto: "握手演算法",
+      cipher: "加密演算法",
+      mac: "MAC 演算法",
+      kex: "金鑰交換演算法",
       options: "SSH 選項",
     },
     tor: {
@@ -469,6 +473,10 @@ export default {
       ifName: "介面名稱",
       excludeMptcp: "排除 MPTCP",
       fallbackRuleIndex: "iproute2 回退規則索引",
+      dnsMode: "DNS 模式",
+      dnsAddress: "DNS 位址",
+      includeMac: "包含 MAC 位址",
+      excludeMac: "排除 MAC 位址",
     },
     vless: {
       flow: "流量",
@@ -518,6 +526,12 @@ export default {
       allowLanAccess: "允許 LAN 訪問",
       advRoutes: "廣告路由",
       advExitNode: "廣告出口節點",
+      advTags: "宣告標籤",
+      taildrop: "Taildrop 目錄",
+      sshServer: "SSH 伺服端",
+      sshDisablePty: "停用 PTY",
+      sshDisableSftp: "停用 SFTP",
+      sshDisableForwarding: "停用連接埠轉送",
       udpTimeout: "UDP 超時",
     },
     ocm: {
@@ -751,6 +765,12 @@ export default {
       errNoFile: "未選擇檔案。",
       errNoArraysInFile: '檔案中找不到 "rules" 或 "rule_set"。',
     },
+  },
+  udpNat: {
+    title: "UDP NAT",
+    mapping: "對應行為",
+    filtering: "過濾行為",
+    max: "最大工作階段數",
   },
   ruleset: {
     add: "添加規則集",

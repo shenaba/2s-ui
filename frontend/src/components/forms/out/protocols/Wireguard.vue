@@ -51,6 +51,7 @@
   <Field v-if="data.system" :label="$t('types.wg.ifName')">
     <input class="input mono" v-model="ifName" />
   </Field>
+  <UdpNat :data="data" />
 
   <template v-if="data.peers != undefined">
     <hr class="form-divider" />
@@ -85,6 +86,7 @@ import Ico from '@/components/ui/Ico.vue'
 import Chip from '@/components/ui/Chip.vue'
 import Pop from '@/components/ui/Pop.vue'
 import SwitchLabel from '@/components/ui/SwitchLabel.vue'
+import UdpNat from '../UdpNat.vue'
 import SectionLabel from '@/components/ui/SectionLabel.vue'
 import KeyInput from '@/components/ui/KeyInput.vue'
 import Peer from '../WgPeer.vue'

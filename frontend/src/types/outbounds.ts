@@ -219,6 +219,9 @@ export interface SSH extends OutboundBasics, Dial  {
   host_key?: string[]
   host_key_algorithms?: string[]
   client_version?: string
+  cipher?: string[]
+  mac?: string[]
+  kex_algorithm?: string[]
 }
 
 export interface Selector extends OutboundBasics {

@@ -1,4 +1,5 @@
 import { Dial } from "./dial"
+import { UdpNatFields } from "./inbounds"
 
 export const EpTypes = {
   Wireguard: 'wireguard',
@@ -30,7 +31,7 @@ export interface WgPeer {
   reserved?: number[]
 }
 
-export interface WireGuard extends EndpointBasics, Dial {
+export interface WireGuard extends EndpointBasics, Dial, UdpNatFields {
   system?: boolean
   name?: string
   mtu?: number
@@ -62,6 +63,17 @@ export interface Tailscale extends EndpointBasics, Dial {
   system_interface_name?: string
   system_interface_mtu?: number
   udp_timeout?: string
+  listen_port?: number
+  advertise_tags?: string[]
+  taildrop_directory?: string
+  // Serving SSH over the tailnet, with the three things it can be told not to
+  // offer.
+  ssh_server?: {
+    enabled?: boolean
+    disable_pty?: boolean
+    disable_sftp?: boolean
+    disable_forwarding?: boolean
+  }
 }
 
 // OpenConnect and OpenVPN expose far more options than are modelled here.

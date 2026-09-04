@@ -33,6 +33,29 @@
     <Field v-if="autoRoute && data.auto_redirect" :label="$t('types.tun.fallbackRuleIndex')">
       <input class="input mono" type="number" min="0" v-model.number="fallbackRuleIndex" />
     </Field>
+    <!-- hijack, the default, now also sets the platform's interface DNS and
+         installs platform-level hijacking; native leaves both to the system.
+         dns_address is what hijack answers on. -->
+    <div class="grid2">
+      <Field :label="$t('types.tun.dnsMode')">
+        <Select v-model="dnsMode">
+          <option value="">{{ $t('ui.none') }}</option>
+          <option v-for="m in dnsModes" :key="m" :value="m">{{ m }}</option>
+        </Select>
+      </Field>
+      <Field v-if="dnsMode !== 'disabled'" :label="$t('types.tun.dnsAddress') + ' ' + $t('commaSeparated')">
+        <input class="input mono" placeholder="172.18.0.2" v-model="dnsAddress" />
+      </Field>
+    </div>
+    <div class="grid2">
+      <Field :label="$t('types.tun.includeMac') + ' ' + $t('commaSeparated')">
+        <input class="input mono" placeholder="00:11:22:33:44:55" v-model="includeMac" />
+      </Field>
+      <Field :label="$t('types.tun.excludeMac') + ' ' + $t('commaSeparated')">
+        <input class="input mono" placeholder="00:11:22:33:44:55" v-model="excludeMac" />
+      </Field>
+    </div>
+    <UdpNat :data="data" />
   </div>
 </template>
 
@@ -42,8 +65,11 @@ import { computed } from 'vue'
 import Field from '@/components/ui/Field.vue'
 import SectionLabel from '@/components/ui/SectionLabel.vue'
 import SwitchLabel from '@/components/ui/SwitchLabel.vue'
+import UdpNat from '../out/UdpNat.vue'
 
 const props = defineProps<{ data: any }>()
+
+const dnsModes = ['disabled', 'native', 'hijack']
 
 const addrs = computed({
   get: (): string => props.data.address?.join(',') ?? '',
@@ -87,6 +113,29 @@ const excludeMptcp = computed({
   get: (): boolean => props.data.exclude_mptcp ?? false,
   set: (v: boolean) => { props.data.exclude_mptcp = v },
 })
+
+const dnsMode = computed({
+  get: (): string => props.data.dns_mode ?? '',
+  set: (v: string) => {
+    if (v.length > 0) props.data.dns_mode = v
+    else delete props.data.dns_mode
+    // Nothing answers on it when DNS is off, so the address goes with the mode.
+    if (v === 'disabled') delete props.data.dns_address
+  },
+})
+
+const list = (key: string) =>
+  computed({
+    get: (): string => props.data[key]?.join(',') ?? '',
+    set: (v: string) => {
+      const parts = v.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
+      if (parts.length > 0) props.data[key] = parts
+      else delete props.data[key]
+    },
+  })
+const dnsAddress = list('dns_address')
+const includeMac = list('include_mac_address')
+const excludeMac = list('exclude_mac_address')
 
 const fallbackRuleIndex = computed({
   get: (): number => props.data.auto_redirect_iproute2_fallback_rule_index ?? 32768,

@@ -458,6 +458,10 @@ export default {
       hostKey: "Host Keys",
       algorithm: "Key Algorithms",
       clientVer: "Client Version",
+      crypto: "Handshake Algorithms",
+      cipher: "Ciphers",
+      mac: "MACs",
+      kex: "Key Exchange",
       options: "SSH Options",
     },
     tor: {
@@ -475,6 +479,10 @@ export default {
       ifName: "Interface Name",
       excludeMptcp: "Exclude MPTCP",
       fallbackRuleIndex: "iproute2 Fallback Rule Index",
+      dnsMode: "DNS Mode",
+      dnsAddress: "DNS Address",
+      includeMac: "Include MAC Address",
+      excludeMac: "Exclude MAC Address",
     },
     vless: {
       flow: "Flow",
@@ -524,6 +532,12 @@ export default {
       allowLanAccess: "Allow LAN Access",
       advRoutes: "Advertise Routes",
       advExitNode: "Advertise Exit Node",
+      advTags: "Advertise Tags",
+      taildrop: "Taildrop Directory",
+      sshServer: "SSH Server",
+      sshDisablePty: "Disable PTY",
+      sshDisableSftp: "Disable SFTP",
+      sshDisableForwarding: "Disable Forwarding",
       udpTimeout: "UDP Timeout",
     },
     ocm: {
@@ -757,6 +771,12 @@ export default {
       errNoFile: "No file selected.",
       errNoArraysInFile: 'No "rules" or "rule_set" found in the file.',
     },
+  },
+  udpNat: {
+    title: "UDP NAT",
+    mapping: "Mapping Behavior",
+    filtering: "Filtering Behavior",
+    max: "Max Sessions",
   },
   ruleset: {
     add: "Add Ruleset",

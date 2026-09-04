@@ -452,6 +452,10 @@ export default {
       hostKey: "主机密钥",
       algorithm: "密钥算法",
       clientVer: "客户端版本",
+      crypto: "握手算法",
+      cipher: "加密算法",
+      mac: "MAC 算法",
+      kex: "密钥交换算法",
       options: "SSH 选项",
     },
     tor: {
@@ -469,6 +473,10 @@ export default {
       ifName: "接口名称",
       excludeMptcp: "排除 MPTCP",
       fallbackRuleIndex: "iproute2 回退规则索引",
+      dnsMode: "DNS 模式",
+      dnsAddress: "DNS 地址",
+      includeMac: "包含 MAC 地址",
+      excludeMac: "排除 MAC 地址",
     },
     vless: {
       flow: "流控",
@@ -518,6 +526,12 @@ export default {
       allowLanAccess: "允许 LAN 访问",
       advRoutes: "广告路由",
       advExitNode: "广告出口节点",
+      advTags: "声明标签",
+      taildrop: "Taildrop 目录",
+      sshServer: "SSH 服务端",
+      sshDisablePty: "禁用 PTY",
+      sshDisableSftp: "禁用 SFTP",
+      sshDisableForwarding: "禁用端口转发",
       udpTimeout: "UDP 超时",
     },
     ocm: {
@@ -751,6 +765,12 @@ export default {
       errNoFile: "未选择文件。",
       errNoArraysInFile: '文件中未找到 "rules" 或 "rule_set"。',
     },
+  },
+  udpNat: {
+    title: "UDP NAT",
+    mapping: "映射行为",
+    filtering: "过滤行为",
+    max: "最大会话数",
   },
   ruleset: {
     add: "添加规则集",

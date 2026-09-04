@@ -38,6 +38,15 @@ export interface Addr {
   remark?: string
 }
 
+// The NAT mapping and filtering behaviours 1.14 made configurable. Carried by
+// everything that owns a UDP NAT -- tun and tproxy here, the WireGuard endpoint
+// in endpoints.ts. Absent means endpoint_independent, sing-box's default.
+export interface UdpNatFields {
+  udp_mapping?: string
+  udp_filtering?: string
+  udp_nat_max?: number
+}
+
 export interface Listen {
   listen: string
   listen_port: number
@@ -156,12 +165,18 @@ export interface Hysteria2 extends InboundBasics, QuicFields {
   }
   brutal_debug?: boolean
 }
-export interface Tun extends InboundBasics {
+export interface Tun extends InboundBasics, UdpNatFields {
   interface_name?: string
   address?: string[]
   mtu?: number
   udp_timeout?: string
   stack?: string
+  // hijack, the default, now also sets the platform's interface DNS and
+  // installs platform-level hijacking; native leaves both alone.
+  dns_mode?: 'disabled' | 'native' | 'hijack'
+  dns_address?: string[]
+  include_mac_address?: string[]
+  exclude_mac_address?: string[]
   auto_route?: boolean
   strict_route?: boolean
   auto_redirect?: boolean
@@ -208,7 +223,9 @@ export interface Cloudflared extends InboundBasics {
   region?: string
 }
 export interface Redirect extends InboundBasics {}
-export interface TProxy extends InboundBasics {
+// Only tproxy carries these: RedirectInboundOptions is ListenOptions and
+// nothing else.
+export interface TProxy extends InboundBasics, UdpNatFields {
   network?: "udp" | "tcp"
 }
 

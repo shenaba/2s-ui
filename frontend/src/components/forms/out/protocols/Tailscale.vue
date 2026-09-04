@@ -16,6 +16,7 @@
         <div class="pop-item"><SwitchLabel v-model="optionSysIf" :label="$t('types.ts.systemInterface')" /></div>
         <div class="pop-item"><SwitchLabel v-model="optionAdvRoutes" :label="$t('types.ts.advRoutes')" /></div>
         <div class="pop-item"><SwitchLabel v-model="optionUdpTimeout" :label="$t('types.ts.udpTimeout')" /></div>
+        <div class="pop-item"><SwitchLabel v-model="optionSsh" :label="$t('types.ts.sshServer')" /></div>
       </div>
     </Pop>
   </div>
@@ -81,8 +82,33 @@
     <Field :label="$t('types.ts.advRoutes') + ' ' + $t('commaSeparated')">
       <input class="input mono" v-model="advertiseRoutes" />
     </Field>
+    <Field :label="$t('types.ts.advTags') + ' ' + $t('commaSeparated')">
+      <input class="input mono" placeholder="tag:server" v-model="advertiseTags" />
+    </Field>
     <div style="margin-bottom: 15px;">
       <SwitchLabel v-model="advertiseExitNode" :label="$t('types.ts.advExitNode')" />
+    </div>
+  </template>
+
+  <div class="grid2">
+    <Field :label="$t('ui.listenPort')">
+      <input class="input mono" type="number" min="0" max="65535" :value="data.listen_port ?? 0" @input="setListenPort" />
+    </Field>
+    <Field :label="$t('types.ts.taildrop')">
+      <input class="input mono" placeholder="/var/lib/taildrop" v-model="taildropDirectory" />
+    </Field>
+  </div>
+
+  <!-- Serving SSH over the tailnet. The three switches say what it will not
+       offer, so they only mean anything once it is on. -->
+  <template v-if="optionSsh">
+    <div style="margin-bottom: 15px;">
+      <SwitchLabel v-model="sshEnabled" :label="$t('types.ts.sshServer')" />
+    </div>
+    <div v-if="sshEnabled" style="display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 15px;">
+      <SwitchLabel v-model="sshDisablePty" :label="$t('types.ts.sshDisablePty')" />
+      <SwitchLabel v-model="sshDisableSftp" :label="$t('types.ts.sshDisableSftp')" />
+      <SwitchLabel v-model="sshDisableForwarding" :label="$t('types.ts.sshDisableForwarding')" />
     </div>
   </template>
 </template>
@@ -180,6 +206,52 @@ const optionSysIf = computed({
     }
   },
 })
+const advertiseTags = computed({
+  get: (): string => props.data.advertise_tags?.join(',') ?? '',
+  set: (v: string) => {
+    const parts = v.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
+    if (parts.length > 0) props.data.advertise_tags = parts
+    else delete props.data.advertise_tags
+  },
+})
+
+const taildropDirectory = computed({
+  get: (): string => props.data.taildrop_directory ?? '',
+  set: (v: string) => {
+    const trimmed = (v ?? '').trim()
+    if (trimmed) props.data.taildrop_directory = trimmed
+    else delete props.data.taildrop_directory
+  },
+})
+
+// uint16 in sing-box, and 0 is what "let it pick" is spelled as, so neither a
+// fraction nor a zero leaves a key behind.
+const setListenPort = (event: Event) => {
+  const value = Number((event.target as HTMLInputElement).value)
+  if (Number.isInteger(value) && value > 0 && value <= 65535) props.data.listen_port = value
+  else delete props.data.listen_port
+}
+
+const optionSsh = computed({
+  get: (): boolean => props.data.ssh_server != undefined,
+  set: (v: boolean) => {
+    if (v) props.data.ssh_server = { enabled: true }
+    else delete props.data.ssh_server
+  },
+})
+const sshFlag = (key: string) =>
+  computed({
+    get: (): boolean => props.data.ssh_server?.[key] === true,
+    set: (v: boolean) => {
+      if (v) props.data.ssh_server[key] = true
+      else delete props.data.ssh_server[key]
+    },
+  })
+const sshEnabled = sshFlag('enabled')
+const sshDisablePty = sshFlag('disable_pty')
+const sshDisableSftp = sshFlag('disable_sftp')
+const sshDisableForwarding = sshFlag('disable_forwarding')
+
 const optionUdpTimeout = computed({
   get: () => props.data?.udp_timeout !== undefined,
   set: (v: boolean) => { props.data.udp_timeout = v ? '30s' : undefined },

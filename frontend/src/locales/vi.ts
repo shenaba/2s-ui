@@ -452,6 +452,10 @@ export default {
       hostKey: "Khóa Máy chủ",
       algorithm: "Thuật toán Khóa",
       clientVer: "Phiên bản Client",
+      crypto: "Thuật toán bắt tay",
+      cipher: "Cipher",
+      mac: "MAC",
+      kex: "Trao đổi khóa",
       options: "Tùy chọn SSH",
     },
     tor: {
@@ -469,6 +473,10 @@ export default {
       ifName: "Tên Giao diện",
       excludeMptcp: "Loại trừ MPTCP",
       fallbackRuleIndex: "Chỉ số quy tắc dự phòng iproute2",
+      dnsMode: "Chế độ DNS",
+      dnsAddress: "Địa chỉ DNS",
+      includeMac: "Bao gồm địa chỉ MAC",
+      excludeMac: "Loại trừ địa chỉ MAC",
     },
     vless: {
       flow: "Luồng",
@@ -518,6 +526,12 @@ export default {
       allowLanAccess: "Cho phép Truy cập LAN",
       advRoutes: "Quảng bá Đường dẫn",
       advExitNode: "Quảng bá Nút thoát",
+      advTags: "Tag công bố",
+      taildrop: "Thư mục Taildrop",
+      sshServer: "Máy chủ SSH",
+      sshDisablePty: "Tắt PTY",
+      sshDisableSftp: "Tắt SFTP",
+      sshDisableForwarding: "Tắt chuyển tiếp",
       udpTimeout: "Thời gian Chờ UDP",
     },
     ocm: {
@@ -751,6 +765,12 @@ export default {
       errNoFile: "Chưa chọn tệp.",
       errNoArraysInFile: 'Không tìm thấy "rules" hoặc "rule_set" trong tệp.',
     },
+  },
+  udpNat: {
+    title: "UDP NAT",
+    mapping: "Hành vi ánh xạ",
+    filtering: "Hành vi lọc",
+    max: "Số phiên tối đa",
   },
   ruleset: {
     add: "Thêm Bộ quy tắc",
