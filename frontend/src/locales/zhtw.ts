@@ -591,6 +591,7 @@ export default {
       obfsMode: "混淆",
       obfsHost: "混淆主機",
       mode: "模式",
+      userKeyHint: "每個用戶端用自己的使用者金鑰連線，可在用戶端頁面檢視；未掛用戶端的監聽器只驗證 PSK，也統計不到各用戶端的流量。",
       noClientConfig: "只有 v6 會產生用戶端設定；v5 監聽需要在 Surge 裡手動設定。",
     },
     cloudflared: {

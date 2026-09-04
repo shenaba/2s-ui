@@ -591,6 +591,7 @@ export default {
       obfsMode: "Làm rối",
       obfsHost: "Host làm rối",
       mode: "Chế độ",
+      userKeyHint: "Mỗi client kết nối bằng khóa người dùng riêng, xem ở trang client; listener không gắn client nào thì chỉ kiểm tra PSK và không ghi nhận lưu lượng theo từng client.",
       noClientConfig: "Chỉ phiên bản 6 có cấu hình client được tạo; listener v5 phải cấu hình thủ công trong Surge.",
     },
     cloudflared: {

@@ -159,6 +159,14 @@ func migrateDb(out io.Writer) (err error) {
 		}
 	}
 
+	// Give pre-snell clients a snell key so they are not dropped from a snell
+	// listener's user list (#143)
+	if versionBefore(dbVersion, "1.8.1") {
+		if err = to1_8_1(tx); err != nil {
+			return fmt.Errorf("migration to 1.8.1 failed: %w", err)
+		}
+	}
+
 	// Set version
 	if err = tx.Exec("UPDATE settings SET value = ? WHERE key = ?", currentVersion, "version").Error; err != nil {
 		return fmt.Errorf("update version failed: %w", err)

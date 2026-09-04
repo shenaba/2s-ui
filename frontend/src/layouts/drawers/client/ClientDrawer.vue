@@ -156,6 +156,14 @@
           <Field v-if="clientConfig[key].uuid !== undefined" :label="key + ' · ' + $t('ui.uuid')">
             <KeyInput v-model="clientConfig[key].uuid" @regenerate="shuffle(key)" />
           </Field>
+          <!-- snell's per-client key. It is what tells one client from another
+               on a listener whose psk everyone shares, so a hand-written client
+               config (Surge) cannot be written without reading it here: the v6
+               subscription is the only other place it appears, and a v5
+               listener has no generated client config at all. -->
+          <Field v-if="clientConfig[key].userkey !== undefined" :label="key + ' · ' + $t('types.snell.userKey')">
+            <KeyInput v-model="clientConfig[key].userkey" @regenerate="shuffle(key)" />
+          </Field>
           <Field v-if="key === 'vless'" :label="key + ' · ' + $t('ui.flow')">
             <input class="input mono" style="font-size: 12.5px;" v-model="clientConfig[key].flow" />
           </Field>

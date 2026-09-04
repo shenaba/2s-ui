@@ -591,6 +591,7 @@ export default {
       obfsMode: "Obfuscation",
       obfsHost: "Obfuscation host",
       mode: "Mode",
+      userKeyHint: "Each client connects with its own user key, found on the client page; a listener with no clients attached only checks the psk and records no per-client traffic.",
       noClientConfig: "Only version 6 has a generated client config; a v5 listener is configured by hand in Surge.",
     },
     cloudflared: {

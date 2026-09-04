@@ -35,6 +35,13 @@
         <option v-for="m in modes" :key="m.value" :value="m.value">{{ m.title }}</option>
       </Select>
     </Field>
+    <!-- The psk is shared by the whole listener and identifies nobody; the
+         per-client key is what tells one client from another. sing-box picks
+         psk-only or multi-user at start-up from whether the listener has any
+         clients, so one with none silently reports no user for any connection
+         -- which the panel can only show as a client that moved no traffic
+         (#143). -->
+    <MHint v-if="direction === 'in'">{{ $t('types.snell.userKeyHint') }}</MHint>
   </div>
 </template>
 
@@ -44,6 +51,7 @@ import Field from '@/components/ui/Field.vue'
 import Select from '@/components/ui/Select.vue'
 import SectionLabel from '@/components/ui/SectionLabel.vue'
 import KeyInput from '@/components/ui/KeyInput.vue'
+import MHint from '@/components/ui/MHint.vue'
 import RandomUtil from '@/plugins/randomUtil'
 
 const props = defineProps<{ data: any; direction?: string }>()

@@ -591,6 +591,7 @@ export default {
       obfsMode: "混淆",
       obfsHost: "混淆主机",
       mode: "模式",
+      userKeyHint: "每个客户端用自己的用户密钥连接，可在客户端页面查看；未挂客户端的监听器只校验 PSK，也统计不到各客户端的流量。",
       noClientConfig: "只有 v6 会生成客户端配置；v5 监听需要在 Surge 里手动配置。",
     },
     cloudflared: {
