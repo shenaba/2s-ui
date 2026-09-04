@@ -307,7 +307,11 @@ const reverseMapping = computed({
 // This sees what is stored. sing-box also turns legacy mode off for a rule-set
 // carrying query_type items, which cannot be known until the set is downloaded.
 const disablesLegacyDnsMode = (rule: any): boolean =>
-  rule.match_response != undefined ||
+  // match_response takes a bool or a response tag, and sing-box's IsEnabled is
+  // false for an explicit `false` -- treating any present value as enabled
+  // warned about a config that starts perfectly well.
+  rule.match_response === true ||
+  typeof rule.match_response == 'string' ||
   rule.response_rcode != undefined ||
   rule.response_answer?.length > 0 ||
   rule.response_ns?.length > 0 ||

@@ -53,8 +53,12 @@
         <!-- Deprecated in sing-box 1.14 and removed in 1.16, and it stops the
              core outright once any rule sets ip_version or query_type. Shown
              only for a rule that already carries one, so it can be cleared
-             without offering it to a rule that does not. -->
-        <Field v-if="form.action === 'route' && hadStrategy" :label="$t('rule.strategy')" :hint="$t('dns.rule.legacyStrategy')">
+             without offering it to a rule that does not.
+             The enclosing template already narrows to route and route-options,
+             which is the pair dnsRuleActionHasStrategy reads: gating this on
+             route alone left a route-options rule carrying one with no way to
+             clear it, while the page still told the operator to. -->
+        <Field v-if="hadStrategy" :label="$t('rule.strategy')" :hint="$t('dns.rule.legacyStrategy')">
           <Select v-model="routeStrategy">
             <option value="">{{ $t('ui.none') }}</option>
             <option v-for="s in strategies" :key="s.value" :value="s.value">{{ s.title }}</option>
