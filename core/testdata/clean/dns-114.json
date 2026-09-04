@@ -1,0 +1,49 @@
+{
+  "log": {"level": "error"},
+  "dns": {
+    "servers": [
+      {"type": "udp", "tag": "local", "server": "127.0.0.1"},
+      {"type": "udp", "tag": "remote", "server": "8.8.8.8"}
+    ],
+    "timeout": "10s",
+    "optimistic": {"enabled": true, "timeout": "1m"},
+    "rules": [
+      {"action": "evaluate", "server": "remote", "timeout": "5s", "disable_optimistic_cache": true},
+      {
+        "match_response": true,
+        "ip_cidr": ["10.0.0.0/8"],
+        "race": true,
+        "action": "route",
+        "server": "local"
+      },
+      {"action": "evaluate", "server": "remote", "tag": "probe"},
+      {
+        "match_response": "probe",
+        "response_rcode": "NXDOMAIN",
+        "action": "respond"
+      },
+      {
+        "domain_suffix": [".example.com"],
+        "speculative": true,
+        "action": "route",
+        "server": "remote"
+      },
+      {
+        "query_dnssec": true,
+        "query_client_subnet": ["1.2.3.0/24"],
+        "action": "route-options",
+        "remove_client_subnet": true
+      },
+      {
+        "source_hostname": ["laptop"],
+        "source_mac_address": ["00:11:22:33:44:55"],
+        "package_name_regex": ["^com\\.example\\."],
+        "action": "route",
+        "server": "remote"
+      },
+      {"action": "route", "server": "remote"}
+    ]
+  },
+  "outbounds": [{"type": "direct", "tag": "direct"}],
+  "route": {"default_domain_resolver": "local"}
+}

@@ -3,9 +3,17 @@ export interface Dns {
   rules: dnsRule[]
   final?: string
   strategy?: string
+  // How long a query may take before it is given up on.
+  timeout?: string
   disable_cache?: boolean,
   disable_expire?: boolean,
   cache_capacity?: number,
+  // Answer from an expired cache entry while the refresh runs, rather than
+  // making the client wait for it.
+  optimistic?: {
+    enabled?: boolean
+    timeout?: string
+  },
   reverse_mapping?: boolean,
   client_subnet?: string,
 }
@@ -24,6 +32,10 @@ export const DnsTypes = {
   FakeIP: 'fakeip',
   Tailscale: 'tailscale',
   Resolved: 'resolved',
+  // Resolve through the DNS an OpenConnect or OpenVPN endpoint was handed by
+  // its server, the same shape tailscale's server already has.
+  OpenConnect: 'openconnect',
+  OpenVPN: 'openvpn',
 }
 
 export type DnsType = typeof DnsTypes[keyof typeof DnsTypes]
@@ -52,6 +64,8 @@ const defaultValues: Record<DnsType, DnsServer> = {
   fakeip: { type: 'fakeip', inet4_range: '198.18.0.0/15', inet6_range: 'fc00::/18' },
   tailscale: { type: 'tailscale' },
   resolved: { type: 'resolved' },
+  openconnect: { type: 'openconnect' },
+  openvpn: { type: 'openvpn' },
 }
 export function createDnsServer<T extends DnsServer>(type: string, json?: Partial<T>): DnsServer {
   // Deep copy: a shallow spread hands every new server the very same nested
@@ -66,8 +80,21 @@ export function createDnsServer<T extends DnsServer>(type: string, json?: Partia
 
 interface generalDnsRule {
   invert: boolean
-  action: 'route' | 'route-options' | 'reject' | 'predefined'
+  // evaluate fetches a response now so later rules can match it; respond
+  // returns the response an earlier evaluate fetched, and takes no options of
+  // its own -- sing-box rejects any other key on it.
+  action: 'route' | 'evaluate' | 'respond' | 'route-options' | 'reject' | 'predefined'
+  // Let response-dependent rules run in parallel, first match wins.
+  race?: boolean
   server?: string
+  // evaluate only: names this response so a later match_response can pick it
+  // out from several.
+  tag?: string
+  // Start the query while race rules are still pending.
+  speculative?: boolean
+  timeout?: string
+  disable_optimistic_cache?: boolean
+  remove_client_subnet?: boolean
   // Deprecated in sing-box 1.14, removed in 1.16, and rejected outright when
   // the same config sets ip_version or query_type anywhere. Kept so a stored
   // rule still round-trips and can be cleared; the drawer no longer offers it
@@ -87,7 +114,13 @@ interface generalDnsRule {
 export const actionDnsRuleKeys = [
   'invert',
   'action',
+  'race',
   'server',
+  'tag',
+  'speculative',
+  'timeout',
+  'disable_optimistic_cache',
+  'remove_client_subnet',
   'strategy',
   'disable_cache',
   'rewrite_ttl',
@@ -109,6 +142,20 @@ export interface dnsRule extends generalDnsRule {
   inbound?: string[]
   ip_version?: 4 | 6
   query_type?: string[]
+  query_client_subnet?: string[]
+  query_dnssec?: boolean
+  preferred_by?: string[]
+  source_mac_address?: string[]
+  source_hostname?: string[]
+  package_name_regex?: string[]
+  // Gate for the response fields below: true matches whatever the preceding
+  // evaluate fetched, a string picks the response carrying that tag. sing-box
+  // rejects an empty string, so the drawer stores true when no tag is given.
+  match_response?: boolean | string
+  response_rcode?: string
+  response_answer?: string[]
+  response_ns?: string[]
+  response_extra?: string[]
   network?: string[]
   auth_user?: string[]
   protocol?: string[]

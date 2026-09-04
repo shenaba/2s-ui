@@ -92,6 +92,19 @@
         </Select>
       </Field>
       <MSwitchRow :label="$t('dns.rule.acceptDefault')" :model-value="!!server.accept_default_resolvers" @update:model-value="server.accept_default_resolvers = $event" />
+      <MSwitchRow v-if="server.type !== 'resolved'" :label="$t('dns.acceptSearchDomain')" :model-value="!!server.accept_search_domain" @update:model-value="server.accept_search_domain = $event" />
+    </template>
+
+    <!-- openconnect / openvpn: the same three fields tailscale has, over the
+         resolvers the VPN server pushed to that endpoint. -->
+    <template v-if="['openconnect', 'openvpn'].includes(server.type)">
+      <Field :label="$t('objects.endpoint')">
+        <Select v-model="server.endpoint">
+          <option v-for="e in ocvTags" :key="e" :value="e">{{ e }}</option>
+        </Select>
+      </Field>
+      <MSwitchRow :label="$t('dns.rule.acceptDefault')" :model-value="!!server.accept_default_resolvers" @update:model-value="server.accept_default_resolvers = $event" />
+      <MSwitchRow :label="$t('dns.acceptSearchDomain')" :model-value="!!server.accept_search_domain" @update:model-value="server.accept_search_domain = $event" />
     </template>
 
     <!-- ===================== Dial ===================== -->
@@ -137,6 +150,7 @@ const props = defineProps<{
   data: string
   tsTags: string[]
   rslvdTags: string[]
+  ocvTags: string[]
 }>()
 defineEmits<{ close: []; save: [data: any] }>()
 
@@ -146,7 +160,11 @@ const dnsTypes = Object.keys(DnsTypes).map((key, index) => ({ title: key, value:
 const HasServer: string[] = [DnsTypes.TCP, DnsTypes.UDP, DnsTypes.TLS, DnsTypes.QUIC, DnsTypes.HTTPS, DnsTypes.HTTP3]
 const HasHeaders: string[] = [DnsTypes.HTTPS, DnsTypes.HTTP3]
 const HasTls: string[] = [DnsTypes.TLS, DnsTypes.QUIC, DnsTypes.HTTPS, DnsTypes.HTTP3]
-const WithoutDial: string[] = [DnsTypes.Hosts, DnsTypes.Tailscale, DnsTypes.FakeIP, DnsTypes.Resolved]
+// Neither dials out itself: both read what their endpoint was handed.
+const WithoutDial: string[] = [
+  DnsTypes.Hosts, DnsTypes.Tailscale, DnsTypes.FakeIP, DnsTypes.Resolved,
+  DnsTypes.OpenConnect, DnsTypes.OpenVPN,
+]
 
 const server = ref<any>(createDnsServer('local', { tag: 'dns-' + RandomUtil.randomSeq(3) }))
 

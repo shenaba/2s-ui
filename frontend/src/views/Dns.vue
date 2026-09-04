@@ -5,6 +5,7 @@
     :data="dnsDrawer.data"
     :ts-tags="tsTags"
     :rslvd-tags="rslvdTags"
+    :ocv-tags="ocvTags"
     @close="dnsDrawer.open = false"
     @save="saveDnsDrawer"
   />
@@ -67,10 +68,17 @@
             <Field :label="$t('dns.cacheCapacity')" :mb="0">
               <input class="input mono" type="number" min="1024" v-model="cacheCapacity" />
             </Field>
+            <Field :label="$t('dns.timeout')" :mb="0">
+              <input class="input mono" placeholder="10s" v-model="dnsTimeout" />
+            </Field>
+            <Field v-if="optimistic" :label="$t('dns.optimisticTimeout')" :mb="0">
+              <input class="input mono" placeholder="1m" v-model="optimisticTimeout" />
+            </Field>
           </div>
           <div style="display: flex; gap: 24px; flex-wrap: wrap; margin-top: 16px;">
             <CheckLabel v-model="disableCache" :label="$t('dns.disableCache')" />
             <CheckLabel v-model="disableExpire" :label="$t('dns.disableExpire')" />
+            <CheckLabel v-model="optimistic" :label="$t('dns.optimistic')" />
             <CheckLabel v-model="reverseMapping" :label="$t('dns.reverseMapping')" />
           </div>
         </div>
@@ -223,6 +231,11 @@ const tsTags = computed((): string[] => {
   return Data().endpoints?.filter((e: any) => e.type == 'tailscale').map((e: any) => e.tag)
 })
 
+// OpenConnect and OpenVPN DNS servers name the endpoint whose pushed
+// resolvers they use, the same way the tailscale one does.
+const ocvTags = computed((): string[] =>
+  Data().endpoints?.filter((o: any) => ['openconnect', 'openvpn-client'].includes(o.type))?.map((o: any) => o.tag) ?? [])
+
 const rslvdTags = computed((): string[] => {
   return Data().services?.filter((e: any) => e.type == 'resolved').map((e: any) => e.tag)
 })
@@ -291,6 +304,34 @@ const disableExpire = computed({
 const reverseMapping = computed({
   get: () => dns.value?.reverse_mapping ?? false,
   set: (v: boolean) => { dns.value.reverse_mapping = v },
+})
+
+const dnsTimeout = computed({
+  get: (): string => dns.value?.timeout ?? '',
+  set: (v: string) => {
+    const trimmed = (v ?? '').trim()
+    if (trimmed) dns.value.timeout = trimmed
+    else delete dns.value.timeout
+  },
+})
+
+// Switching it on writes only the flag; the timeout stays absent until it is
+// typed, because sing-box rejects "" for a duration.
+const optimistic = computed({
+  get: (): boolean => dns.value?.optimistic?.enabled === true,
+  set: (v: boolean) => {
+    if (v) dns.value.optimistic = { enabled: true }
+    else delete dns.value.optimistic
+  },
+})
+
+const optimisticTimeout = computed({
+  get: (): string => dns.value?.optimistic?.timeout ?? '',
+  set: (v: string) => {
+    const trimmed = (v ?? '').trim()
+    if (trimmed) dns.value.optimistic.timeout = trimmed
+    else delete dns.value.optimistic.timeout
+  },
 })
 
 /* ---------------- dns server / rule drawers ---------------- */

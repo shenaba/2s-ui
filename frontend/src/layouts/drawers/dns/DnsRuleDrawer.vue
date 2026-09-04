@@ -27,10 +27,15 @@
           <option v-for="a in actions" :key="a.value" :value="a.value">{{ a.title }}</option>
         </Select>
       </Field>
-      <Field v-if="form.action === 'route'" :label="$t('dns.server')">
+      <Field v-if="['route', 'evaluate'].includes(form.action)" :label="$t('dns.server')">
         <Select v-model="form.server">
           <option v-for="s in serverTags" :key="s" :value="s">{{ s }}</option>
         </Select>
+      </Field>
+      <!-- Naming the response lets several coexist, picked apart by a
+           match_response carrying the same tag. -->
+      <Field v-if="form.action === 'evaluate'" :label="$t('dns.rule.action.evaluateTag')">
+        <input class="input mono" v-model="evaluateTag" />
       </Field>
       <Field v-if="form.action === 'reject'" :label="$t('rule.method')">
         <Select v-model="rejectMethod">
@@ -47,8 +52,13 @@
       </Field>
     </div>
 
-    <!-- route / route-options extras -->
-    <template v-if="['route', 'route-options'].includes(form.action)">
+    <div style="margin-bottom: 15px;">
+      <SwitchLabel :label="$t('dns.rule.action.race')" :model-value="race" @update:model-value="race = $event" />
+    </div>
+
+    <!-- respond takes nothing of its own: sing-box unmarshals it with unknown
+         fields disallowed, so anything else here would be refused. -->
+    <template v-if="['route', 'evaluate', 'route-options'].includes(form.action)">
       <div class="grid2">
         <!-- Deprecated in sing-box 1.14 and removed in 1.16, and it stops the
              core outright once any rule sets ip_version or query_type. Shown
@@ -68,12 +78,20 @@
         <Field :label="$t('dns.rule.action.rewriteTtl')">
           <input class="input mono" type="number" min="0" v-model.number="form.rewrite_ttl" />
         </Field>
-        <Field :label="$t('dns.rule.action.clientSubnet')">
+        <Field :label="$t('dns.rule.action.timeout')">
+          <input class="input mono" placeholder="10s" v-model="actionTimeout" />
+        </Field>
+        <!-- Setting a subnet and removing one are the same field to sing-box:
+             whichever is written last wins, so the switch clears the input. -->
+        <Field v-if="!removeClientSubnet" :label="$t('dns.rule.action.clientSubnet')">
           <input class="input mono" v-model="form.client_subnet" />
         </Field>
       </div>
-      <div style="margin-bottom: 15px;">
+      <div style="display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 15px;">
         <SwitchLabel :label="$t('dns.disableCache')" :model-value="!!form.disable_cache" @update:model-value="form.disable_cache = $event" />
+        <SwitchLabel :label="$t('dns.rule.action.disableOptimisticCache')" :model-value="disableOptimisticCache" @update:model-value="disableOptimisticCache = $event" />
+        <SwitchLabel :label="$t('dns.rule.action.removeClientSubnet')" :model-value="removeClientSubnet" @update:model-value="removeClientSubnet = $event" />
+        <SwitchLabel v-if="form.action !== 'route-options'" :label="$t('dns.rule.action.speculative')" :model-value="speculative" @update:model-value="speculative = $event" />
       </div>
     </template>
 
@@ -117,7 +135,7 @@
           style="display: grid; grid-template-columns: 150px 1fr 34px; gap: 8px; align-items: start;"
         >
           <Select style="height: 38px; font-size: 12.5px;" :model-value="k" @change="changeKey(r, k, $event)">
-            <option v-for="mk in MATCH_KEYS" :key="mk" :value="mk" :disabled="mk !== k && r[mk] !== undefined">{{ mk }}</option>
+            <option v-for="mk in matchKeysFor(r)" :key="mk" :value="mk" :disabled="mk !== k && r[mk] !== undefined">{{ mk }}</option>
           </Select>
 
           <!-- value control by kind -->
@@ -131,9 +149,23 @@
             <option value="4">4</option>
             <option value="6">6</option>
           </Select>
+          <Select v-else-if="kindOf(k) === 'rcode'" style="height: 38px; font-size: 12.5px;" :model-value="r[k]" @change="r[k] = $event">
+            <option v-for="rc in predefinedRcode" :key="rc.value" :value="rc.value">{{ rc.title }}</option>
+          </Select>
           <div v-else-if="kindOf(k) === 'bool'" style="display: flex; align-items: center; height: 38px;">
             <Toggle :model-value="!!r[k]" @update:model-value="r[k] = $event" />
           </div>
+          <!-- One field for both shapes the option takes: blank means whatever
+               the preceding evaluate fetched, text picks the response with that
+               tag. It never stores "", which sing-box rejects. -->
+          <input
+            v-else-if="kindOf(k) === 'matchresp'"
+            class="input mono"
+            style="height: 38px; font-size: 12.5px;"
+            :value="r[k] === true ? '' : r[k]"
+            :placeholder="$t('dns.rule.matchResponsePlaceholder')"
+            @change="setMatchResponse(r, ($event.target as HTMLInputElement).value)"
+          />
           <textarea
             v-else
             class="input mono"
@@ -200,23 +232,28 @@ const isNew = computed(() => props.index === -1)
 
 // match condition keys — full set of the legacy DNS RuleOptions component (components/DnsRule.vue)
 const MATCH_KEYS = [
-  'inbound', 'auth_user', 'ip_version', 'query_type', 'protocol',
+  'inbound', 'auth_user', 'ip_version', 'query_type', 'query_client_subnet', 'query_dnssec', 'protocol',
   'domain', 'domain_suffix', 'domain_keyword', 'domain_regex',
   'port', 'port_range', 'source_ip_cidr', 'source_ip_is_private', 'source_port', 'source_port_range',
-  'rule_set',
+  'source_mac_address', 'source_hostname', 'package_name_regex', 'preferred_by',
+  'rule_set', 'match_response',
 ]
+// Only meaningful against a response an evaluate already fetched, and matching
+// an address without match_response is the legacy filter 1.14 deprecated -- so
+// they appear on a rule once match_response is on it, and not before.
+const RESPONSE_KEYS = ['response_rcode', 'response_answer', 'response_ns', 'response_extra', 'ip_cidr', 'ip_is_private']
 const PLACEHOLDER: Record<string, string> = {
   domain: 'example.com', domain_suffix: '.ir', domain_keyword: 'google', domain_regex: '^stun\\..+',
   rule_set: 'geosite-ads', ip_cidr: '10.0.0.0/24', source_ip_cidr: '192.168.1.0/24',
   port: '443', port_range: '1000:2000', source_port: '5353', network: 'tcp', protocol: 'quic',
   process_name: 'chrome.exe', clash_mode: 'global',
 }
-const BOOL_KEYS = ['source_ip_is_private']
+const BOOL_KEYS = ['source_ip_is_private', 'query_dnssec', 'ip_is_private']
 const NUM_KEYS = ['port', 'source_port']
 // A comma is legal regex syntax, so these split on newlines only: comma
 // splitting tore a bounded repeat like `a{2,4}` into two entries that matched
 // nothing, leaving no way to enter such a pattern at all.
-const NEWLINE_ONLY_KEYS = ['domain_regex']
+const NEWLINE_ONLY_KEYS = ['domain_regex', 'response_answer', 'response_ns', 'response_extra']
 const MULTI_OPTIONS: Record<string, string[]> = {
   protocol: ['http', 'tls', 'quic', 'stun', 'dns'],
   // The replacement for the action strategy this drawer no longer offers:
@@ -228,6 +265,8 @@ const MULTI_OPTIONS: Record<string, string[]> = {
 
 const actions = [
   { title: t('dns.rule.action.route'), value: 'route' },
+  { title: t('dns.rule.action.evaluate'), value: 'evaluate' },
+  { title: t('dns.rule.action.respond'), value: 'respond' },
   { title: t('dns.rule.action.routeOptions'), value: 'route-options' },
   { title: t('dns.rule.action.reject'), value: 'reject' },
   { title: t('dns.rule.action.predefined'), value: 'predefined' },
@@ -293,6 +332,41 @@ const rejectMethod = computed({
 // Latched at load rather than tracking form.strategy, so clearing the select
 // leaves the row on screen instead of removing the control mid-edit.
 const hadStrategy = ref(false)
+const evaluateTag = computed({
+  get: () => form.value.tag ?? '',
+  set: (v: string) => { if (v.length > 0) form.value.tag = v; else delete form.value.tag },
+})
+const actionTimeout = computed({
+  get: () => form.value.timeout ?? '',
+  set: (v: string) => {
+    const trimmed = (v ?? '').trim()
+    if (trimmed) form.value.timeout = trimmed
+    else delete form.value.timeout
+  },
+})
+// Flags sing-box only reads when true, so false leaves no key rather than
+// writing one that says nothing.
+const flag = (key: string) =>
+  computed({
+    get: (): boolean => form.value[key] === true,
+    set: (v: boolean) => { if (v) form.value[key] = true; else delete form.value[key] },
+  })
+const race = flag('race')
+const speculative = flag('speculative')
+const disableOptimisticCache = flag('disable_optimistic_cache')
+const removeClientSubnet = computed({
+  get: (): boolean => form.value.remove_client_subnet === true,
+  set: (v: boolean) => {
+    if (!v) {
+      delete form.value.remove_client_subnet
+      return
+    }
+    form.value.remove_client_subnet = true
+    // Both write the same field on the query; keeping a subnet here would only
+    // be the value the removal then discards.
+    delete form.value.client_subnet
+  },
+})
 const routeStrategy = computed({
   get: () => form.value.strategy ?? '',
   set: (v: string) => { if (v.length > 0) form.value.strategy = v; else delete form.value.strategy },
@@ -317,7 +391,18 @@ const extra = computed({
 })
 
 // ---- matcher helpers ----
-const matcherKeys = (r: any): string[] => MATCH_KEYS.filter((k) => r[k] !== undefined)
+const matchKeysFor = (r: any): string[] =>
+  r.match_response !== undefined || RESPONSE_KEYS.some((k) => r[k] !== undefined)
+    ? MATCH_KEYS.concat(RESPONSE_KEYS)
+    : MATCH_KEYS
+const matcherKeys = (r: any): string[] => matchKeysFor(r).filter((k) => r[k] !== undefined)
+
+// true rather than "" when no tag is given: sing-box refuses an empty tag, and
+// true is what "any evaluated response" is spelled as.
+function setMatchResponse(r: any, value: string) {
+  const tag = (value ?? '').trim()
+  r.match_response = tag.length > 0 ? tag : true
+}
 
 // Only worth explaining the one-per-line convention while a free-text list is on
 // screen; a rule matching purely on chips and toggles has nothing to type into.
@@ -329,6 +414,8 @@ const hasTextList = computed(() =>
 
 function kindOf(k: string): string {
   if (k === 'ip_version') return 'ipver'
+  if (k === 'match_response') return 'matchresp'
+  if (k === 'response_rcode') return 'rcode'
   if (BOOL_KEYS.includes(k)) return 'bool'
   if (['inbound', 'auth_user', 'rule_set'].includes(k)) return 'tags'
   if (MULTI_OPTIONS[k]) return 'multi'
@@ -349,6 +436,8 @@ function optionsFor(k: string): { title: string; value: string }[] {
 
 function defaultFor(k: string): any {
   if (k === 'ip_version') return 4
+  if (k === 'match_response') return true
+  if (k === 'response_rcode') return 'NOERROR'
   if (k === 'protocol') return ['http']
   if (BOOL_KEYS.includes(k)) return false
   return []
@@ -369,7 +458,7 @@ function changeKey(r: any, oldK: string, newK: string) {
 }
 
 function addCondition(r: any) {
-  const free = MATCH_KEYS.filter((k) => r[k] === undefined)
+  const free = matchKeysFor(r).filter((k) => r[k] === undefined)
   if (free.length === 0) return
   addMatcherKey(r, r.domain_suffix === undefined ? 'domain_suffix' : free[0])
 }
@@ -400,6 +489,18 @@ function saveChanges() {
   let newRule = <any>{
     action: form.value.action,
     invert: form.value.invert ? form.value.invert : undefined,
+    race: form.value.race ? true : undefined,
+  }
+
+  // The options every query-issuing action shares.
+  const queryOptions = () => {
+    newRule.disable_cache = form.value.disable_cache ? true : undefined
+    newRule.disable_optimistic_cache = form.value.disable_optimistic_cache ? true : undefined
+    newRule.rewrite_ttl = form.value.rewrite_ttl > 0 ? form.value.rewrite_ttl : undefined
+    newRule.timeout = form.value.timeout?.length > 0 ? form.value.timeout : undefined
+    newRule.remove_client_subnet = form.value.remove_client_subnet ? true : undefined
+    newRule.client_subnet =
+      !form.value.remove_client_subnet && form.value.client_subnet?.length > 0 ? form.value.client_subnet : undefined
   }
 
   // Filter action data
@@ -407,14 +508,21 @@ function saveChanges() {
     case 'route':
       newRule.server = form.value.server
       newRule.strategy = form.value.strategy?.length > 0 ? form.value.strategy : undefined
-      newRule.disable_cache = form.value.disable_cache ? true : undefined
-      newRule.rewrite_ttl = form.value.rewrite_ttl > 0 ? form.value.rewrite_ttl : undefined
-      newRule.client_subnet = form.value.client_subnet?.length > 0 ? form.value.client_subnet : undefined
+      newRule.speculative = form.value.speculative ? true : undefined
+      queryOptions()
+      break
+    case 'evaluate':
+      newRule.server = form.value.server
+      newRule.tag = form.value.tag?.length > 0 ? form.value.tag : undefined
+      newRule.speculative = form.value.speculative ? true : undefined
+      queryOptions()
+      break
+    case 'respond':
+      // Nothing: sing-box unmarshals this action with unknown fields
+      // disallowed, so any option here is refused outright.
       break
     case 'route-options':
-      newRule.disable_cache = form.value.disable_cache ? true : undefined
-      newRule.rewrite_ttl = form.value.rewrite_ttl > 0 ? form.value.rewrite_ttl : undefined
-      newRule.client_subnet = form.value.client_subnet?.length > 0 ? form.value.client_subnet : undefined
+      queryOptions()
       break
     case 'reject':
       newRule.method = form.value.method?.length > 0 ? form.value.method : undefined
