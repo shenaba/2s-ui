@@ -40,6 +40,15 @@ func to1_8_1(tx *gorm.DB) error {
 		if err := json.Unmarshal(row.Config, &config); err != nil {
 			continue
 		}
+		// A stored `null` unmarshals into a nil map without an error, and the
+		// SQL NULL the guard above catches is a different value -- writing to
+		// the nil map would panic, which migrateDb turns into a rolled-back
+		// transaction that repeats on every start-up. A client can hold those
+		// four bytes because Config is a json.RawMessage, and encoding/json
+		// hands a JSON null straight to RawMessage.UnmarshalJSON.
+		if config == nil {
+			config = map[string]json.RawMessage{}
+		}
 		if _, exists := config["snell"]; exists {
 			continue
 		}

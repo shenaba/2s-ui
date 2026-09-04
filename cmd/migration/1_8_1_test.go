@@ -134,3 +134,34 @@ func TestTo1_8_1SkipsUnreadableConfig(t *testing.T) {
 		t.Errorf("config = %q, want it left as it was", raw)
 	}
 }
+
+// A config stored as the JSON literal `null` unmarshals into a nil map without
+// an error, and writing to that map would panic -- which migrateDb converts
+// into a rolled-back transaction, so one such row would keep every client on
+// the panel from being back-filled, on every start-up.
+func TestTo1_8_1HandlesNullConfig(t *testing.T) {
+	db := newMigrationDB(t)
+	if err := db.Create(&model.Client{
+		Name: "nully", Group: "user",
+		Inbounds: json.RawMessage(`[]`), Links: json.RawMessage(`[]`),
+		Config:   json.RawMessage(`null`),
+	}).Error; err != nil {
+		t.Fatalf("seed client: %v", err)
+	}
+
+	if err := to1_8_1(db); err != nil {
+		t.Fatalf("to1_8_1: %v", err)
+	}
+
+	config := clientConfig(t, db, "nully")
+	var snell struct {
+		Name    string `json:"name"`
+		UserKey string `json:"userkey"`
+	}
+	if err := json.Unmarshal(config["snell"], &snell); err != nil {
+		t.Fatalf("no snell block added: %v", err)
+	}
+	if snell.Name != "nully" || len(snell.UserKey) != 32 {
+		t.Errorf("snell block = %+v, want the client's name and a 32-character key", snell)
+	}
+}
