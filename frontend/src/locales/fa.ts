@@ -769,7 +769,7 @@ export default {
       inet4Range: "محدوده IPv4",
       inet6Range: "محدوده IPv6",
       acceptDefault: "پذیرش پیش‌فرض",
-      legacyStrategy: "در sing-box 1.14 منسوخ و در 1.16 حذف می‌شود. به‌جای آن قانون را با query_type جدا کنید.",
+      legacyStrategy: "در sing-box 1.14 منسوخ و در 1.16 حذف می‌شود. پیش از آنکه قانونی از query_type یا ip_version استفاده کند آن را پاک کنید — با هر دو با هم sing-box بالا نمی‌آید. جایگزینش هم همان query_type است.",
       action: {
         title: "عملیات",
         route: "مسیریابی",

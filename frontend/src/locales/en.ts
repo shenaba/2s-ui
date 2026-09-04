@@ -777,7 +777,7 @@ export default {
       inet4Range: "IPv4 Range",
       inet6Range: "IPv6 Range",
       acceptDefault: "Accept Default Resolvers",
-      legacyStrategy: "Deprecated in sing-box 1.14, removed in 1.16. Split the rule by query_type instead.",
+      legacyStrategy: "Deprecated in sing-box 1.14, removed in 1.16. Clear it before any rule uses query_type or ip_version — sing-box refuses to start with both. query_type is what replaces it.",
       action: {
         title: "Action",
         route: "Route",

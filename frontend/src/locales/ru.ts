@@ -770,7 +770,7 @@ export default {
       inet4Range: "Диапазон IPv4",
       inet6Range: "Диапазон IPv6",
       acceptDefault: "Принять резолверы по умолчанию",
-      legacyStrategy: "Устарело в sing-box 1.14, удалено в 1.16. Вместо него разделяйте правило по query_type.",
+      legacyStrategy: "Устарело в sing-box 1.14, удалено в 1.16. Очистите его прежде, чем любое правило использует query_type или ip_version — вместе sing-box не запустится. Заменой служит как раз query_type.",
       action: {
         title: "Действие",
         route: "Маршрутизация",
