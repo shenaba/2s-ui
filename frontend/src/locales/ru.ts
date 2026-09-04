@@ -819,7 +819,7 @@ export default {
     optimisticTimeout: "Оптимистичный таймаут",
     acceptSearchDomain: "Принять search domain",
     domainStrategy: "Стратегия домена",
-    local: { preferGo: "Предпочитать Go" },
+    local: { preferGo: "Предпочитать Go", neighborDomain: "Домен соседей" },
     rule: {
       add: "Добавить правило DNS",
       title: "Правила DNS",
@@ -873,6 +873,8 @@ export default {
       defaultRm: "Маршрут по умолчанию",
       defaultDns: "DNS по умолчанию",
       autoBind: "Автопривязка сетевого интерфейса",
+      findNeighbor: "Искать соседей",
+      dhcpLeaseFiles: "Файлы аренды DHCP",
     },
     exp: {
       storeFakeIp: "Хранить поддельный IP",

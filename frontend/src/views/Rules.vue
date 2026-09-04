@@ -87,8 +87,12 @@
             <Field :label="$t('basic.routing.defaultRm')" :mb="0">
               <input class="input mono" type="number" min="0" v-model.number="routeMark" />
             </Field>
-            <div style="display: flex; align-items: flex-end; padding-bottom: 6px;">
+            <Field :label="$t('basic.routing.dhcpLeaseFiles') + ' ' + $t('commaSeparated')" :mb="0">
+              <input class="input mono" v-model="dhcpLeaseFiles" placeholder="/var/lib/misc/dnsmasq.leases" />
+            </Field>
+            <div style="display: flex; align-items: flex-end; padding-bottom: 6px; gap: 24px; flex-wrap: wrap;">
               <SwitchLabel v-model="autoDetect" :label="$t('basic.routing.autoBind')" />
+              <SwitchLabel v-model="findNeighbor" :label="$t('basic.routing.findNeighbor')" />
             </div>
           </div>
         </div>
@@ -257,6 +261,28 @@ const routeFinal = computed({
   set: (v: string) => {
     if (v.length > 0) route.value.final = v
     else delete route.value.final
+  },
+})
+
+// Neither is needed to make source_mac_address or source_hostname work --
+// sing-box turns neighbour resolution on for those by itself. find_neighbor is
+// for having the names in the log without such a rule, and dhcp_lease_files is
+// for a DHCP server whose leases are not where sing-box looks, which is the one
+// way hostname matching silently matches nothing on Linux.
+const findNeighbor = computed({
+  get: (): boolean => route.value.find_neighbor === true,
+  set: (v: boolean) => {
+    if (v) route.value.find_neighbor = true
+    else delete route.value.find_neighbor
+  },
+})
+
+const dhcpLeaseFiles = computed({
+  get: (): string => route.value.dhcp_lease_files?.join(',') ?? '',
+  set: (v: string) => {
+    const parts = v.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0)
+    if (parts.length > 0) route.value.dhcp_lease_files = parts
+    else delete route.value.dhcp_lease_files
   },
 })
 

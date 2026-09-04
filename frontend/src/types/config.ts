@@ -24,6 +24,13 @@ interface Route {
   final?: string,
   auto_detect_interface?: boolean
   default_interface?: string
+  // Neighbour resolution, which source_mac_address and source_hostname turn on
+  // by themselves. find_neighbor forces it on with no such rule -- it is only
+  // worth setting to get the names into the log. dhcp_lease_files points at
+  // lease files outside the paths sing-box already probes (dnsmasq, odhcpd,
+  // ISC dhcpd, Kea), which is what source_hostname reads on Linux.
+  find_neighbor?: boolean
+  dhcp_lease_files?: string[]
   default_mark?: number
   default_domain_resolver: string
   // Tag of a shared client in http_clients, used by remote rule-sets that
