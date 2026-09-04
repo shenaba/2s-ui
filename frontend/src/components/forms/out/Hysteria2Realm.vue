@@ -22,8 +22,10 @@
   </Field>
   <!-- Port mapping is refused outright over IPv6 ("port mapping requires
        IPv4"), so the row goes away with the choice rather than offering a
-       toggle that cannot be saved. -->
-  <template v-if="ipVersion !== 6">
+       toggle that cannot be saved. One already stored stays on screen either
+       way: sing-box will not start on that pair, and hiding the switch would
+       leave the config that caused it with nothing here to fix it. -->
+  <template v-if="ipVersion !== 6 || portMapping">
     <div style="margin-bottom: 15px;">
       <SwitchLabel v-model="portMapping" :label="$t('types.hy.portMapping')" />
     </div>
