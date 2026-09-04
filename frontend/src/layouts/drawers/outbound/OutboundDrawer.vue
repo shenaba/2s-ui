@@ -26,7 +26,7 @@
         </Field>
       </div>
 
-      <div v-if="!NoServer.includes(outbound.type)" class="grid2">
+      <div v-if="!NoServer.includes(outbound.type) && !usesRealm" class="grid2">
         <Field :label="$t('out.addr')">
           <input class="input mono" v-model="outbound.server" />
         </Field>
@@ -125,6 +125,10 @@ const NoDial = [OutTypes.Selector, OutTypes.URLTest]
 const NoServer = [OutTypes.Direct, OutTypes.Selector, OutTypes.URLTest, OutTypes.Tor, OutTypes.Bridge]
 
 const outbound = ref<Outbound>(createOutbound('direct', { tag: '' }))
+// A hysteria2 outbound pointed at a realm learns the server's current address
+// from it, and sing-box refuses the two together. Only that protocol has a
+// realm, so the field is enough to recognise the case.
+const usesRealm = computed(() => (<any>outbound.value).realm != undefined)
 const tab = ref('basics')
 const link = ref('')
 const loading = ref(false)

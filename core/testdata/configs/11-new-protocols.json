@@ -20,6 +20,21 @@
       "version": 5,
       "psk": "snell-pre-shared-key",
       "obfs_mode": "http"
+    },
+    {
+      "type": "hysteria2",
+      "tag": "hy2-gecko-in",
+      "listen": "127.0.0.1",
+      "listen_port": 42104,
+      "users": [{"name": "u", "password": "hunter2"}],
+      "bbr_profile": "conservative",
+      "obfs": {
+        "type": "gecko",
+        "password": "hunter2",
+        "min_packet_size": 100,
+        "max_packet_size": 1200
+      },
+      "tls": {"enabled": true, "certificate_path": "__CERT__", "key_path": "__KEY__"}
     }
   ],
   "outbounds": [

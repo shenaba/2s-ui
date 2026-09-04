@@ -3,6 +3,7 @@ import { oMultiplex } from "./multiplex"
 import { Transport } from "./transport"
 import { Dial } from "./dial"
 import { QuicFields } from './httpClient'
+import { BBRProfile, Hysteria2Obfs, Hysteria2Realm } from './hysteria2'
 
 export const OutTypes = {
   Direct: 'direct',
@@ -173,20 +174,28 @@ export interface TUIC extends OutboundBasics, Dial, QuicFields {
 }
 
 export interface Hysteria2 extends OutboundBasics, Dial, QuicFields {
-  server: string
-  server_port: number
+  // Absent when realm is set: sing-box refuses "realm conflicts with server,
+  // server_port, and server_ports", and port hopping on top of that with
+  // "realm and port hopping are mutually exclusive".
+  server?: string
+  server_port?: number
   server_ports?: string[]
-  hop_interval: string
+  hop_interval?: string
+  hop_interval_max?: string
   up_mbps?: number
   down_mbps?: number
-  obfs?: {
-    type?: "salamander"
-    password: string
-  }
+  obfs?: Hysteria2Obfs
   password?: string
   network?: "udp" | "tcp"
   tls: oTls
   brutal_debug?: boolean
+  bbr_profile?: BBRProfile
+  // 1.14 parrots Chrome's QUIC handshake by default. Servers with an Ed25519
+  // certificate fail it, because Chrome does not declare Ed25519 support.
+  disable_chrome_parrot?: boolean
+  // The client half of NAT traversal: ask the realm where the server is now,
+  // then hole-punch, instead of dialling a fixed address.
+  realm?: Hysteria2Realm
 }
 
 export interface AnyTls extends OutboundBasics, Dial {

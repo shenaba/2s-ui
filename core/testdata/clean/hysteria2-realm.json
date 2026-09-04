@@ -1,0 +1,37 @@
+{
+  "log": {"level": "error"},
+  "inbounds": [
+    {
+      "type": "hysteria2", "tag": "hy2-realm-in", "listen": "127.0.0.1", "listen_port": 42105,
+      "users": [{"name": "u", "password": "hunter2"}],
+      "tls": {"enabled": true, "certificate_path": "__CERT__", "key_path": "__KEY__"},
+      "bbr_profile": "conservative",
+      "obfs": {"type": "gecko", "password": "hunter2", "min_packet_size": 100, "max_packet_size": 1200},
+      "realm": {
+        "server_url": "https://realm.example.com",
+        "realm_id": "example",
+        "token": "realm-token",
+        "stun_servers": ["stun.example.com:19302"],
+        "ip_version": 4,
+        "port_mapping": {"enabled": true, "timeout": "5s", "lifetime": "2m"}
+      }
+    }
+  ],
+  "outbounds": [
+    {"type": "direct", "tag": "direct"},
+    {
+      "type": "hysteria2", "tag": "hy2-realm-out",
+      "password": "hunter2",
+      "tls": {"enabled": true, "insecure": true},
+      "bbr_profile": "aggressive",
+      "disable_chrome_parrot": true,
+      "obfs": {"type": "gecko", "password": "hunter2", "min_packet_size": 100, "max_packet_size": 1200},
+      "realm": {
+        "server_url": "https://realm.example.com",
+        "realm_id": "example",
+        "token": "realm-token",
+        "stun_servers": ["stun.example.com:19302"]
+      }
+    }
+  ]
+}

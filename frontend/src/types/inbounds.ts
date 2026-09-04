@@ -4,6 +4,7 @@ import { Dial } from "./dial"
 import { Transport } from "./transport"
 import RandomUtil from "@/plugins/randomUtil"
 import { QuicFields } from './httpClient'
+import { BBRProfile, Hysteria2Obfs, Hysteria2Realm } from './hysteria2'
 
 export const InTypes = {
   Direct: 'direct',
@@ -140,10 +141,7 @@ export interface TUIC extends InboundBasics, QuicFields {
 export interface Hysteria2 extends InboundBasics, QuicFields {
   up_mbps?: number
   down_mbps?: number
-  obfs?: {
-    type?: "salamander"
-    password: string
-  }
+  obfs?: Hysteria2Obfs
   ignore_client_bandwidth?: boolean
   masquerade?: string | {
     type: string
@@ -155,6 +153,11 @@ export interface Hysteria2 extends InboundBasics, QuicFields {
     content?: string
   }
   brutal_debug?: boolean
+  bbr_profile?: BBRProfile
+  // The server half of NAT traversal: this inbound registers its
+  // STUN-discovered addresses with the realm named here, which is what a
+  // hysteria-realm service under Services provides.
+  realm?: Hysteria2Realm
 }
 export interface Tun extends InboundBasics {
   interface_name?: string
