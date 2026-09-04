@@ -575,6 +575,13 @@ export default {
       minInterval: "کمینهٔ بازه",
       maxInterval: "بیشینهٔ بازه",
     },
+    hysteriaRealm: {
+      users: "کاربران",
+      usersHint: "هر realm دست‌کم به یک کاربر نیاز دارد. هر سرور Hysteria2 با یکی از این توکن‌ها ثبت می‌شود.",
+      userName: "نام",
+      userToken: "توکن",
+      maxRealms: "بیشینهٔ realm (۰ یعنی نامحدود)",
+    },
     api: {
       secret: "کلید",
       allowOrigin: "مبداهای مجاز",

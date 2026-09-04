@@ -575,6 +575,13 @@ export default {
       minInterval: "最小間隔",
       maxInterval: "最大間隔",
     },
+    hysteriaRealm: {
+      users: "用戶",
+      usersHint: "realm 至少需要一個用戶。每台 Hysteria2 伺服端以其中一個令牌註冊。",
+      userName: "名稱",
+      userToken: "令牌",
+      maxRealms: "最大 realm 數（0 為不限）",
+    },
     api: {
       secret: "金鑰",
       allowOrigin: "允許來源",

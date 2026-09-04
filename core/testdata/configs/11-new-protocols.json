@@ -41,6 +41,19 @@
       "type": "oom-killer",
       "tag": "oom",
       "memory_limit": "1gb"
+    },
+    {
+      "type": "hysteria-realm",
+      "tag": "realm",
+      "listen": "127.0.0.1",
+      "listen_port": 42103,
+      "users": [
+        {
+          "name": "realm-user",
+          "token": "realm-token",
+          "max_realms": 2
+        }
+      ]
     }
   ]
 }

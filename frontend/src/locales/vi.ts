@@ -575,6 +575,13 @@ export default {
       minInterval: "Khoảng tối thiểu",
       maxInterval: "Khoảng tối đa",
     },
+    hysteriaRealm: {
+      users: "Người dùng",
+      usersHint: "Realm cần ít nhất một người dùng. Mỗi máy chủ Hysteria2 đăng ký bằng một trong các token này.",
+      userName: "Tên",
+      userToken: "Token",
+      maxRealms: "Số realm tối đa (0 = không giới hạn)",
+    },
     api: {
       secret: "Khóa bí mật",
       allowOrigin: "Nguồn được phép",

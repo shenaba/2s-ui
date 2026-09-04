@@ -30,6 +30,7 @@
     <Ccm v-if="srv.type == srvTypes.CCM" :data="srv" />
     <Api v-if="srv.type == srvTypes.API" :data="srv" />
     <OomKiller v-if="srv.type == srvTypes.OOMKiller" :data="srv" />
+    <HysteriaRealm v-if="srv.type == srvTypes.HysteriaRealm" :data="srv" />
     <InTLS v-if="HasTls.includes(srv.type)" :inbound="srv" :tlsConfigs="tlsConfigs" />
     <MHint v-if="srv.type == srvTypes.Resolved">{{ $t('ui.noFields') }}</MHint>
   </MDrawer>
@@ -51,6 +52,7 @@ import Ccm from '@/components/forms/out/services/Ccm.vue'
 import SSMapi from '@/components/forms/out/services/SSMAPI.vue'
 import Api from '@/components/forms/out/services/Api.vue'
 import OomKiller from '@/components/forms/out/services/OomKiller.vue'
+import HysteriaRealm from '@/components/forms/out/services/HysteriaRealm.vue'
 import InTLS from '@/components/forms/in/InTLS.vue'
 
 const props = defineProps<{
@@ -65,7 +67,7 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>()
 
 const srvTypes = SrvTypes
-const HasTls = [SrvTypes.DERP, SrvTypes.SSMAPI, SrvTypes.OCM, SrvTypes.CCM, SrvTypes.API]
+const HasTls = [SrvTypes.DERP, SrvTypes.SSMAPI, SrvTypes.OCM, SrvTypes.CCM, SrvTypes.API, SrvTypes.HysteriaRealm]
 const NoListen = [SrvTypes.OOMKiller]
 
 const srv = ref<Srv>(createSrv('derp', { tag: '' }))

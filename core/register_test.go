@@ -62,6 +62,7 @@ func TestServiceRegistry(t *testing.T) {
 		C.TypeResolved, C.TypeSSMAPI, C.TypeDERP, C.TypeCCM, C.TypeOCM,
 		// new in 1.14
 		C.TypeAPI, C.TypeOOMKiller, C.TypeUSBIPServer, C.TypeUSBIPClient,
+		C.TypeHysteriaRealm,
 	)
 }
 

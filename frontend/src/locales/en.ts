@@ -575,6 +575,13 @@ export default {
       minInterval: "Min interval",
       maxInterval: "Max interval",
     },
+    hysteriaRealm: {
+      users: "Users",
+      usersHint: "A realm needs at least one user. Each Hysteria2 server registers with one of these tokens.",
+      userName: "Name",
+      userToken: "Token",
+      maxRealms: "Max realms (0 = unlimited)",
+    },
     api: {
       secret: "Secret",
       allowOrigin: "Allowed origins",

@@ -157,6 +157,11 @@ func ServiceRegistry() *service.Registry {
 	resolved.RegisterService(registry)
 	ssmapi.RegisterService(registry)
 
+	// The rendezvous point for Hysteria2 NAT traversal. Upstream registers it
+	// from registerQUICServices; QUIC is not optional here, so it sits in the
+	// same place the QUIC inbounds and outbounds do.
+	hysteria2.RegisterRealmService(registry)
+
 	registerDERPService(registry)
 	ccm.RegisterService(registry)
 	ocm.RegisterService(registry)
