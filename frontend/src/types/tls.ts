@@ -30,6 +30,7 @@ export interface iTls {
   store?: 'mozilla' | 'chrome'
   kernel_tx?: boolean
   kernel_rx?: boolean
+  handshake_timeout?: string
 }
 
 // Certificate providers issue and renew the certificates a TLS config serves.
@@ -153,6 +154,13 @@ export interface oTls {
   fragment?: boolean
   fragment_fallback_delay?: string
   record_fragment?: boolean
+  handshake_timeout?: string
+  // Send a forged ClientHello carrying this SNI ahead of the real one, so an
+  // SNI-filtering middlebox sees a hostname it permits. Needs elevated
+  // privileges, and only works on Linux, macOS and Windows. spoof_method
+  // decides how the real server rejects the forged segment.
+  spoof?: string
+  spoof_method?: string
   ech?: {
     enabled: boolean
     config?: string[]
@@ -215,6 +223,14 @@ export const CIPHER_SUITES = [
   { title: 'ECDHE-RSA-AES256-GCM-SHA384', value: 'TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384' },
   { title: 'ECDHE-ECDSA-CHACHA20-POLY1305-SHA256', value: 'TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256' },
   { title: 'ECDHE-RSA-CHACHA20-POLY1305-SHA256', value: 'TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256' },
+]
+
+export const TLS_SPOOF_METHODS = [
+  'wrong-sequence',
+  'wrong-checksum',
+  'wrong-ack',
+  'wrong-md5',
+  'wrong-timestamp',
 ]
 
 export const UTLS_FINGERPRINTS = [

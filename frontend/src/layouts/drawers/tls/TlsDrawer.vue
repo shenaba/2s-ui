@@ -133,6 +133,28 @@
       <SwitchLabel v-model="kernelTx" :label="$t('tls.ktls') + ' ' + $t('tls.kernelTx')" />
       <SwitchLabel v-model="kernelRx" :label="$t('tls.ktls') + ' ' + $t('tls.kernelRx')" />
     </div>
+    <div class="grid2">
+      <Field :label="$t('tls.handshakeTimeout')">
+        <input class="input mono" placeholder="10s" v-model="inHandshakeTimeout" />
+      </Field>
+      <Field :label="$t('tls.handshakeTimeoutClient')">
+        <input class="input mono" placeholder="10s" v-model="outHandshakeTimeout" />
+      </Field>
+    </div>
+    <!-- The forged ClientHello needs elevated privileges and only works on
+         Linux, macOS and Windows; the method decides how the real server
+         rejects the forged segment, so it says nothing without a spoof. -->
+    <div class="grid2">
+      <Field :label="$t('tls.spoof')" :hint="$t('tls.spoofHint')">
+        <input class="input mono" placeholder="example.com" v-model="spoof" />
+      </Field>
+      <Field v-if="spoof.length > 0" :label="$t('tls.spoofMethod')">
+        <Select v-model="spoofMethod">
+          <option value="">{{ $t('ui.none') }}</option>
+          <option v-for="m in TLS_SPOOF_METHODS" :key="m" :value="m">{{ m }}</option>
+        </Select>
+      </Field>
+    </div>
     <div v-if="outTls.utls != undefined" class="grid2">
       <Field label="Fingerprint">
         <Select v-model="fingerprint">
@@ -194,7 +216,7 @@ import { push } from 'notivue'
 import Data from '@/store/modules/data'
 import HttpUtils from '@/plugins/httputil'
 import RandomUtil from '@/plugins/randomUtil'
-import { tls, iTls, defaultInTls, oTls, defaultOutTls, ALPN_OPTIONS, TLS_VERSIONS, CIPHER_SUITES, UTLS_FINGERPRINTS } from '@/types/tls'
+import { tls, iTls, defaultInTls, oTls, defaultOutTls, ALPN_OPTIONS, TLS_VERSIONS, CIPHER_SUITES, TLS_SPOOF_METHODS, UTLS_FINGERPRINTS } from '@/types/tls'
 import MDrawer from '@/components/ui/MDrawer.vue'
 import Field from '@/components/ui/Field.vue'
 import Btn from '@/components/ui/Btn.vue'
@@ -424,6 +446,35 @@ const fingerprint = computed({
   get: (): string => outTls.value.utls?.fingerprint ?? 'chrome',
   set: (v: string) => { if (outTls.value.utls) outTls.value.utls.fingerprint = v },
 })
+// Emptied fields leave no key: sing-box rejects "" for a duration, and a spoof
+// method describes how a spoof is rejected, so it says nothing on its own.
+const optionalText = (target: any, key: string) =>
+  computed({
+    get: (): string => target.value[key] ?? '',
+    set: (v: string) => {
+      const trimmed = (v ?? '').trim()
+      if (trimmed) target.value[key] = trimmed
+      else delete target.value[key]
+    },
+  })
+const inHandshakeTimeout = optionalText(inTls, 'handshake_timeout')
+const outHandshakeTimeout = optionalText(outTls, 'handshake_timeout')
+const spoofMethodRaw = optionalText(outTls, 'spoof_method')
+const spoofRaw = optionalText(outTls, 'spoof')
+// tlsspoof.ParseOptions refuses "spoof_method requires spoof", and this drawer
+// saves the object as it stands, so the method goes when the SNI does.
+const spoof = computed({
+  get: (): string => spoofRaw.value,
+  set: (v: string) => {
+    spoofRaw.value = v
+    if (spoofRaw.value.length === 0) delete outTls.value.spoof_method
+  },
+})
+const spoofMethod = computed({
+  get: (): string => (spoof.value.length > 0 ? spoofMethodRaw.value : ''),
+  set: (v: string) => { spoofMethodRaw.value = v },
+})
+
 const kernelTx = computed({
   get: () => inTls.value.kernel_tx ?? false,
   set: (v: boolean) => { inTls.value.kernel_tx = v },

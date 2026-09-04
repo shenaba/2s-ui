@@ -57,6 +57,25 @@
       <div style="display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 15px;">
         <SwitchLabel :label="$t('rule.udpDisableDomainUnmapping')" :model-value="!!form.udp_disable_domain_unmapping" @update:model-value="form.udp_disable_domain_unmapping = $event" />
         <SwitchLabel :label="$t('rule.udpConnect')" :model-value="!!form.udp_connect" @update:model-value="form.udp_connect = $event" />
+        <SwitchLabel :label="$t('rule.tlsFragment')" :model-value="!!form.tls_fragment" @update:model-value="form.tls_fragment = $event" />
+        <SwitchLabel :label="$t('rule.tlsRecordFragment')" :model-value="!!form.tls_record_fragment" @update:model-value="form.tls_record_fragment = $event" />
+      </div>
+      <Field v-if="form.tls_fragment" :label="$t('rule.tlsFragmentFallbackDelay')">
+        <input class="input mono" placeholder="500ms" v-model="tlsFragmentFallbackDelay" />
+      </Field>
+      <!-- The forged ClientHello needs elevated privileges and only works on
+           Linux, macOS and Windows; the method decides how the real server
+           rejects the forged segment. -->
+      <div class="grid2">
+        <Field :label="$t('rule.tlsSpoof')" :hint="$t('rule.tlsSpoofHint')">
+          <input class="input mono" placeholder="example.com" v-model="tlsSpoof" />
+        </Field>
+        <Field v-if="tlsSpoof.length > 0" :label="$t('rule.tlsSpoofMethod')">
+          <Select v-model="tlsSpoofMethod">
+            <option value="">{{ $t('ui.none') }}</option>
+            <option v-for="m in tlsSpoofMethods" :key="m" :value="m">{{ m }}</option>
+          </Select>
+        </Field>
       </div>
     </template>
 
@@ -194,6 +213,7 @@ const isNew = computed(() => props.index === -1)
 // match condition keys — full set of the legacy RuleOptions component (components/Rule.vue)
 const MATCH_KEYS = [
   'inbound', 'auth_user', 'ip_version', 'network', 'protocol',
+  'source_mac_address', 'source_hostname', 'package_name_regex',
   'domain', 'domain_suffix', 'domain_keyword', 'domain_regex', 'ip_cidr', 'ip_is_private',
   'port', 'port_range', 'source_ip_cidr', 'source_ip_is_private', 'source_port', 'source_port_range',
   'preferred_by', 'interface_address', 'network_interface_address', 'default_interface_address',
@@ -226,6 +246,30 @@ const actions = [
   { title: 'Sniff', value: 'sniff' },
   { title: 'Resolve', value: 'resolve' },
 ]
+const tlsSpoofMethods = ['wrong-sequence', 'wrong-checksum', 'wrong-ack', 'wrong-md5', 'wrong-timestamp']
+
+const text = (key: string) =>
+  computed({
+    get: (): string => form.value[key] ?? '',
+    set: (v: string) => {
+      const trimmed = (v ?? '').trim()
+      if (trimmed) form.value[key] = trimmed
+      else delete form.value[key]
+    },
+  })
+const tlsSpoofRaw = text('tls_spoof')
+const tlsSpoofMethod = text('tls_spoof_method')
+// "spoof_method requires spoof" -- saveChanges drops the orphan anyway, this
+// keeps the form itself from carrying one in the meantime.
+const tlsSpoof = computed({
+  get: (): string => tlsSpoofRaw.value,
+  set: (v: string) => {
+    tlsSpoofRaw.value = v
+    if (tlsSpoofRaw.value.length === 0) delete form.value.tls_spoof_method
+  },
+})
+const tlsFragmentFallbackDelay = text('tls_fragment_fallback_delay')
+
 const sniffers = [
   { title: 'HTTP', value: 'http' },
   { title: 'TLS', value: 'tls' },
@@ -402,6 +446,19 @@ function saveChanges() {
       newRule.udp_disable_domain_unmapping = form.value.udp_disable_domain_unmapping ? true : undefined
       newRule.udp_connect = form.value.udp_connect ? true : undefined
       newRule.udp_timeout = form.value.udp_timeout?.length > 0 ? form.value.udp_timeout : undefined
+      newRule.tls_fragment = form.value.tls_fragment ? true : undefined
+      newRule.tls_fragment_fallback_delay =
+        form.value.tls_fragment && form.value.tls_fragment_fallback_delay?.length > 0
+          ? form.value.tls_fragment_fallback_delay
+          : undefined
+      newRule.tls_record_fragment = form.value.tls_record_fragment ? true : undefined
+      newRule.tls_spoof = form.value.tls_spoof?.length > 0 ? form.value.tls_spoof : undefined
+      // The method describes how the forged segment is rejected, so it says
+      // nothing without a spoof to reject.
+      newRule.tls_spoof_method =
+        form.value.tls_spoof?.length > 0 && form.value.tls_spoof_method?.length > 0
+          ? form.value.tls_spoof_method
+          : undefined
       break
     case 'reject':
       newRule.method = form.value.method?.length > 0 ? form.value.method : undefined

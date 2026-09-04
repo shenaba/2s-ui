@@ -33,6 +33,11 @@
       <Field label="URL">
         <input class="input mono" style="font-size: 12px;" v-model="form.url" placeholder="https://…/geosite-ads.srs" />
       </Field>
+      <!-- Read once at start when nothing is cached, so the first download does
+           not hold the core up. The set still refreshes in the background. -->
+      <Field :label="$t('ruleset.initialPath')">
+        <input class="input mono" style="font-size: 12px;" v-model="initialPath" placeholder="/etc/sing-box/geosite-ads.srs" />
+      </Field>
       <!-- A shared client and a single outbound are alternatives: http_client
            holds one or the other, so picking either clears the other. -->
       <div class="grid2">
@@ -96,6 +101,7 @@ const kind = computed({
       delete form.value.url
       delete form.value.http_client
       delete form.value.update_interval
+      delete form.value.initial_path
     } else {
       delete form.value.path
     }
@@ -123,6 +129,17 @@ const downloadDetour = computed({
     const client = v.length > 0 ? downloadHttpClient(v) : undefined
     if (client) form.value.http_client = client
     else delete form.value.http_client
+  },
+})
+
+// saveChanges emits the form as it stands, so an emptied field has to leave no
+// key rather than an empty string sing-box would read as a path.
+const initialPath = computed({
+  get: (): string => form.value.initial_path ?? '',
+  set: (v: string) => {
+    const trimmed = (v ?? '').trim()
+    if (trimmed) form.value.initial_path = trimmed
+    else delete form.value.initial_path
   },
 })
 
