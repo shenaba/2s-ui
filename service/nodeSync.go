@@ -154,6 +154,11 @@ type remoteInbound struct {
 
 // nodeClient builds a short-lived HTTP client honouring the node's TLS mode,
 // with the longer push timeout.
+//
+// Every caller must defer closeIdle: the client is short-lived but its
+// Transport's idle pool is not, and letting it fall out of scope leaks one
+// ESTABLISHED socket per call (issue #176 — see nodeIdleConnTimeout). Go
+// through closeIdle rather than the client's own method; it says why.
 func nodePushClient(n *model.Node) *http.Client {
 	c := buildNodeHTTPClient(n)
 	c.Timeout = nodePushTimeout
@@ -167,7 +172,9 @@ func (s *NodeSyncService) FetchNodeInbounds(nodeId uint) ([]remoteInbound, error
 	if err != nil {
 		return nil, err
 	}
-	obj, err := s.nodeGet(node, nodePushClient(node), "inbounds", nil)
+	client := nodePushClient(node)
+	defer closeIdle(client)
+	obj, err := s.nodeGet(node, client, "inbounds", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -220,6 +227,7 @@ func (s *NodeSyncService) AdoptInbounds(nodeId uint, tags []string, actor string
 		return err
 	}
 	client := nodePushClient(node)
+	defer closeIdle(client)
 
 	wanted := map[string]bool{}
 	for _, t := range tags {
@@ -414,6 +422,7 @@ func (s *NodeSyncService) runReconcile(nodeId uint, startGen uint64) error {
 		return common.NewError("node is disabled — enable it before syncing")
 	}
 	client := nodePushClient(node)
+	defer closeIdle(client)
 
 	// tag -> node-local inbound id
 	tagToId, err := s.nodeInboundTagMap(node, client)
@@ -906,6 +915,7 @@ func (s *NodeSyncService) CollectTraffic() {
 
 func (s *NodeSyncService) collectNodeTraffic(node *model.Node) error {
 	client := nodePushClient(node)
+	defer closeIdle(client)
 	current, err := s.actualClusterClients(node, client)
 	if err != nil {
 		return err

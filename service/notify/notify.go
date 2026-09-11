@@ -298,10 +298,17 @@ func httpClient(proxy string) *http.Client {
 	if clientSet && clientProxy == proxy {
 		return clientCache
 	}
+	// The outgoing client is about to be replaced; its idle connections go
+	// through the proxy we are leaving, and a custom Transport holds them
+	// forever unless told otherwise (issue #176). Only ours — closing
+	// DefaultTransport's pool would reach every other caller in the process.
+	if clientCache != nil && clientCache.Transport != http.DefaultTransport {
+		clientCache.CloseIdleConnections()
+	}
 	transport := http.DefaultTransport
 	if proxy != "" {
 		if u, err := url.Parse(proxy); err == nil {
-			transport = &http.Transport{Proxy: http.ProxyURL(u)}
+			transport = &http.Transport{Proxy: http.ProxyURL(u), IdleConnTimeout: 90 * time.Second}
 		} else {
 			logger.Warning("notify: ignoring unparsable proxy ", proxy, ": ", err)
 		}
