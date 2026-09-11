@@ -15,10 +15,10 @@ require (
 	github.com/op/go-logging v0.0.0-20160315200505-970db520ece7
 	github.com/refraction-networking/utls v1.8.2
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/sagernet/sing v0.9.2
+	github.com/sagernet/sing v0.9.3
 	github.com/sagernet/sing-box v1.14.0
 	github.com/sagernet/sing-quic v0.7.0
-	github.com/sagernet/sing-tun v0.9.0
+	github.com/sagernet/sing-tun v0.9.1
 	github.com/sagernet/sing-vmess v0.2.8
 	github.com/shirou/gopsutil/v4 v4.26.8
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
