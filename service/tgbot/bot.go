@@ -101,9 +101,18 @@ func supervise(ctx context.Context) {
 // runSession blocks for as long as one connection lasts: until the panel shuts
 // down, until the bot is switched off, or until its credentials change.
 func runSession(ctx context.Context, cfg service.BotConfig) error {
+	// One client per session, and supervise starts a new session on every
+	// reconnect — so hand its idle connections back rather than leaving a
+	// custom Transport holding them for good (issue #176). Only ours: closing
+	// DefaultTransport's pool would reach every other caller in the process.
+	client := httpClient(cfg.Proxy)
+	if client.Transport != http.DefaultTransport {
+		defer client.CloseIdleConnections()
+	}
+
 	opts := []bot.Option{
 		bot.WithDefaultHandler(dispatch),
-		bot.WithHTTPClient(httpTimeout, httpClient(cfg.Proxy)),
+		bot.WithHTTPClient(httpTimeout, client),
 		// Only what is actually handled. Anything else is bandwidth spent on
 		// updates that get dropped, and Telegram keeps re-sending until the
 		// offset moves past them.
@@ -294,7 +303,7 @@ func httpClient(proxy string) *http.Client {
 	transport := http.DefaultTransport
 	if proxy != "" {
 		if u, err := url.Parse(proxy); err == nil {
-			transport = &http.Transport{Proxy: http.ProxyURL(u)}
+			transport = &http.Transport{Proxy: http.ProxyURL(u), IdleConnTimeout: 90 * time.Second}
 		} else {
 			logger.Warning("tgbot: ignoring unparsable proxy ", proxy, ": ", err)
 		}

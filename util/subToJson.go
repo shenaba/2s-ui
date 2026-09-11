@@ -12,14 +12,21 @@ import (
 	"github.com/shenaba/2s-ui/util/common"
 )
 
-func GetExternalLink(url string) string {
-	tr := &http.Transport{
+// One client for the process, not one per call: a custom Transport holds its
+// idle connections forever (zero IdleConnTimeout) and is never collected, so
+// building one per call leaked a socket for every external link in every
+// subscription fetch (issue #176). Sharing it also lets repeat fetches of the
+// same upstream reuse a connection.
+var externalLinkClient = &http.Client{
+	Transport: &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
+		IdleConnTimeout: 90 * time.Second,
+	},
+	Timeout: 10 * time.Second,
+}
 
-	client := &http.Client{Transport: tr, Timeout: 10 * time.Second}
-
-	response, err := client.Get(url)
+func GetExternalLink(url string) string {
+	response, err := externalLinkClient.Get(url)
 	if err != nil {
 		logger.Warning("sub: Error making HTTP request:", err)
 		return ""
