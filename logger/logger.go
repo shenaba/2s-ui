@@ -3,18 +3,27 @@ package logger
 import (
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/op/go-logging"
 )
 
+type logEntry struct {
+	time  string
+	level logging.Level
+	log   string
+}
+
 var (
-	logger    *logging.Logger
-	logBuffer []struct {
-		time  string
-		level logging.Level
-		log   string
-	}
+	logger *logging.Logger
+
+	// bufferMu guards logBuffer. Every cron job, gin handler and sing-box
+	// connection goroutine appends to it while GetLogs reads it from the /logs
+	// endpoint -- and the re-slice below moves every element, so an
+	// unsynchronised read can hand back a stale header or index past the end.
+	bufferMu  sync.Mutex
+	logBuffer []logEntry
 )
 
 func InitLogger(level logging.Level) {
@@ -99,16 +108,15 @@ func Errorf(format string, args ...interface{}) {
 
 func addToBuffer(level string, newLog string) {
 	t := time.Now()
+	logLevel, _ := logging.LogLevel(level)
+
+	bufferMu.Lock()
+	defer bufferMu.Unlock()
+
 	if len(logBuffer) >= 10240 {
 		logBuffer = logBuffer[1:]
 	}
-
-	logLevel, _ := logging.LogLevel(level)
-	logBuffer = append(logBuffer, struct {
-		time  string
-		level logging.Level
-		log   string
-	}{
+	logBuffer = append(logBuffer, logEntry{
 		time:  t.Format("2006/01/02 15:04:05"),
 		level: logLevel,
 		log:   newLog,
@@ -119,7 +127,13 @@ func GetLogs(c int, level string) []string {
 	var output []string
 	logLevel, _ := logging.LogLevel(level)
 
-	for i := len(logBuffer) - 1; i >= 0 && len(output) <= c; i-- {
+	bufferMu.Lock()
+	defer bufferMu.Unlock()
+
+	// `len(output) < c`, not `<=`: the old condition was still true once the
+	// slice already held c entries, so every call returned one more line than
+	// the caller asked for.
+	for i := len(logBuffer) - 1; i >= 0 && len(output) < c; i-- {
 		if logBuffer[i].level <= logLevel {
 			output = append(output, fmt.Sprintf("%s %s - %s", logBuffer[i].time, logBuffer[i].level, logBuffer[i].log))
 		}
