@@ -87,6 +87,9 @@ d en bin_exists "directory exists yet! Please check the content and delete it ma
 d en got_version "Got s-ui latest version: %s, beginning the installation..."
 d en fetch_fail "Failed to fetch s-ui version, it maybe due to Github API restrictions, please try it later"
 d en download_fail "Downloading s-ui failed, please be sure that your server can access Github"
+d en checksum_ok "Checksum verified."
+d en checksum_fail "Checksum does NOT match. The download may be corrupt or tampered with. Aborting."
+d en no_checksums "No SHA256SUMS published for this release; skipping checksum verification."
 d en begin_install "Beginning the install s-ui %s"
 d en download_ver_fail "download s-ui %s failed, please check the version exists"
 d en extract_fail "Extracting s-ui failed, the archive may be corrupt or the disk is full"
@@ -124,6 +127,9 @@ d fa bin_exists "پوشه هنوز وجود دارد! لطفاً محتوای آ
 d fa got_version "آخرین نسخهٔ s-ui دریافت شد: %s، شروع نصب..."
 d fa fetch_fail "دریافت نسخهٔ s-ui ناموفق بود؛ ممکن است به دلیل محدودیت های Github API باشد، بعداً دوباره تلاش کنید"
 d fa download_fail "دانلود s-ui ناموفق بود؛ مطمئن شوید سرور شما به Github دسترسی دارد"
+d fa checksum_ok "صحت فایل تایید شد."
+d fa checksum_fail "مقدار checksum مطابقت ندارد. فایل دانلودشده خراب یا دستکاری شده است. عملیات متوقف شد."
+d fa no_checksums "برای این نسخه فایل SHA256SUMS منتشر نشده؛ بررسی checksum انجام نشد."
 d fa begin_install "شروع نصب s-ui نسخهٔ %s"
 d fa download_ver_fail "دانلود s-ui نسخهٔ %s ناموفق بود؛ لطفاً از وجود این نسخه مطمئن شوید"
 d fa extract_fail "استخراج s-ui ناموفق بود؛ ممکن است فایل خراب باشد یا فضای دیسک پر باشد"
@@ -161,6 +167,9 @@ d ru bin_exists "каталог всё ещё существует! Провер
 d ru got_version "Получена последняя версия s-ui: %s, начинается установка..."
 d ru fetch_fail "Не удалось получить версию s-ui, возможно из-за ограничений Github API, попробуйте позже"
 d ru download_fail "Не удалось загрузить s-ui, убедитесь, что ваш сервер имеет доступ к Github"
+d ru checksum_ok "Контрольная сумма проверена."
+d ru checksum_fail "Контрольная сумма не совпадает. Файл повреждён или подменён. Прерывание."
+d ru no_checksums "Для этого релиза нет SHA256SUMS; проверка контрольной суммы пропущена."
 d ru begin_install "Начинается установка s-ui %s"
 d ru download_ver_fail "загрузка s-ui %s не удалась, проверьте существование этой версии"
 d ru extract_fail "Не удалось распаковать s-ui: архив повреждён или на диске нет места"
@@ -198,6 +207,9 @@ d vi bin_exists "thư mục vẫn tồn tại! Vui lòng kiểm tra nội dung v
 d vi got_version "Đã lấy phiên bản s-ui mới nhất: %s, bắt đầu cài đặt..."
 d vi fetch_fail "Không thể lấy phiên bản s-ui, có thể do giới hạn của Github API, vui lòng thử lại sau"
 d vi download_fail "Tải s-ui thất bại, hãy chắc chắn máy chủ của bạn có thể truy cập Github"
+d vi checksum_ok "Đã xác minh checksum."
+d vi checksum_fail "Checksum KHÔNG khớp. Tệp tải về có thể bị hỏng hoặc bị can thiệp. Đang hủy."
+d vi no_checksums "Bản phát hành này không có SHA256SUMS; bỏ qua xác minh checksum."
 d vi begin_install "Bắt đầu cài đặt s-ui %s"
 d vi download_ver_fail "tải s-ui %s thất bại, vui lòng kiểm tra phiên bản có tồn tại không"
 d vi extract_fail "Giải nén s-ui thất bại, tệp có thể bị hỏng hoặc đĩa đã đầy"
@@ -235,6 +247,9 @@ d zhcn bin_exists "目录仍然存在！请检查内容并在迁移后手动删�
 d zhcn got_version "已获取 s-ui 最新版本：%s，开始安装..."
 d zhcn fetch_fail "获取 s-ui 版本失败，可能是由于 Github API 限制，请稍后再试"
 d zhcn download_fail "下载 s-ui 失败，请确保您的服务器可以访问 Github"
+d zhcn checksum_ok "校验和已验证。"
+d zhcn checksum_fail "校验和不匹配，下载文件可能已损坏或被篡改。已中止。"
+d zhcn no_checksums "此版本未发布 SHA256SUMS，已跳过校验和验证。"
 d zhcn begin_install "开始安装 s-ui %s"
 d zhcn download_ver_fail "下载 s-ui %s 失败，请检查该版本是否存在"
 d zhcn extract_fail "解压 s-ui 失败，压缩包可能已损坏或磁盘空间不足"
@@ -272,6 +287,9 @@ d zhtw bin_exists "目錄仍然存在！請檢查內容並在遷移後手動刪�
 d zhtw got_version "已取得 s-ui 最新版本：%s，開始安裝..."
 d zhtw fetch_fail "取得 s-ui 版本失敗，可能是由於 Github API 限制，請稍後再試"
 d zhtw download_fail "下載 s-ui 失敗，請確保您的伺服器可以存取 Github"
+d zhtw checksum_ok "校驗和已驗證。"
+d zhtw checksum_fail "校驗和不相符，下載檔案可能已損毀或被竄改。已中止。"
+d zhtw no_checksums "此版本未發布 SHA256SUMS，已略過校驗和驗證。"
 d zhtw begin_install "開始安裝 s-ui %s"
 d zhtw download_ver_fail "下載 s-ui %s 失敗，請檢查該版本是否存在"
 d zhtw extract_fail "解壓 s-ui 失敗，壓縮檔可能已損毀或磁碟空間不足"
@@ -518,6 +536,50 @@ abort_install() {
     exit 1
 }
 
+# verify_checksum <tag> <file> -- check the downloaded archive against the
+# SHA256SUMS the release publishes.
+#
+# This script runs as root and hands what it downloads straight to tar and
+# then to systemd, so an archive that is not what the release built is the
+# worst thing that can happen here. release.yml has published SHA256SUMS
+# alongside every tarball for a while -- the panel self-update already
+# checks it, the installer never did.
+#
+# A missing SHA256SUMS is a warning rather than a failure: releases from
+# before that workflow step exist, and refusing to install them would be a
+# worse outcome than saying so. A file that is present and does not match is
+# always fatal.
+verify_checksum() {
+    local tag="$1" file="$2"
+    local sums="/tmp/s-ui-SHA256SUMS"
+    rm -f "$sums"
+
+    if ! wget -q -O "$sums" "https://github.com/shenaba/2s-ui/releases/download/${tag}/SHA256SUMS" || [ ! -s "$sums" ]; then
+        rm -f "$sums"
+        echo -e "${yellow}$(t no_checksums)${plain}"
+        return 0
+    fi
+
+    # The published file lists every platform, so match this archive by its
+    # own basename rather than feeding the whole list to -c.
+    local want
+    want=$(awk -v f="$(basename "$file")" '$2 == f || $2 == "*" f {print $1}' "$sums" | head -n1)
+    rm -f "$sums"
+    if [ -z "$want" ]; then
+        echo -e "${yellow}$(t no_checksums)${plain}"
+        return 0
+    fi
+
+    local got
+    got=$(sha256sum "$file" | awk '{print $1}')
+    if [ "$want" != "$got" ]; then
+        echo -e "${red}$(t checksum_fail)${plain}"
+        return 1
+    fi
+    echo -e "${green}$(t checksum_ok)${plain}"
+    return 0
+}
+
 install_s-ui() {
     cd /tmp/
 
@@ -533,6 +595,7 @@ install_s-ui() {
             echo -e "${red}$(t download_fail) ${plain}"
             exit 1
         fi
+        verify_checksum "${tag}" "/tmp/s-ui-linux-$(arch).tar.gz" || exit 1
     else
         # Every release tag is v-prefixed, so accept the argument with or without it.
         tag="v${1#v}"
@@ -543,6 +606,7 @@ install_s-ui() {
             echo -e "${red}$(t download_ver_fail "${tag}")${plain}"
             exit 1
         fi
+        verify_checksum "${tag}" "/tmp/s-ui-linux-$(arch).tar.gz" || exit 1
     fi
 
     # ${tag} keeps the v prefix for URLs; ${last_version} is bare for display.
