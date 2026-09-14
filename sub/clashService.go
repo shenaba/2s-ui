@@ -1,6 +1,9 @@
 package sub
 
 import (
+	"encoding/base64"
+	"encoding/pem"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -61,6 +64,78 @@ const ProxyGroups = `- name: Proxy
   interval: 300
   tolerance: 50
 `
+
+// portHoppingRanges renders server_ports the way mihomo's `ports` wants them,
+// with a dash instead of sing-box's colon.
+//
+// It accepts a numeric entry as well as a string one: sing-box writes a single
+// port as a number, and the bare .(string) this replaces folded those into an
+// empty string, so `[443,"20000:30000"]` reached mihomo as ",20000-30000" and
+// `[443]` as "". util.LinkGenerator's portHoppingParam already handled both --
+// this is the Clash half of the same field.
+func portHoppingRanges(v interface{}) string {
+	entries, ok := v.([]interface{})
+	if !ok || len(entries) == 0 {
+		return ""
+	}
+	ports := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		switch p := entry.(type) {
+		case string:
+			ports = append(ports, strings.ReplaceAll(p, ":", "-"))
+		case float64:
+			ports = append(ports, fmt.Sprintf("%.0f", p))
+		}
+	}
+	return strings.Join(ports, ",")
+}
+
+// echConfigPemType is the block sing-box writes for an ECH config; its key goes
+// into an "ECH KEYS" block, which must never leave the panel.
+const echConfigPemType = "ECH CONFIGS"
+
+// echConfigForClash converts a stored ECH config into what mihomo's ech-opts
+// wants, and returns "" when there is nothing usable to convert.
+//
+// The two sides disagree on shape. sing-box holds the PEM text line by line
+// (common/tls/ech.go joins the list with newlines and pem.Decodes it, block
+// type "ECH CONFIGS"), while mihomo wants the bare base64 of the ECHConfigList
+// with no armor around it.
+//
+// Decoding the PEM is what makes that robust. Slicing the list positionally --
+// everything but the first and last entry -- is right only when it holds
+// exactly BEGIN, one body line, END: generateECHKeyPair splits a PEM that ends
+// in a newline, so the panel's own output carries a trailing empty entry, and a
+// body over 64 characters wraps onto a second line. Both shapes left the END
+// marker in the value mihomo received.
+//
+// Concatenating every line instead, which upstream changed this to in 1.6.1,
+// hands mihomo the armor in every case. Do not follow it.
+func echConfigForClash(config []interface{}) string {
+	lines := make([]string, 0, len(config))
+	for _, line := range config {
+		if s, ok := line.(string); ok {
+			lines = append(lines, s)
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	// The type is checked, not just the parse. pem.Decode is just as happy with
+	// an "ECH KEYS" or "CERTIFICATE" block, and generateECHKeyPair hands the
+	// operator the config PEM and the key PEM concatenated into one array while
+	// the field itself is a free-text textarea -- so pasting the wrong half
+	// would have published the ECH private key to every subscriber, silently.
+	block, _ := pem.Decode([]byte(strings.Join(lines, "\n") + "\n"))
+	if block == nil || block.Type != echConfigPemType {
+		logger.Warning("sub: stored ECH config is not a ", echConfigPemType,
+			" PEM block, omitting ech-opts")
+		return ""
+	}
+	// Standard base64 with padding, which is byte for byte the PEM body this
+	// used to concatenate -- so a config that already worked keeps working.
+	return base64.StdEncoding.EncodeToString(block.Bytes)
+}
 
 func (s *ClashService) GetClash(subId string) (*string, []string, error) {
 
@@ -179,13 +254,8 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 				}
 			}
 
-			if portLists, ok := obMap["server_ports"].([]interface{}); ok {
-				var ports []string
-				for _, portList := range portLists {
-					portRange, _ := portList.(string)
-					ports = append(ports, strings.ReplaceAll(portRange, ":", "-"))
-				}
-				proxy["ports"] = strings.Join(ports, ",")
+			if ports := portHoppingRanges(obMap["server_ports"]); ports != "" {
+				proxy["ports"] = ports
 			}
 		case "anytls":
 			proxy["password"] = obMap["password"]
@@ -244,27 +314,37 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 		}
 
 		// TLS params
+		//
+		// A missing enabled key means off, the same reading the link builders
+		// use. It used to mean on here (only an explicit false turned TLS off),
+		// so one hand-written or imported row produced a Clash proxy with the
+		// full TLS block and a share link with none at all.
 		tls, isTls := obMap["tls"].(map[string]interface{})
 		if isTls {
-			tlsEnabled, ok := tls["enabled"].(bool)
-			if ok && !tlsEnabled {
-				isTls = false
-			}
+			isTls = util.AsBool(tls["enabled"])
 		}
 		if isTls {
-			proxy["tls"] = tls["enabled"]
+			// A literal true, not the value read back: an absent key wrote
+			// `tls: null` into the YAML, and mihomo wants a bool there.
+			proxy["tls"] = true
 
 			switch t {
 			case "hysteria", "hysteria2", "tuic":
 				proxy["alpn"] = []string{"h3"}
 			default:
-				if alpn, ok := tls["alpn"].([]interface{}); ok {
+				// Through the same reader the link builders use, rather than
+				// passing the raw []interface{} on: mihomo decodes alpn into a
+				// []string, so one non-string entry poisons the whole proxy.
+				if alpn := util.AsStringList(tls["alpn"]); len(alpn) > 0 {
 					proxy["alpn"] = alpn
 				}
 			}
 
 			// Add reality if exists
-			if reality, ok := tls["reality"].(map[string]interface{}); ok && reality["enabled"].(bool) {
+			// Comma-ok on enabled as well: a config written by hand, or one
+			// carried over from an older schema, can leave the key absent, and
+			// the bare assertion took the whole subscription endpoint down.
+			if reality, ok := tls["reality"].(map[string]interface{}); ok && util.AsBool(reality["enabled"]) {
 				reality_opts := make(map[string]interface{})
 				if pbk, ok := reality["public_key"].(string); ok {
 					reality_opts["public-key"] = pbk
@@ -295,15 +375,13 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 				proxy["fingerprint"] = fp
 			}
 			// ech outbounds
-			if ech, ok := tls["ech"].(map[string]interface{}); ok && ech["enabled"].(bool) {
+			if ech, ok := tls["ech"].(map[string]interface{}); ok && util.AsBool(ech["enabled"]) {
 				ech_config, _ := ech["config"].([]interface{})
-				ech_string := ""
-				for i := 1; i < len(ech_config)-1; i++ {
-					ech_string += ech_config[i].(string)
-				}
-				proxy["ech-opts"] = map[string]interface{}{
-					"enable": true,
-					"config": ech_string,
+				if ech_string := echConfigForClash(ech_config); ech_string != "" {
+					proxy["ech-opts"] = map[string]interface{}{
+						"enable": true,
+						"config": ech_string,
+					}
 				}
 			}
 		}
@@ -314,12 +392,12 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 			switch tt {
 			case "http":
 				httpOpts := make(map[string]interface{})
-				if path, ok := transport["path"].([]interface{}); ok {
+				if path, ok := transport["path"].([]interface{}); ok && len(path) > 0 {
 					httpOpts["path"] = path[0]
 				} else if path, ok := transport["path"].(string); ok {
 					httpOpts["path"] = path
 				}
-				if host, ok := transport["host"].([]interface{}); ok {
+				if host, ok := transport["host"].([]interface{}); ok && len(host) > 0 {
 					httpOpts["host"] = host[0]
 				}
 				if isTls {
@@ -327,7 +405,19 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 					proxy["h2-opts"] = httpOpts
 				} else {
 					proxy["network"] = "http"
-					proxy["http-opts"] = map[string]interface{}{"path": []interface{}{httpOpts["path"]}, "host": httpOpts["host"]}
+					// Only the keys that are actually set. Reading them back
+					// unconditionally emitted `path: [null]` and `host: null`
+					// for a transport that carries neither, and mihomo decodes
+					// both as strings. The empty-array case reaches here now
+					// that the bounds check above stops it panicking.
+					httpProxyOpts := make(map[string]interface{}, 2)
+					if path, ok := httpOpts["path"]; ok {
+						httpProxyOpts["path"] = []interface{}{path}
+					}
+					if host, ok := httpOpts["host"]; ok {
+						httpProxyOpts["host"] = host
+					}
+					proxy["http-opts"] = httpProxyOpts
 				}
 			case "ws", "httpupgrade":
 				proxy["network"] = "ws"
