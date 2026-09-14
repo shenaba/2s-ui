@@ -124,6 +124,11 @@ func (s *UserService) CheckUser(username string, password string, code string, r
 		First(user).
 		Error
 	if database.IsNotFound(err) {
+		// Same work a real check would cost, so an unknown username cannot be
+		// told apart from a known one by how long the answer takes. The login
+		// limiter counts against the username as well as the source IP, which
+		// narrows the window, but the difference is a whole bcrypt round.
+		util.BurnPasswordCheck(password)
 		return nil, rejected
 	} else if err != nil {
 		logger.Warning("check user err:", err, " IP: ", remoteIP)
@@ -195,11 +200,30 @@ func (s *UserService) GetUsers() (*[]model.User, error) {
 	return &users, nil
 }
 
-func (s *UserService) ChangePass(id string, oldPass string, newUser string, newPass string) error {
+// ChangePass rewrites the credentials of the logged-in user.
+//
+// The account comes from the session, not from an id in the form. The panel has
+// a single admin today, so posting somebody else's id only failed to find a row
+// -- but nothing stops a second account existing, and the caller already knows
+// who is asking.
+func (s *UserService) ChangePass(loginUser string, oldPass string, newUser string, newPass string) error {
+	if loginUser == "" {
+		return common.NewError("not logged in")
+	}
+	if newUser == "" {
+		return common.NewError("username can not be empty")
+	}
+	if newPass == "" {
+		// Unchecked, this stored a bcrypt hash of "" and the panel then
+		// authenticated anyone who submitted an empty password: nothing on the
+		// login path rejects one either. Only the form was stopping it.
+		return common.NewError("password can not be empty")
+	}
+
 	db := database.GetDB()
 	user := &model.User{}
-	err := db.Model(model.User{}).Where("id = ?", id).First(user).Error
-	if err != nil || database.IsNotFound(err) {
+	err := db.Model(model.User{}).Where("username = ?", loginUser).First(user).Error
+	if err != nil {
 		return err
 	}
 	if !util.CheckPassword(oldPass, user.Password) {
@@ -341,7 +365,24 @@ func (s *UserService) AddToken(username string, expiry int64, desc string) (stri
 	return token.Token, nil
 }
 
-func (s *UserService) DeleteToken(id string) error {
+// DeleteToken removes one of the caller's own API tokens.
+//
+// The owner check is the point: the id came from the form with no constraint at
+// all, so any authenticated caller could revoke any other account's tokens by
+// counting upwards. Reporting "no such token" rather than succeeding on zero
+// rows also tells the operator their click did nothing.
+func (s *UserService) DeleteToken(loginUser string, id string) error {
+	if loginUser == "" {
+		return common.NewError("not logged in")
+	}
 	db := database.GetDB()
-	return db.Model(model.Tokens{}).Where("id = ?", id).Delete(&model.Tokens{}).Error
+	res := db.Where("id = ? AND user_id = (SELECT id FROM users WHERE username = ?)", id, loginUser).
+		Delete(&model.Tokens{})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return common.NewError("no such token")
+	}
+	return nil
 }

@@ -385,11 +385,13 @@ func (a *ApiService) Login(c *gin.Context) {
 }
 
 func (a *ApiService) ChangePass(c *gin.Context) {
-	id := c.Request.FormValue("id")
+	// From the session, not from the form: the id the form posted named which
+	// account to rewrite, with nothing checking it belonged to the caller.
+	loginUser := GetLoginUser(c)
 	oldPass := c.Request.FormValue("oldPass")
 	newUsername := c.Request.FormValue("newUsername")
 	newPass := c.Request.FormValue("newPass")
-	err := a.UserService.ChangePass(id, oldPass, newUsername, newPass)
+	err := a.UserService.ChangePass(loginUser, oldPass, newUsername, newPass)
 	if err == nil {
 		logger.Info("change user credentials success")
 		// Websocket auth is checked at the handshake only, so sockets opened
@@ -625,8 +627,9 @@ func (a *ApiService) AddToken(c *gin.Context) {
 }
 
 func (a *ApiService) DeleteToken(c *gin.Context) {
+	loginUser := GetLoginUser(c)
 	tokenId := c.Request.FormValue("id")
-	err := a.UserService.DeleteToken(tokenId)
+	err := a.UserService.DeleteToken(loginUser, tokenId)
 	jsonMsg(c, "", err)
 }
 
