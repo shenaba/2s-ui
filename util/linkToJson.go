@@ -360,7 +360,10 @@ func ss(u *url.URL, i int) (*map[string]interface{}, string, error) {
 	method := u.User.Username()
 	password, ok := u.User.Password()
 	if !ok {
-		decrypted := StrOrBase64Encoded(method)
+		// Any base64 form: SIP002 mandates base64url without padding, which is
+		// what this panel now writes and what third-party links carry, while
+		// links written before that are standard base64.
+		decrypted := StrOrBase64AnyEncoded(method)
 		decrypted_arr := strings.Split(decrypted, ":")
 		if len(decrypted_arr) > 1 {
 			method = decrypted_arr[0]
