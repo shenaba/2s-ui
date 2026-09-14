@@ -855,7 +855,7 @@ func (s *ClientService) DepleteClients() ([]uint, []string, error) {
 			Actor:    "DepleteJob",
 			Key:      "clients",
 			Action:   "disable",
-			Obj:      json.RawMessage("\"" + client.Name + "\""),
+			Obj:      changeObjName(client.Name),
 		})
 	}
 
@@ -1018,6 +1018,20 @@ func publishClientEvents(depleted []model.Client, expiring []expiringClient) {
 	}
 }
 
+// changeObjName encodes a client name for the changes log.
+//
+// Built by concatenation, a name holding a quote or a backslash produced
+// invalid JSON in the Obj column -- and cmd/migration/1_1.go already exists to
+// repair the previous generation of exactly this bug.
+func changeObjName(name string) json.RawMessage {
+	encoded, err := json.Marshal(name)
+	if err != nil {
+		// json.Marshal of a string cannot fail, but never write broken JSON.
+		return json.RawMessage(`""`)
+	}
+	return json.RawMessage(encoded)
+}
+
 // ResetClients applies the per-client periodic reset. It returns the affected
 // local inbound ids (to hot-restart) and the names it re-enabled, which the
 // caller has to fan out to nodes for the same reason DepleteJob fans out a
@@ -1028,9 +1042,17 @@ func (s *ClientService) ResetClients(tx *gorm.DB, dt int64) ([]uint, []string, b
 	var changes []model.Changes
 	var inboundIds []uint
 	var reenabled []string
+	// reset_days is a period, and zero is not one. Every block below computes a
+	// date as dt + reset_days*86400, so at zero the first sets Expiry to right
+	// now (a client dead the instant it sends a byte), and the third sets
+	// NextReset to dt -- which matches again on the very next tick, resetting
+	// the counters every minute so the volume quota is never reached. A row like
+	// that is misconfigured either way; leaving it untouched keeps it visible
+	// rather than quietly breaking it. The panel forms cannot produce one (the
+	// toggle writes 1 and the input has min=1), but apiv2 and older rows can.
 	// Set delay start without periodic reset
 	err = tx.Model(model.Client{}).
-		Where("enable = true AND delay_start = true AND auto_reset = false AND (Up + Down) > 0").Find(&resetClients).Error
+		Where("enable = true AND delay_start = true AND auto_reset = false AND reset_days > 0 AND (Up + Down) > 0").Find(&resetClients).Error
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -1042,14 +1064,14 @@ func (s *ClientService) ResetClients(tx *gorm.DB, dt int64) ([]uint, []string, b
 			Actor:    "ResetJob",
 			Key:      "clients",
 			Action:   "reset",
-			Obj:      json.RawMessage("\"" + client.Name + "\""),
+			Obj:      changeObjName(client.Name),
 		})
 	}
 	allClients = append(allClients, resetClients...)
 
 	// Set delay start with periodic reset
 	err = tx.Model(model.Client{}).
-		Where("enable = true AND delay_start = true AND auto_reset = true AND (Up + Down) > 0").Find(&resetClients).Error
+		Where("enable = true AND delay_start = true AND auto_reset = true AND reset_days > 0 AND (Up + Down) > 0").Find(&resetClients).Error
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -1061,14 +1083,14 @@ func (s *ClientService) ResetClients(tx *gorm.DB, dt int64) ([]uint, []string, b
 			Actor:    "ResetJob",
 			Key:      "clients",
 			Action:   "reset",
-			Obj:      json.RawMessage("\"" + client.Name + "\""),
+			Obj:      changeObjName(client.Name),
 		})
 	}
 	allClients = append(allClients, resetClients...)
 
 	// Set periodic reset
 	err = tx.Model(model.Client{}).
-		Where("delay_start = false AND auto_reset = true AND next_reset < ?", dt).Find(&resetClients).Error
+		Where("delay_start = false AND auto_reset = true AND reset_days > 0 AND next_reset < ?", dt).Find(&resetClients).Error
 	if err != nil {
 		return nil, nil, false, err
 	}
