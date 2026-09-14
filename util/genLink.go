@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/shenaba/2s-ui/database/model"
+	"github.com/shenaba/2s-ui/logger"
 	"github.com/shenaba/2s-ui/util/common"
 )
 
@@ -56,6 +58,13 @@ func LinkGenerator(clientConfig json.RawMessage, i *model.Inbound, hostname stri
 		}
 	} else {
 		for index, addr := range Addrs {
+			if addr == nil {
+				// A JSON null in the addrs column decodes to a nil map, and the
+				// writes below would panic on it. Reading from one is legal, so
+				// the guarded read on the next line was never enough.
+				Addrs[index] = map[string]interface{}{}
+				addr = Addrs[index]
+			}
 			addrRemark, _ := addr["remark"].(string)
 			Addrs[index]["remark"] = JoinRemark(clientRemark, i.Tag+addrRemark)
 			if i.TlsId > 0 {
@@ -87,13 +96,16 @@ func LinkGenerator(clientConfig json.RawMessage, i *model.Inbound, hostname stri
 
 	switch i.Type {
 	case "socks":
-		return socksLink(userConfig["socks"], Addrs)
+		return socksLink(userConfig["socks"], Addrs, "")
 	case "http":
-		return httpLink(userConfig["http"], Addrs)
+		return httpLink(userConfig["http"], Addrs, "")
 	case "mixed":
+		// Only the mixed case suffixes: a socks-only inbound has nothing to be
+		// told apart from, and renaming its nodes would read as a new node to
+		// every client that already has it.
 		return append(
-			socksLink(userConfig["socks"], Addrs),
-			httpLink(userConfig["http"], Addrs)...,
+			socksLink(userConfig["socks"], Addrs, socksRemarkSuffix),
+			httpLink(userConfig["http"], Addrs, httpRemarkSuffix)...,
 		)
 	case "shadowsocks":
 		return shadowsocksLink(userConfig, *inbound, Addrs)
@@ -116,6 +128,26 @@ func LinkGenerator(clientConfig json.RawMessage, i *model.Inbound, hostname stri
 	}
 
 	return []string{}
+}
+
+// reportedTlsRows remembers which TLS rows have already been complained about.
+//
+// prepareTls runs once per client per inbound, so a single TLS save on a
+// malformed row fans a warning out across every client that references it --
+// five hundred identical lines into a ten-thousand-line ring buffer, which
+// evicts whatever the operator was actually trying to read. The diagnosis still
+// has to live here rather than in TlsService.Save: a row can also arrive
+// through ImportDB or apiv2 without passing through that path.
+//
+// Keyed on the row id, so fixing a row and breaking it again reports nothing
+// until the next restart. That is the right trade for a warning.
+var reportedTlsRows sync.Map
+
+func warnTlsRowOnce(id uint, args ...interface{}) {
+	if _, seen := reportedTlsRows.LoadOrStore(id, struct{}{}); seen {
+		return
+	}
+	logger.Warning(args...)
 }
 
 func prepareTls(t *model.Tls) map[string]interface{} {
@@ -143,8 +175,29 @@ func prepareTls(t *model.Tls) map[string]interface{} {
 		case "enabled", "server_name", "alpn":
 			oTls[k] = v
 		case "reality":
-			reality := v.(map[string]interface{})
-			clientReality := oTls["reality"].(map[string]interface{})
+			// Both assertions used to be bare and panicked on a row whose
+			// server half carries reality while its client half does not --
+			// hand-written, or carried over from an older schema.
+			reality, okServer := v.(map[string]interface{})
+			if !okServer {
+				warnTlsRowOnce(t.Id, "sub: tls row ", t.Id,
+					" has a reality field that is not an object, skipping it")
+				continue
+			}
+			// Repaired rather than skipped, the same way a null client column is
+			// repaired above. Dropping it produced a link claiming plain TLS
+			// against a reality listener: broken either way, since the public
+			// key only exists in the client half, but a link that says reality
+			// is refused by the client on import instead of failing later as an
+			// unexplained handshake error. Either way the operator has to hear
+			// about it -- this is the one row the panel cannot render.
+			clientReality, okClient := oTls["reality"].(map[string]interface{})
+			if !okClient {
+				warnTlsRowOnce(t.Id, "sub: tls row ", t.Id,
+					" has reality on the server side only; generated links carry",
+					" no public key until the client side is set")
+				clientReality = map[string]interface{}{}
+			}
 			clientReality["enabled"] = reality["enabled"]
 			if shortIDs, hasSIds := reality["short_id"].([]interface{}); hasSIds && len(shortIDs) > 0 {
 				clientReality["short_id"] = shortIDs[common.RandomInt(len(shortIDs))]
@@ -156,22 +209,60 @@ func prepareTls(t *model.Tls) map[string]interface{} {
 	return oTls
 }
 
-func socksLink(userConfig map[string]interface{}, addrs []map[string]interface{}) []string {
+// proxyUserinfo builds the userinfo for the two username/password protocols.
+// Nil when neither is set: the inbound takes no authentication, and the old
+// code formatted the two absent values straight into the link, which produced a
+// literal "%!s(<nil>):%!s(<nil>)" as the credentials.
+func proxyUserinfo(userConfig map[string]interface{}) *url.Userinfo {
+	user := AsString(userConfig["username"])
+	pass := AsString(userConfig["password"])
+	if user == "" && pass == "" {
+		return nil
+	}
+	return url.UserPassword(user, pass)
+}
+
+// remarkSuffix distinguishes the two links a mixed inbound emits for one
+// address. Without it both carry the same node name and a subscriber cannot
+// tell which is which -- the same reason naiveLink appends -h2/-h3 and
+// sub/jsonService.go's pushMixed appends these exact two.
+const (
+	socksRemarkSuffix = "-socks"
+	httpRemarkSuffix  = "-http"
+)
+
+func socksLink(userConfig map[string]interface{}, addrs []map[string]interface{}, remarkSuffix string) []string {
+	userinfo := proxyUserinfo(userConfig)
 	var links []string
 	for _, addr := range addrs {
-		links = append(links, fmt.Sprintf("socks5://%s:%s@%s:%d", userConfig["username"], userConfig["password"], HostForURI(addr["server"].(string)), uint(addr["server_port"].(float64))))
+		port, _ := addr["server_port"].(float64)
+		// The remark was dropped here, so a socks link arrived unnamed while
+		// every other protocol carried its node name.
+		links = append(links, linkURL("socks5", userinfo,
+			AsString(addr["server"]), port, nil, AsString(addr["remark"])+remarkSuffix))
 	}
 	return links
 }
 
-func httpLink(userConfig map[string]interface{}, addrs []map[string]interface{}) []string {
+func httpLink(userConfig map[string]interface{}, addrs []map[string]interface{}, remarkSuffix string) []string {
+	userinfo := proxyUserinfo(userConfig)
 	var links []string
-	protocol := "http"
 	for _, addr := range addrs {
-		if addr["tls"] != nil {
+		// Decided per address, not carried over: one TLS-enabled address used
+		// to make every address after it https, whatever its own setting.
+		//
+		// And decided on enabled, not on the key being present: LinkGenerator
+		// attaches the tls map to every address whenever the inbound references
+		// a TLS row at all, so a row with enabled:false used to produce https
+		// links to a plaintext listener. prepareTls can also return a nil map,
+		// which is a typed nil and satisfies a bare != nil.
+		protocol := "http"
+		if tls, ok := addr["tls"].(map[string]interface{}); ok && AsBool(tls["enabled"]) {
 			protocol = "https"
 		}
-		links = append(links, fmt.Sprintf("%s://%s:%s@%s:%d", protocol, userConfig["username"], userConfig["password"], HostForURI(addr["server"].(string)), uint(addr["server_port"].(float64))))
+		port, _ := addr["server_port"].(float64)
+		links = append(links, linkURL(protocol, userinfo,
+			AsString(addr["server"]), port, nil, AsString(addr["remark"])+remarkSuffix))
 	}
 	return links
 }
@@ -190,7 +281,9 @@ func shadowsocksLink(
 	pass, _ := userConfig[ShadowsocksClientConfigKey(method)]["password"].(string)
 	userPass = append(userPass, pass)
 
-	uriBase := fmt.Sprintf("ss://%s", toBase64([]byte(fmt.Sprintf("%s:%s", method, strings.Join(userPass, ":")))))
+	// SIP002 specifies base64url without padding for the userinfo. Standard
+	// base64 emits '+', '/' and '=', which several clients reject outright.
+	userInfo := base64.RawURLEncoding.EncodeToString([]byte(method + ":" + strings.Join(userPass, ":")))
 
 	var plugin, pluginOpts string
 	if raw, ok := inbound["out_json"].(json.RawMessage); ok {
@@ -204,16 +297,25 @@ func shadowsocksLink(
 	var links []string
 	for _, addr := range addrs {
 		port, _ := addr["server_port"].(float64)
-		link := fmt.Sprintf("%s@%s:%.0f", uriBase, HostForURI(addr["server"].(string)), port)
+		var params []LinkParam
 		if plugin != "" {
 			pluginVal := plugin
 			if pluginOpts != "" {
 				pluginVal += ";" + pluginOpts
 			}
-			link += "?plugin=" + url.QueryEscape(pluginVal)
+			params = append(params, LinkParam{"plugin", pluginVal})
 		}
-		link += "#" + addr["remark"].(string)
-		links = append(links, link)
+		// Through url.URL, so a remark holding a space or a '#' is escaped
+		// rather than concatenated straight into the fragment.
+		u := url.URL{
+			Scheme:   "ss",
+			Host:     fmt.Sprintf("%s:%.0f", HostForURI(AsString(addr["server"])), port),
+			Fragment: AsString(addr["remark"]),
+		}
+		u.RawQuery = encodeParams(params)
+		// url.URL would re-escape a pre-encoded userinfo, so the SIP002 blob is
+		// spliced in after the scheme.
+		links = append(links, strings.Replace(u.String(), "ss://", "ss://"+userInfo+"@", 1))
 	}
 	return links
 }
@@ -236,11 +338,7 @@ func naiveLink(
 			if sni, ok := tls["server_name"].(string); ok {
 				params = append(params, LinkParam{"peer", sni})
 			}
-			if alpn, ok := tls["alpn"].([]interface{}); ok {
-				alpnList := make([]string, len(alpn))
-				for i, v := range alpn {
-					alpnList[i] = v.(string)
-				}
+			if alpnList := AsStringList(tls["alpn"]); len(alpnList) > 0 {
 				params = append(params, LinkParam{"alpn", strings.Join(alpnList, ",")})
 			}
 			if insecure, ok := tls["insecure"].(bool); ok && insecure {
@@ -254,8 +352,10 @@ func naiveLink(
 		}
 
 		port, _ := addr["server_port"].(float64)
-		uri := baseUri + toBase64([]byte(fmt.Sprintf("%s:%s@%s:%.0f", username, password, HostForURI(addr["server"].(string)), port)))
-		links = append(links, addParams(uri, params, addr["remark"].(string)))
+		server := AsString(addr["server"])
+		remark := AsString(addr["remark"])
+		uri := baseUri + toBase64([]byte(fmt.Sprintf("%s:%s@%s:%.0f", username, password, HostForURI(server), port)))
+		links = append(links, addParams(uri, params, remark))
 
 		// The legacy http2:// form above carries no transport, so a client cannot
 		// tell an h2 listener from an h3 one. Emit the plain naive+ form too, one
@@ -270,9 +370,6 @@ func naiveLink(
 		default:
 			schemes = []string{"naive+https", "naive+quic"}
 		}
-		// Userinfo has its own escaping set; QueryEscape would turn a space into
-		// a '+', which reads back as a literal '+' here.
-		userInfo := url.UserPassword(username, password).String()
 		for _, scheme := range schemes {
 			// Every link for one address would otherwise carry the same remark and
 			// reach the client as identically named nodes. Only the new ones get a
@@ -282,8 +379,11 @@ func naiveLink(
 			if scheme == "naive+quic" {
 				suffix = "-h3"
 			}
-			plainUri := fmt.Sprintf("%s://%s@%s:%.0f", scheme, userInfo, HostForURI(addr["server"].(string)), port)
-			links = append(links, addParams(plainUri, params, addr["remark"].(string)+suffix))
+			// url.URL escapes the userinfo with its own set: a space becomes
+			// %20, where QueryEscape would make it a '+' that reads back as a
+			// literal plus.
+			links = append(links, linkURL(scheme, url.UserPassword(username, password),
+				server, port, params, remark+suffix))
 		}
 	}
 	return links
@@ -294,7 +394,6 @@ func hysteriaLink(
 	inbound map[string]interface{},
 	addrs []map[string]interface{}) []string {
 
-	baseUri := "hysteria://"
 	var links []string
 
 	for _, addr := range addrs {
@@ -319,21 +418,13 @@ func hysteriaLink(
 		} else {
 			params = append(params, LinkParam{"fastopen", "0"})
 		}
-		var outJson map[string]interface{}
-		if err := json.Unmarshal(inbound["out_json"].(json.RawMessage), &outJson); err != nil {
-			return []string{} // Handle error
-		}
-		if mport, ok := outJson["server_ports"].([]interface{}); ok {
-			mportList := make([]string, len(mport))
-			for i, v := range mport {
-				mportList[i] = v.(string)
-			}
-			params = append(params, LinkParam{"mport", strings.Join(mportList, ",")})
+		if mport := portHoppingParam(inbound); mport != "" {
+			params = append(params, LinkParam{"mport", mport})
 		}
 
 		port, _ := addr["server_port"].(float64)
-		uri := fmt.Sprintf("%s%s:%.0f", baseUri, HostForURI(addr["server"].(string)), port)
-		links = append(links, addParams(uri, params, addr["remark"].(string)))
+		links = append(links, linkURL("hysteria", nil,
+			AsString(addr["server"]), port, params, AsString(addr["remark"])))
 	}
 
 	return links
@@ -345,7 +436,6 @@ func hysteria2Link(
 	addrs []map[string]interface{}) []string {
 
 	password, _ := userConfig["password"].(string)
-	baseUri := fmt.Sprintf("%s%s@", "hysteria2://", password)
 	var links []string
 
 	for _, addr := range addrs {
@@ -372,21 +462,13 @@ func hysteria2Link(
 		} else {
 			params = append(params, LinkParam{"fastopen", "0"})
 		}
-		var outJson map[string]interface{}
-		if err := json.Unmarshal(inbound["out_json"].(json.RawMessage), &outJson); err != nil {
-			return []string{} // Handle error
-		}
-		if mport, ok := outJson["server_ports"].([]interface{}); ok {
-			mportList := make([]string, len(mport))
-			for i, v := range mport {
-				mportList[i] = v.(string)
-			}
-			params = append(params, LinkParam{"mport", strings.Join(mportList, ",")})
+		if mport := portHoppingParam(inbound); mport != "" {
+			params = append(params, LinkParam{"mport", mport})
 		}
 
 		port, _ := addr["server_port"].(float64)
-		uri := fmt.Sprintf("%s%s:%.0f", baseUri, HostForURI(addr["server"].(string)), port)
-		links = append(links, addParams(uri, params, addr["remark"].(string)))
+		links = append(links, linkURL("hysteria2", url.User(password),
+			AsString(addr["server"]), port, params, AsString(addr["remark"])))
 	}
 
 	return links
@@ -397,7 +479,6 @@ func anytlsLink(
 	addrs []map[string]interface{}) []string {
 
 	password, _ := userConfig["password"].(string)
-	baseUri := fmt.Sprintf("%s%s@", "anytls://", password)
 	var links []string
 
 	for _, addr := range addrs {
@@ -407,8 +488,8 @@ func anytlsLink(
 		}
 
 		port, _ := addr["server_port"].(float64)
-		uri := fmt.Sprintf("%s%s:%.0f", baseUri, HostForURI(addr["server"].(string)), port)
-		links = append(links, addParams(uri, params, addr["remark"].(string)))
+		links = append(links, linkURL("anytls", url.User(password),
+			AsString(addr["server"]), port, params, AsString(addr["remark"])))
 	}
 
 	return links
@@ -421,7 +502,6 @@ func tuicLink(
 
 	password, _ := userConfig["password"].(string)
 	uuid, _ := userConfig["uuid"].(string)
-	baseUri := fmt.Sprintf("%s%s:%s@", "tuic://", uuid, password)
 	var links []string
 
 	// udp_relay_mode is a client-side (outbound) param and lives in out_json
@@ -443,8 +523,8 @@ func tuicLink(
 		}
 
 		port, _ := addr["server_port"].(float64)
-		uri := fmt.Sprintf("%s%s:%.0f", baseUri, HostForURI(addr["server"].(string)), port)
-		links = append(links, addParams(uri, params, addr["remark"].(string)))
+		links = append(links, linkURL("tuic", url.UserPassword(uuid, password),
+			AsString(addr["server"]), port, params, AsString(addr["remark"])))
 	}
 
 	return links
@@ -466,16 +546,15 @@ func vlessLink(
 	for _, addr := range addrs {
 		params := make([]LinkParam, len(baseParams))
 		copy(params, baseParams)
-		if tls, ok := addr["tls"].(map[string]interface{}); ok && tls["enabled"].(bool) {
+		if tls, ok := addr["tls"].(map[string]interface{}); ok && AsBool(tls["enabled"]) {
 			getTlsParams(&params, tls, "vless")
 			if flow, ok := userConfig["flow"].(string); ok && isTcp {
 				params = append(params, LinkParam{"flow", flow})
 			}
 		}
 		port, _ := addr["server_port"].(float64)
-		uri := fmt.Sprintf("vless://%s@%s:%.0f", uuid, HostForURI(addr["server"].(string)), port)
-		uri = addParams(uri, params, addr["remark"].(string))
-		links = append(links, uri)
+		links = append(links, linkURL("vless", url.User(uuid),
+			AsString(addr["server"]), port, params, AsString(addr["remark"])))
 	}
 
 	return links
@@ -492,13 +571,12 @@ func trojanLink(
 	for _, addr := range addrs {
 		params := make([]LinkParam, len(baseParams))
 		copy(params, baseParams)
-		if tls, ok := addr["tls"].(map[string]interface{}); ok && tls["enabled"].(bool) {
+		if tls, ok := addr["tls"].(map[string]interface{}); ok && AsBool(tls["enabled"]) {
 			getTlsParams(&params, tls, "trojan")
 		}
 		port, _ := addr["server_port"].(float64)
-		uri := fmt.Sprintf("trojan://%s@%s:%.0f", password, HostForURI(addr["server"].(string)), port)
-		uri = addParams(uri, params, addr["remark"].(string))
-		links = append(links, uri)
+		links = append(links, linkURL("trojan", url.User(password),
+			AsString(addr["server"]), port, params, AsString(addr["remark"])))
 	}
 
 	return links
@@ -528,6 +606,13 @@ func vmessLink(
 			host = p.Value
 		case "path":
 			path = p.Value
+		case "serviceName":
+			// The vmess JSON has no serviceName field; grpc carries the service
+			// name in "path". Dropping it meant every grpc vmess link pointed
+			// at the default service and simply did not connect.
+			if path == "" {
+				path = p.Value
+			}
 		}
 	}
 
@@ -570,7 +655,7 @@ func vmessLink(
 }
 
 func populateVmessTlsParams(obj map[string]interface{}, tlsConfig interface{}) {
-	if tlsMap, ok := tlsConfig.(map[string]interface{}); ok && tlsMap["enabled"].(bool) {
+	if tlsMap, ok := tlsConfig.(map[string]interface{}); ok && AsBool(tlsMap["enabled"]) {
 		obj["tls"] = "tls"
 		var tlsParams []LinkParam
 		getTlsParams(&tlsParams, tlsMap, "vmess")
@@ -597,8 +682,9 @@ func toBase64(d []byte) string {
 	return base64.StdEncoding.EncodeToString(d)
 }
 
-func addParams(uri string, params []LinkParam, remark string) string {
-	URL, _ := url.Parse(uri)
+// encodeParams renders the query. mport and alpn keep their commas, which the
+// client parsers expect unescaped.
+func encodeParams(params []LinkParam) string {
 	var q []string
 	for _, p := range params {
 		switch p.Key {
@@ -608,9 +694,83 @@ func addParams(uri string, params []LinkParam, remark string) string {
 			q = append(q, fmt.Sprintf("%s=%s", p.Key, url.QueryEscape(p.Value)))
 		}
 	}
-	URL.RawQuery = strings.Join(q, "&")
+	return strings.Join(q, "&")
+}
+
+// linkURL assembles a link from its parts instead of formatting a string and
+// parsing it back.
+//
+// That round trip is what turned a client password into a crash: url.Parse
+// refuses a userinfo holding a space or a stray '%', addParams dropped the
+// error, and the nil *url.URL was dereferenced on the next line. One client
+// whose password contained a space took link generation down for every client
+// on the inbound. url.URL escapes the userinfo itself, so there is nothing
+// left here to get wrong.
+func linkURL(scheme string, user *url.Userinfo, host string, port float64, params []LinkParam, remark string) string {
+	u := url.URL{
+		Scheme:   scheme,
+		User:     user,
+		Host:     fmt.Sprintf("%s:%.0f", HostForURI(host), port),
+		Fragment: remark,
+	}
+	u.RawQuery = encodeParams(params)
+	return u.String()
+}
+
+// addParams is the path for links whose authority is already encoded: the
+// base64 payload of http2://. Everything else builds through linkURL.
+func addParams(uri string, params []LinkParam, remark string) string {
+	URL, err := url.Parse(uri)
+	if err != nil || URL == nil {
+		// Reported rather than dereferenced. Every caller that could reach here
+		// with an unparseable string now goes through linkURL instead, so this
+		// is a backstop -- but it used to be the crash itself.
+		logger.Warning("sub: unable to parse a generated link, returning it unadorned: ", err)
+		if q := encodeParams(params); q != "" {
+			uri += "?" + q
+		}
+		if remark != "" {
+			uri += "#" + url.PathEscape(remark)
+		}
+		return uri
+	}
+	URL.RawQuery = encodeParams(params)
 	URL.Fragment = remark
 	return URL.String()
+}
+
+// portHoppingParam reads the multi-port range hysteria and hysteria2 advertise
+// as "mport".
+//
+// It used to assert on inbound["out_json"] and bail out of the whole function
+// when the unmarshal failed, so an inbound whose out_json was never filled --
+// a row from an old backup, or one a migration wrote -- produced no links at
+// all for those two protocols, silently. The port entries were asserted to be
+// strings as well, while sing-box writes a single port as a number.
+func portHoppingParam(inbound map[string]interface{}) string {
+	raw, ok := inbound["out_json"].(json.RawMessage)
+	if !ok || len(raw) == 0 {
+		return ""
+	}
+	var outJson map[string]interface{}
+	if err := json.Unmarshal(raw, &outJson); err != nil {
+		logger.Warning("sub: unable to read out_json for port hopping: ", err)
+		return ""
+	}
+	ports, ok := outJson["server_ports"].([]interface{})
+	if !ok || len(ports) == 0 {
+		return ""
+	}
+	list := make([]string, 0, len(ports))
+	for _, v := range ports {
+		switch p := v.(type) {
+		case string:
+			list = append(list, p)
+		case float64:
+			list = append(list, fmt.Sprintf("%.0f", p))
+		}
+	}
+	return strings.Join(list, ",")
 }
 
 func getTransportParams(t interface{}) []LinkParam {
@@ -629,11 +789,7 @@ func getTransportParams(t interface{}) []LinkParam {
 
 	switch transportType {
 	case "http":
-		if host, ok := trasport["host"].([]interface{}); ok {
-			var hosts []string
-			for _, v := range host {
-				hosts = append(hosts, v.(string))
-			}
+		if hosts := AsStringList(trasport["host"]); len(hosts) > 0 {
 			params = append(params, LinkParam{"host", strings.Join(hosts, ",")})
 		}
 		if path, ok := trasport["path"].(string); ok {
@@ -673,7 +829,7 @@ func getTransportParams(t interface{}) []LinkParam {
 }
 
 func getTlsParams(params *[]LinkParam, tls map[string]interface{}, protocol string) {
-	if reality, ok := tls["reality"].(map[string]interface{}); ok && reality["enabled"].(bool) {
+	if reality, ok := tls["reality"].(map[string]interface{}); ok && AsBool(reality["enabled"]) {
 		*params = append(*params, LinkParam{"security", "reality"})
 		if pbk, ok := reality["public_key"].(string); ok {
 			*params = append(*params, LinkParam{"pbk", pbk})
@@ -701,11 +857,7 @@ func getTlsParams(params *[]LinkParam, tls map[string]interface{}, protocol stri
 	if sni, ok := tls["server_name"].(string); ok {
 		*params = append(*params, LinkParam{"sni", sni})
 	}
-	if alpn, ok := tls["alpn"].([]interface{}); ok {
-		alpnList := make([]string, len(alpn))
-		for i, v := range alpn {
-			alpnList[i] = v.(string)
-		}
+	if alpnList := AsStringList(tls["alpn"]); len(alpnList) > 0 {
 		*params = append(*params, LinkParam{"alpn", strings.Join(alpnList, ",")})
 	}
 }
