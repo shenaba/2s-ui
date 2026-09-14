@@ -434,6 +434,11 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 	var savedIds []uint
 	// Set once the change row is in; the deferred commit is what publishes it.
 	var dt int64
+	// Set when the base config changed. The restart waits for the commit:
+	// launched from inside the transaction, a later failure -- the changes
+	// row, or anything after it -- rolls the write back while the core is
+	// already running a config that was never saved.
+	var restartWith json.RawMessage
 
 	db := database.GetDB()
 	tx := db.Begin()
@@ -450,8 +455,10 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 			// it for the whole TTL, outliving the push that would repair it
 			// (same entry, same cseq, so the SPA drops it as not newer).
 			SetLastUpdate(dt)
-			// Try to start core if it is not running
-			if !corePtr.IsRunning() {
+			if restartWith != nil {
+				go func() { _ = s.restartCoreWithConfig(restartWith) }()
+			} else if !corePtr.IsRunning() {
+				// Try to start core if it is not running
 				s.StartCore()
 			}
 		} else {
@@ -489,7 +496,7 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 		}
 		configData := make(json.RawMessage, len(data))
 		copy(configData, data)
-		go func() { _ = s.restartCoreWithConfig(configData) }()
+		restartWith = configData
 	case "settings":
 		err = s.SettingService.Save(tx, data)
 	case "nodes":
