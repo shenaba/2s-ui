@@ -260,3 +260,128 @@ func TestFillOutJsonSnellDropsFieldsItCannotCarry(t *testing.T) {
 		t.Errorf("the options snell does carry must survive, got %v", out)
 	}
 }
+
+// addTls reads the same TLS row prepareTls does, on the write path: FillOutJson
+// runs on every inbound save and on every certificate renewal through
+// UpdateOutJsons, and the renewal path has no recover in front of it. All four
+// assertions here used to be bare.
+func TestFillOutJsonToleratesLopsidedTls(t *testing.T) {
+	tests := []struct {
+		name   string
+		server string
+		want   string // the nested object that must survive
+	}{
+		{
+			// The server half carries reality, the client half does not.
+			name:   "reality on the server side only",
+			server: `{"enabled":true,"reality":{"enabled":true,"short_id":["ab"]}}`,
+			want:   "reality",
+		},
+		{
+			name:   "ech on the server side only",
+			server: `{"enabled":true,"ech":{"enabled":true,"key":["x"]}}`,
+			want:   "ech",
+		},
+		{
+			// No enabled key at all: the guard itself asserted on it.
+			name:   "reality without enabled",
+			server: `{"enabled":true,"reality":{"short_id":["ab"]}}`,
+		},
+		{
+			name:   "ech without enabled",
+			server: `{"enabled":true,"ech":{"key":["x"]}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inbound := &model.Inbound{
+				Type: "trojan", Tag: "tr-in",
+				TlsId: 1,
+				Tls: &model.Tls{
+					Server: json.RawMessage(tt.server),
+					Client: json.RawMessage(`{"enabled":true}`),
+				},
+				Options: json.RawMessage(`{"listen_port":443}`),
+				OutJson: json.RawMessage(`{}`),
+			}
+			if err := FillOutJson(inbound, "example.com"); err != nil {
+				t.Fatal(err)
+			}
+			var out map[string]interface{}
+			if err := json.Unmarshal(inbound.OutJson, &out); err != nil {
+				t.Fatal(err)
+			}
+			tls, ok := out["tls"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("tls block must survive, got %v", out)
+			}
+			if tt.want == "" {
+				return
+			}
+			if _, ok := tls[tt.want].(map[string]interface{}); !ok {
+				t.Errorf("%q must be carried over to the client config, got %v", tt.want, tls)
+			}
+		})
+	}
+}
+
+// FillOutJson merges into the stored out_json, so a key it stops writing has to
+// be removed explicitly. naiveOut never did, and clearing the QUIC congestion
+// control field left "quic": true and the old algorithm behind (upstream #1243).
+func TestFillOutJsonNaiveClearsStaleQuicFields(t *testing.T) {
+	newInbound := func(options string) *model.Inbound {
+		return &model.Inbound{
+			Type: "naive", Tag: "naive-in",
+			Options: json.RawMessage(options),
+			// What a previous save with bbr_standard selected left behind.
+			OutJson: json.RawMessage(`{"quic":true,"quic_congestion_control":"bbr"}`),
+		}
+	}
+
+	t.Run("the field is cleared", func(t *testing.T) {
+		inbound := newInbound(`{"listen_port":443}`)
+		if err := FillOutJson(inbound, "example.com"); err != nil {
+			t.Fatal(err)
+		}
+		var out map[string]interface{}
+		if err := json.Unmarshal(inbound.OutJson, &out); err != nil {
+			t.Fatal(err)
+		}
+		for _, stale := range []string{"quic", "quic_congestion_control"} {
+			if _, ok := out[stale]; ok {
+				t.Errorf("%q must not survive clearing the field, got %v", stale, out)
+			}
+		}
+	})
+
+	// An empty string is what the form posts for a cleared select, and it used
+	// to satisfy the type assertion and write "quic": true with no algorithm.
+	t.Run("an empty value is not a selection", func(t *testing.T) {
+		inbound := newInbound(`{"listen_port":443,"quic_congestion_control":""}`)
+		if err := FillOutJson(inbound, "example.com"); err != nil {
+			t.Fatal(err)
+		}
+		var out map[string]interface{}
+		if err := json.Unmarshal(inbound.OutJson, &out); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := out["quic"]; ok {
+			t.Errorf("an empty selection must not turn quic on, got %v", out)
+		}
+	})
+
+	t.Run("a real selection still lands", func(t *testing.T) {
+		inbound := newInbound(`{"listen_port":443,"quic_congestion_control":"bbr2_variant"}`)
+		if err := FillOutJson(inbound, "example.com"); err != nil {
+			t.Fatal(err)
+		}
+		var out map[string]interface{}
+		if err := json.Unmarshal(inbound.OutJson, &out); err != nil {
+			t.Fatal(err)
+		}
+		if out["quic"] != true || out["quic_congestion_control"] != "bbr2" {
+			t.Errorf("the selected algorithm must be written, got %v", out)
+		}
+	})
+}
