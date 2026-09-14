@@ -149,6 +149,13 @@ func (s *Server) Start() (err error) {
 
 	s.httpServer = &http.Server{
 		Handler: engine,
+		// Tighter than the panel's. This port faces every client of every
+		// subscriber, not just the operator, and it only ever serves a
+		// generated document -- there is no upload and no long probe here.
+		ReadHeaderTimeout: 20 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 	}
 
 	go func() {
