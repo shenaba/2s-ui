@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/shenaba/2s-ui/logger"
+	"github.com/shenaba/2s-ui/util/common"
 
 	sb "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
@@ -59,9 +59,14 @@ func (c *Core) GetInstance() *Box {
 
 func (c *Core) Start(sbConfig []byte) error {
 	var opt option.Options
-	err := opt.UnmarshalJSONContext(globalCtx, sbConfig)
-	if err != nil {
-		logger.Error("Unmarshal config err:", err.Error())
+	// Returned, not just logged. A config sing-box cannot parse left opt at
+	// its zero value and carried on: NewBox happily builds a box with no
+	// inbounds at all, Start succeeds and IsRunning reports true -- so the
+	// five-second watchdog sees a healthy core and never retries, and the
+	// panel serves nobody while looking fine. Failing here routes it through
+	// the start cooldown and the CoreCrash notification instead.
+	if err := opt.UnmarshalJSONContext(globalCtx, sbConfig); err != nil {
+		return common.NewErrorf("unmarshal sing-box config: %v", err)
 	}
 
 	// Built into a local and published at the end: assigning c.instance first
