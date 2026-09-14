@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"strconv"
 	"sync"
@@ -134,6 +135,12 @@ func (a *APIv2Handler) getHandler(c *gin.Context) {
 
 func (a *APIv2Handler) findUsername(c *gin.Context) string {
 	token := c.Request.Header.Get("Token")
+	if token == "" {
+		// Otherwise an empty header would match a stored token that is somehow
+		// empty, and every comparison below runs for nothing on every
+		// unauthenticated probe.
+		return ""
+	}
 	now := time.Now().Unix()
 	a.tokensMu.RLock()
 	defer a.tokensMu.RUnlock()
@@ -146,7 +153,9 @@ func (a *APIv2Handler) findUsername(c *gin.Context) string {
 		if t.Expiry > 0 && t.Expiry < now {
 			continue
 		}
-		if t.Token == token {
+		// Constant time, so how long the rejection takes does not reveal how
+		// many leading characters of a guess were right.
+		if subtle.ConstantTimeCompare([]byte(t.Token), []byte(token)) == 1 {
 			return t.Username
 		}
 	}
@@ -172,7 +181,12 @@ func (a *APIv2Handler) ReloadTokens() {
 	}
 	var newTokens []TokenInMemory
 	if err = json.Unmarshal(tokens, &newTokens); err != nil {
+		// Published only on success. Installing the half-filled slice from a
+		// failed unmarshal revoked every working token until the next reload --
+		// and the reload only runs on an add or a delete, so the panel's own
+		// node fanout would keep failing with nobody touching anything.
 		logger.Error("unable to load tokens: ", err)
+		return
 	}
 	a.tokensMu.Lock()
 	a.tokens = &newTokens
