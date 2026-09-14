@@ -26,18 +26,45 @@ func AsBool(v interface{}) bool {
 	return b
 }
 
-// AsStringList reads a JSON array that should hold strings, skipping anything
-// that is not one rather than asserting element by element.
+// The Go-native shapes matter as much as the JSON ones. GetOutbound assembles
+// an outbound in Go rather than unmarshalling one -- getTls fills alpn with a
+// strings.Split, hy2 does the same for server_ports, hy runs the bandwidths
+// through strconv.Atoi -- and GetExternalOutbounds hands those maps straight to
+// the Clash converter with no round trip in between. So a value the schema
+// calls a list arrives as []string where a stored row gives []interface{}, and
+// a number arrives as int where a stored row gives float64. Every reader here
+// takes both; asserting only the JSON shape is what silently dropped the alpn,
+// the port-hopping range and the transport host of every external and
+// node-replica link.
+
+// AsStringList reads a value the schema says is a list of strings, skipping
+// anything that is not one rather than asserting element by element.
 func AsStringList(v interface{}) []string {
-	items, ok := v.([]interface{})
-	if !ok {
-		return nil
-	}
-	list := make([]string, 0, len(items))
-	for _, item := range items {
-		if s, ok := item.(string); ok {
-			list = append(list, s)
+	switch items := v.(type) {
+	case []string:
+		return items
+	case []interface{}:
+		list := make([]string, 0, len(items))
+		for _, item := range items {
+			if s, ok := item.(string); ok {
+				list = append(list, s)
+			}
 		}
+		return list
 	}
-	return list
+	return nil
+}
+
+// AsInt64 reads a value the schema says is a number, and reports whether it was
+// one -- callers use that to tell an absent field from a zero.
+func AsInt64(v interface{}) (int64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return int64(n), true
+	case int:
+		return int64(n), true
+	case int64:
+		return n, true
+	}
+	return 0, false
 }

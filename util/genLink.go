@@ -394,6 +394,11 @@ func hysteriaLink(
 	inbound map[string]interface{},
 	addrs []map[string]interface{}) []string {
 
+	// Read once, not once per address: it only looks at the inbound, and it
+	// reports a malformed out_json through the logger. Left in the loop, one
+	// corrupt column fanned that warning out across every address of every
+	// client the inbound has -- the fan-out warnTlsRowOnce exists to prevent.
+	mport := portHoppingParam(inbound)
 	var links []string
 
 	for _, addr := range addrs {
@@ -418,7 +423,7 @@ func hysteriaLink(
 		} else {
 			params = append(params, LinkParam{"fastopen", "0"})
 		}
-		if mport := portHoppingParam(inbound); mport != "" {
+		if mport != "" {
 			params = append(params, LinkParam{"mport", mport})
 		}
 
@@ -436,6 +441,8 @@ func hysteria2Link(
 	addrs []map[string]interface{}) []string {
 
 	password, _ := userConfig["password"].(string)
+	// Loop-invariant, and it logs on a malformed out_json -- see hysteriaLink.
+	mport := portHoppingParam(inbound)
 	var links []string
 
 	for _, addr := range addrs {
@@ -462,7 +469,7 @@ func hysteria2Link(
 		} else {
 			params = append(params, LinkParam{"fastopen", "0"})
 		}
-		if mport := portHoppingParam(inbound); mport != "" {
+		if mport != "" {
 			params = append(params, LinkParam{"mport", mport})
 		}
 
@@ -739,14 +746,54 @@ func addParams(uri string, params []LinkParam, remark string) string {
 	return URL.String()
 }
 
+// PortHoppingRanges renders a stored server_ports list the way every consumer
+// outside sing-box spells it: comma-separated, with a dash between the ends of
+// a range where sing-box writes a colon.
+//
+// Both consumers want the dash -- mihomo's `ports` and the "mport" query param
+// hysteria and hysteria2 links carry -- and this package's own decoder says so
+// too: linkToJson's hy2 reads mport back through
+// strings.ReplaceAll(..., "-", ":"), which only round-trips a link that was
+// written with dashes. Exported so the Clash converter shares it rather than
+// keeping a second copy that can disagree about the separator, which is exactly
+// how the link half came to emit "20000:30000" while the Clash half emitted
+// "20000-30000" for the same row.
+//
+// A numeric entry is accepted as well as a string one: sing-box writes a single
+// port as a number, and asserting .(string) folded those into an empty entry.
+// Both list shapes are read too -- hy2 builds server_ports with a strings.Split,
+// so an external or node-replica link carries []string where a stored row
+// carries []interface{}.
+func PortHoppingRanges(v interface{}) string {
+	var ports []string
+	switch entries := v.(type) {
+	case []string:
+		ports = entries
+	case []interface{}:
+		ports = make([]string, 0, len(entries))
+		for _, entry := range entries {
+			switch p := entry.(type) {
+			case string:
+				ports = append(ports, p)
+			case float64:
+				ports = append(ports, fmt.Sprintf("%.0f", p))
+			}
+		}
+	default:
+		return ""
+	}
+	// One pass at the end rather than per entry: the separator between entries
+	// is a comma, so nothing here can be confused for a range.
+	return strings.ReplaceAll(strings.Join(ports, ","), ":", "-")
+}
+
 // portHoppingParam reads the multi-port range hysteria and hysteria2 advertise
 // as "mport".
 //
 // It used to assert on inbound["out_json"] and bail out of the whole function
 // when the unmarshal failed, so an inbound whose out_json was never filled --
 // a row from an old backup, or one a migration wrote -- produced no links at
-// all for those two protocols, silently. The port entries were asserted to be
-// strings as well, while sing-box writes a single port as a number.
+// all for those two protocols, silently.
 func portHoppingParam(inbound map[string]interface{}) string {
 	raw, ok := inbound["out_json"].(json.RawMessage)
 	if !ok || len(raw) == 0 {
@@ -757,20 +804,7 @@ func portHoppingParam(inbound map[string]interface{}) string {
 		logger.Warning("sub: unable to read out_json for port hopping: ", err)
 		return ""
 	}
-	ports, ok := outJson["server_ports"].([]interface{})
-	if !ok || len(ports) == 0 {
-		return ""
-	}
-	list := make([]string, 0, len(ports))
-	for _, v := range ports {
-		switch p := v.(type) {
-		case string:
-			list = append(list, p)
-		case float64:
-			list = append(list, fmt.Sprintf("%.0f", p))
-		}
-	}
-	return strings.Join(list, ",")
+	return PortHoppingRanges(outJson["server_ports"])
 }
 
 func getTransportParams(t interface{}) []LinkParam {

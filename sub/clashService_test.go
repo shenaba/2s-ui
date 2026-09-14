@@ -2,8 +2,11 @@ package sub
 
 import (
 	"encoding/base64"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/shenaba/2s-ui/util"
 
 	"github.com/sagernet/sing-box/common/tls"
 
@@ -123,6 +126,87 @@ func TestClashHttpOptsOmitAbsentPathAndHost(t *testing.T) {
 	}
 }
 
+// GetOutbound assembles an outbound in Go instead of unmarshalling one, and
+// GetExternalOutbounds hands that map straight to the Clash converter -- so
+// every value arrives in its Go shape: a list is []string where a stored row
+// gives []interface{}, a number is int where a stored row gives float64. Each
+// assertion here was written for the JSON shape only and silently dropped the
+// field for every external and "[node] " replica link.
+//
+// One table over every such field, so the next one added is caught here rather
+// than in a bug report: a field that survives a stored row and vanishes from a
+// pasted link is this bug, whatever its name.
+func TestClashKeepsGoShapedFieldsOfExternalLinks(t *testing.T) {
+	setupSubDB(t)
+
+	tests := []struct {
+		name string
+		link string
+		key  string
+		want interface{}
+	}{
+		{
+			// getTls fills alpn with a strings.Split.
+			name: "alpn",
+			link: "vless://11111111-1111-1111-1111-111111111111@e.com:443" +
+				"?security=tls&sni=x.com&alpn=h2,http/1.1&type=tcp#node",
+			key:  "alpn",
+			want: []interface{}{"h2", "http/1.1"},
+		},
+		{
+			// getTransport splits the host query param the same way.
+			name: "http transport host",
+			link: "vless://11111111-1111-1111-1111-111111111111@e.com:443" +
+				"?security=tls&sni=x.com&type=http&host=a.com&path=/p#node",
+			key:  "h2-opts",
+			want: map[string]interface{}{"host": "a.com", "path": "/p"},
+		},
+		{
+			// hy2 splits mport into a []string.
+			name: "port hopping",
+			link: "hysteria2://pw@e.com:443?sni=x.com&mport=443,20000-30000#node",
+			key:  "ports",
+			want: "443,20000-30000",
+		},
+		{
+			// hy runs the bandwidths through strconv.Atoi, yielding ints.
+			name: "hysteria bandwidth",
+			link: "hy://e.com:443?auth=a&upmbps=100&downmbps=200#node",
+			key:  "up",
+			want: 100,
+		},
+		{
+			// vmess stores alter_id as an int. mihomo, unlike sing-box, still
+			// speaks non-AEAD vmess, so the value has to survive.
+			name: "vmess alterId",
+			link: "vmess://eyJ2IjoiMiIsInBzIjoibiIsImFkZCI6ImUuY29tIiwicG9ydCI6IjQ0MyIsImlkIjoiMTExMTExMTEtMTExMS0xMTExLTExMTEtMTExMTExMTExMTExIiwiYWlkIjo2NCwibmV0IjoidGNwIiwidGxzIjoibm9uZSJ9",
+			key:  "alterId",
+			want: 64,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			outbound, _, err := util.GetOutbound(tt.link, 0)
+			if err != nil {
+				t.Fatalf("GetOutbound(%q): %v", tt.link, err)
+			}
+			outbounds := []map[string]interface{}{*outbound}
+			raw, err := (&ClashService{}).ConvertToClashMeta(&outbounds, basicClashConfig)
+			if err != nil {
+				t.Fatalf("ConvertToClashMeta: %v", err)
+			}
+			got, ok := firstProxy(t, raw)[tt.key]
+			if !ok {
+				t.Fatalf("%s is missing from the proxy entirely:\n%s", tt.key, raw)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("%s = %#v, want %#v:\n%s", tt.key, got, tt.want, raw)
+			}
+		})
+	}
+}
+
 // firstProxy pulls the single generated proxy out of a rendered Clash config.
 func firstProxy(t *testing.T, raw string) map[string]interface{} {
 	t.Helper()
@@ -169,32 +253,6 @@ func TestEchConfigForClashRefusesTheKeyBlock(t *testing.T) {
 	}
 	if got := echConfigForClash(list(configPem)); got == "" {
 		t.Errorf("the config block itself must still be accepted")
-	}
-}
-
-// sing-box writes a single port as a number and a range as a string. The Clash
-// converter asserted every entry was a string, so numeric entries were folded
-// into empty strings and reached mihomo as ",20000-30000" or ",".
-func TestPortHoppingRangesAcceptsNumbers(t *testing.T) {
-	tests := []struct {
-		name string
-		in   interface{}
-		want string
-	}{
-		{"strings", []interface{}{"20000:30000", "40000:50000"}, "20000-30000,40000-50000"},
-		{"numbers", []interface{}{float64(443), float64(8443)}, "443,8443"},
-		{"mixed", []interface{}{float64(443), "20000:30000"}, "443,20000-30000"},
-		{"empty", []interface{}{}, ""},
-		{"absent", nil, ""},
-		{"not a list", "20000:30000", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := portHoppingRanges(tt.in); got != tt.want {
-				t.Errorf("portHoppingRanges = %q, want %q", got, tt.want)
-			}
-		})
 	}
 }
 

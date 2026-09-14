@@ -121,11 +121,29 @@ func vmess(data string, i int) (*map[string]interface{}, string, error) {
 	if aid, ok := dataJson["aid"].(float64); ok {
 		alter_id = int(aid)
 	}
+	// A vmess link carries the port as a *string* by convention -- vmessLink
+	// writes fmt.Sprintf("%.0f", port) and so does every other generator -- and
+	// this used to hand that string on as server_port. sing-box declares the
+	// field uint16 and refuses a JSON string, which fails the **whole** config
+	// rather than this one outbound: a single vmess node replica took the
+	// entire sing-box subscription down for every client referencing it. The
+	// Clash side survived only because mihomo decodes weakly typed.
+	//
+	// Both shapes are read: some clients write the port as a number instead.
+	// Every other protocol here reaches server_port through strconv.Atoi, so
+	// this was the only one left carrying the wrong type.
+	var vmess_port int
+	switch p := dataJson["port"].(type) {
+	case string:
+		vmess_port, _ = strconv.Atoi(p)
+	case float64:
+		vmess_port = int(p)
+	}
 	vmess := map[string]interface{}{
 		"type":        "vmess",
 		"tag":         tag,
 		"server":      dataJson["add"],
-		"server_port": dataJson["port"],
+		"server_port": vmess_port,
 		"uuid":        dataJson["id"],
 		"security":    "auto",
 		"alter_id":    alter_id,

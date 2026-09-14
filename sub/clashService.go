@@ -3,7 +3,6 @@ package sub
 import (
 	"encoding/base64"
 	"encoding/pem"
-	"fmt"
 	"regexp"
 	"strings"
 
@@ -64,31 +63,6 @@ const ProxyGroups = `- name: Proxy
   interval: 300
   tolerance: 50
 `
-
-// portHoppingRanges renders server_ports the way mihomo's `ports` wants them,
-// with a dash instead of sing-box's colon.
-//
-// It accepts a numeric entry as well as a string one: sing-box writes a single
-// port as a number, and the bare .(string) this replaces folded those into an
-// empty string, so `[443,"20000:30000"]` reached mihomo as ",20000-30000" and
-// `[443]` as "". util.LinkGenerator's portHoppingParam already handled both --
-// this is the Clash half of the same field.
-func portHoppingRanges(v interface{}) string {
-	entries, ok := v.([]interface{})
-	if !ok || len(entries) == 0 {
-		return ""
-	}
-	ports := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		switch p := entry.(type) {
-		case string:
-			ports = append(ports, strings.ReplaceAll(p, ":", "-"))
-		case float64:
-			ports = append(ports, fmt.Sprintf("%.0f", p))
-		}
-	}
-	return strings.Join(ports, ",")
-}
 
 // echConfigPemType is the block sing-box writes for an ECH config; its key goes
 // into an "ECH KEYS" block, which must never leave the panel.
@@ -208,7 +182,11 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 		case "vmess", "vless", "tuic":
 			proxy["uuid"] = obMap["uuid"]
 			if t == "vmess" {
-				if alterId, ok := obMap["alter_id"].(float64); ok {
+				// Through the shared reader: vmess() stores alter_id as a Go
+				// int, so a .(float64) here answered 0 for every external link
+				// and mihomo -- which, unlike sing-box, still speaks
+				// non-AEAD vmess -- could not connect to an alterId node.
+				if alterId, ok := util.AsInt64(obMap["alter_id"]); ok {
 					proxy["alterId"] = int(alterId)
 				} else {
 					proxy["alterId"] = 0
@@ -235,10 +213,16 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 			proxy["username"] = obMap["username"]
 			proxy["password"] = obMap["password"]
 		case "hysteria", "hysteria2":
-			if _, ok := obMap["up_mbps"].(float64); ok {
+			// hy() runs the bandwidths through strconv.Atoi, so an external
+			// link carries them as Go ints and the .(float64) these replace
+			// dropped both -- mihomo needs them to size its send window, and a
+			// hysteria proxy without them falls back to its own default.
+			// The value is still passed through rather than the parsed one, so
+			// a stored row keeps whatever it holds.
+			if _, ok := util.AsInt64(obMap["up_mbps"]); ok {
 				proxy["up"] = obMap["up_mbps"]
 			}
-			if _, ok := obMap["down_mbps"].(float64); ok {
+			if _, ok := util.AsInt64(obMap["down_mbps"]); ok {
 				proxy["down"] = obMap["down_mbps"]
 			}
 			if t == "hysteria" {
@@ -254,7 +238,10 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 				}
 			}
 
-			if ports := portHoppingRanges(obMap["server_ports"]); ports != "" {
+			// The same renderer the "mport" link param goes through: mihomo's
+			// `ports` and the link both want a dash where sing-box stores a
+			// colon, and two copies of that rule drifted apart once already.
+			if ports := util.PortHoppingRanges(obMap["server_ports"]); ports != "" {
 				proxy["ports"] = ports
 			}
 		case "anytls":
@@ -397,8 +384,14 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 				} else if path, ok := transport["path"].(string); ok {
 					httpOpts["path"] = path
 				}
-				if host, ok := transport["host"].([]interface{}); ok && len(host) > 0 {
-					httpOpts["host"] = host[0]
+				// Through the shared reader as well: getTransport splits the
+				// host query param, so an external link carries []string here
+				// and the bare .([]interface{}) dropped the Host outright --
+				// a listener that routes on it then refuses the request. The
+				// path on the line above is a plain string from the same
+				// decoder, which is why only the host was lost.
+				if hosts := util.AsStringList(transport["host"]); len(hosts) > 0 {
+					httpOpts["host"] = hosts[0]
 				}
 				if isTls {
 					proxy["network"] = "h2"

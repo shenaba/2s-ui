@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -522,15 +523,21 @@ func TestPrepareTlsToleratesLopsidedReality(t *testing.T) {
 
 // sing-box writes a single port as a number and a range as a string; the old
 // code asserted every entry was a string.
+//
+// The separator is the other half: sing-box stores "20000:30000", every
+// consumer of the rendered value wants "20000-30000". linkToJson's hy2 is the
+// proof inside this package -- it reads mport back through
+// strings.ReplaceAll(..., "-", ":"), so a link written with colons does not
+// round-trip through the panel's own decoder, let alone a client's.
 func TestPortHoppingParamAcceptsNumbers(t *testing.T) {
 	tests := []struct {
 		name    string
 		outJson string
 		want    string
 	}{
-		{"strings", `{"server_ports":["20000:30000","40000:50000"]}`, "20000:30000,40000:50000"},
+		{"strings", `{"server_ports":["20000:30000","40000:50000"]}`, "20000-30000,40000-50000"},
 		{"numbers", `{"server_ports":[443,8443]}`, "443,8443"},
-		{"mixed", `{"server_ports":[443,"20000:30000"]}`, "443,20000:30000"},
+		{"mixed", `{"server_ports":[443,"20000:30000"]}`, "443,20000-30000"},
 		{"absent", `{}`, ""},
 		{"unparseable", `not json`, ""},
 	}
@@ -544,6 +551,66 @@ func TestPortHoppingParamAcceptsNumbers(t *testing.T) {
 				t.Errorf("portHoppingParam = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// The renderer both consumers share: the "mport" link param above and mihomo's
+// `ports`. It lived in sub/ as a second copy, which is how the two came to
+// disagree about the separator for the same stored row.
+func TestPortHoppingRangesAcceptsNumbers(t *testing.T) {
+	tests := []struct {
+		name string
+		in   interface{}
+		want string
+	}{
+		{"strings", []interface{}{"20000:30000", "40000:50000"}, "20000-30000,40000-50000"},
+		{"numbers", []interface{}{float64(443), float64(8443)}, "443,8443"},
+		{"mixed", []interface{}{float64(443), "20000:30000"}, "443,20000-30000"},
+		{"empty", []interface{}{}, ""},
+		{"absent", nil, ""},
+		{"not a list", "20000:30000", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := PortHoppingRanges(tt.in); got != tt.want {
+				t.Errorf("PortHoppingRanges = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// The panel is one of the clients that reads its own links back: adopting a
+// node stores the generated link and GetOutbound decodes it. hy2 reads mport
+// through ReplaceAll("-", ":"), so only a link written with dashes comes back
+// as the server_ports the row started with.
+func TestHysteria2LinkPortHoppingRoundTrips(t *testing.T) {
+	links := hysteria2Link(
+		map[string]interface{}{"password": "p4ss"},
+		map[string]interface{}{
+			"out_json": json.RawMessage(`{"server_ports":[443,"20000:30000"]}`),
+		},
+		[]map[string]interface{}{{
+			"server":      "example.com",
+			"server_port": float64(443),
+			"remark":      "hy2-in",
+		}},
+	)
+	if len(links) != 1 {
+		t.Fatalf("got %d links %v, want 1", len(links), links)
+	}
+	if !strings.Contains(links[0], "mport=443,20000-30000") {
+		t.Errorf("link = %q, want mport rendered with a dash", links[0])
+	}
+
+	out, _, err := GetOutbound(links[0], 0)
+	if err != nil {
+		t.Fatalf("the generated link does not decode: %q: %v", links[0], err)
+	}
+	got, _ := (*out)["server_ports"].([]string)
+	want := []string{"443", "20000:30000"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("server_ports = %#v, want %#v (link %q)", got, want, links[0])
 	}
 }
 
