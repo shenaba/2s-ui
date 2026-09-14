@@ -45,6 +45,19 @@ var defaultConfig = `{
   "experimental": {}
 }`
 
+// protectedSettings never travel over the settings endpoint, in either
+// direction.
+//
+// secret keys the session cookie store, config is the sing-box base config that
+// the "config" object owns (and which restarts the core when it changes), and
+// version and globalResetLast are bookkeeping the panel advances itself.
+var protectedSettings = map[string]bool{
+	"secret":          true,
+	"config":          true,
+	"version":         true,
+	"globalResetLast": true,
+}
+
 var defaultValueMap = map[string]string{
 	"webListen":          "",
 	"webDomain":          "",
@@ -164,12 +177,9 @@ func (s *SettingService) GetAllSetting() (*map[string]string, error) {
 		}
 	}
 
-	// Due to security principles
-	delete(allSetting, "secret")
-	delete(allSetting, "config")
-	delete(allSetting, "version")
-	// Internal bookkeeping, advanced automatically by the reset job
-	delete(allSetting, "globalResetLast")
+	for key := range protectedSettings {
+		delete(allSetting, key)
+	}
 
 	// Notification credentials go the same way, but silently dropping them
 	// would leave the settings page showing an empty field, which reads as "not
@@ -697,6 +707,21 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 	err = json.Unmarshal(data, &settings)
 	if err != nil {
 		return err
+	}
+	// Refused, not skipped. These keys were already stripped from
+	// GetAllSetting, but Save accepted whatever it was posted -- and this is
+	// reachable as a plain POST api/save with object "settings" by any
+	// authenticated caller, apiv2 token holders included. Writing `secret`
+	// there re-keys the session store and logs every operator out; writing
+	// `config` replaces the sing-box base config through a form that is not
+	// supposed to touch it, and without the core restart the real path does.
+	//
+	// An error rather than a silent drop: a caller sending one of these is
+	// either confused or probing, and both deserve to hear about it.
+	for key := range settings {
+		if protectedSettings[key] {
+			return common.NewError("setting is not writable here: ", key)
+		}
 	}
 	// Ignore accidental surrounding whitespace while preserving spaces inside
 	// values such as certificate paths and URLs. This happens up front rather
