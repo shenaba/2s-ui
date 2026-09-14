@@ -294,6 +294,7 @@ func hysteriaOut(out *map[string]interface{}, inbound map[string]interface{}) {
 			(*out)[field] = value
 		}
 	}
+	normalizeOutPortRanges(out)
 }
 
 // snellOut builds the client half of a snell listener.
@@ -345,6 +346,31 @@ func hysteria2Out(out *map[string]interface{}, inbound map[string]interface{}) {
 	}
 	if obfs, ok := inbound["obfs"]; ok {
 		(*out)["obfs"] = obfs
+	}
+	normalizeOutPortRanges(out)
+}
+
+// normalizeOutPortRanges rewrites a stored server_ports list into the only
+// shape sing-box starts on.
+//
+// server_ports is the operator's own field -- the free text box in OutJson.vue
+// splits on commas and stores whatever was typed -- and out_json reaches the
+// JSON subscription verbatim through getOutbounds. So "443,20000:30000", which
+// is the natural way to write "the listening port plus the hop range", was
+// handed to every sing-box subscriber as an entry their client accepts and then
+// refuses to start on: `bad port range: 443`. Normalising on save fixes the
+// stored row for the links, the Clash proxy and the JSON subscription at once,
+// and an existing row heals itself the next time the inbound is saved.
+func normalizeOutPortRanges(out *map[string]interface{}) {
+	raw, ok := (*out)["server_ports"]
+	if !ok {
+		return
+	}
+	if ports := NormalizePortRanges(raw); len(ports) > 0 {
+		(*out)["server_ports"] = ports
+	} else {
+		// Nothing usable in there; carrying it would only fail the subscriber.
+		delete(*out, "server_ports")
 	}
 }
 

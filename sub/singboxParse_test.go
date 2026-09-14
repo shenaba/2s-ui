@@ -34,24 +34,47 @@ func (discardDeprecatedNotes) ReportDeprecated(deprecated.Note) {}
 // stayed fine, because mihomo decodes weakly typed -- which is why this never
 // looked like a link-decoding bug.
 //
-// Parsing the whole document, rather than asserting on the type of one field,
-// is the point: it is the check the subscriber actually performs.
+// Building the box, not just parsing the document, is the point. Parsing is the
+// weaker half and stopping there hides a whole class: a hysteria2 outbound
+// whose server_ports holds a bare "443" unmarshals happily and then fails
+// NewBox with `bad port range: 443`, so a parse-only check calls a subscription
+// healthy that no client can start. Asserting on the type of one field is
+// weaker still -- these are the two checks the subscriber actually performs,
+// in the order they perform them.
 func TestJsonSubscriptionParsesAsSingBoxConfig(t *testing.T) {
-	links := map[string]string{
+	// An ordered slice rather than a map, the same way the link tests do it:
+	// map iteration is randomised, so a failing build reports its subtests in a
+	// different order every run.
+	tests := []struct {
+		name     string
+		protocol string
+		config   string
+		outJson  string
+	}{
 		// One per protocol whose links the panel generates and reads back --
 		// GetOutbound has no case for socks/http/mixed, and naive is not a
 		// sing-box outbound type.
-		"vmess":       `{"vmess":{"uuid":"11111111-1111-1111-1111-111111111111","alterId":0}}`,
-		"vless":       `{"vless":{"uuid":"11111111-1111-1111-1111-111111111111"}}`,
-		"trojan":      `{"trojan":{"password":"p4ss"}}`,
-		"hysteria2":   `{"hysteria2":{"password":"p4ss"}}`,
-		"anytls":      `{"anytls":{"password":"p4ss"}}`,
-		"tuic":        `{"tuic":{"uuid":"11111111-1111-1111-1111-111111111111","password":"p4ss"}}`,
-		"shadowsocks": `{"shadowsocks":{"password":"c2hvcnRrZXkxMjM0NTY3OA=="}}`,
+		{"vmess", "vmess", `{"vmess":{"uuid":"11111111-1111-1111-1111-111111111111","alterId":0}}`, ""},
+		{"vless", "vless", `{"vless":{"uuid":"11111111-1111-1111-1111-111111111111"}}`, ""},
+		{"trojan", "trojan", `{"trojan":{"password":"p4ss"}}`, ""},
+		{"hysteria2", "hysteria2", `{"hysteria2":{"password":"p4ss"}}`, ""},
+		{"anytls", "anytls", `{"anytls":{"password":"p4ss"}}`, ""},
+		{"tuic", "tuic", `{"tuic":{"uuid":"11111111-1111-1111-1111-111111111111","password":"p4ss"}}`, ""},
+		{"shadowsocks", "shadowsocks", `{"shadowsocks":{"password":"c2hvcnRrZXkxMjM0NTY3OA=="}}`, ""},
+		{
+			// The port-hopping round trip, which is where parse-only passed and
+			// NewBox did not: a single port has to leave as the bare "443" the
+			// link format uses and come back as the "443:443" sing-box starts
+			// on. A stored row spelling it bare exercises the same path.
+			"hysteria2 port hopping", "hysteria2",
+			`{"hysteria2":{"password":"p4ss"}}`,
+			`{"server_ports":["443","20000:30000"]}`,
+		},
 	}
 
-	for protocol, config := range links {
-		t.Run(protocol, func(t *testing.T) {
+	for _, tt := range tests {
+		protocol, config := tt.protocol, tt.config
+		t.Run(tt.name, func(t *testing.T) {
 			setupSubDB(t)
 
 			// Exactly what refreshNodeLinks folds into client.Links: a link the
@@ -62,6 +85,7 @@ func TestJsonSubscriptionParsesAsSingBoxConfig(t *testing.T) {
 					Type: protocol, Tag: protocol + "-node",
 					Addrs:   json.RawMessage("null"),
 					Options: json.RawMessage(`{"listen_port":443,"method":"aes-128-gcm"}`),
+					OutJson: json.RawMessage(tt.outJson),
 				},
 				"node.example.com", "alice")
 			if len(generated) == 0 {
@@ -70,7 +94,7 @@ func TestJsonSubscriptionParsesAsSingBoxConfig(t *testing.T) {
 
 			client := &model.Client{
 				Enable:   true,
-				Name:     "sub-" + protocol,
+				Name:     "sub-" + tt.name,
 				Config:   json.RawMessage(config),
 				Inbounds: json.RawMessage(`[]`),
 				Links: json.RawMessage(fmt.Sprintf(
@@ -80,7 +104,7 @@ func TestJsonSubscriptionParsesAsSingBoxConfig(t *testing.T) {
 				t.Fatalf("seed client: %v", err)
 			}
 
-			raw, _, err := (&JsonService{}).GetJson("sub-"+protocol, "json")
+			raw, _, err := (&JsonService{}).GetJson("sub-"+tt.name, "json")
 			if err != nil {
 				t.Fatalf("GetJson: %v", err)
 			}
@@ -103,8 +127,13 @@ func TestJsonSubscriptionParsesAsSingBoxConfig(t *testing.T) {
 
 			var opts option.Options
 			if err := opts.UnmarshalJSONContext(ctx, []byte(*raw)); err != nil {
-				t.Errorf("sing-box refuses the whole subscription: %v\n%s", err, *raw)
+				t.Fatalf("sing-box cannot parse the subscription: %v\n%s", err, *raw)
 			}
+			instance, err := core.NewBox(core.Options{Context: ctx, Options: opts})
+			if err != nil {
+				t.Fatalf("sing-box parses the subscription but cannot start it: %v\n%s", err, *raw)
+			}
+			instance.Close()
 		})
 	}
 }

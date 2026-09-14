@@ -385,3 +385,56 @@ func TestFillOutJsonNaiveClearsStaleQuicFields(t *testing.T) {
 		}
 	})
 }
+
+// server_ports is the operator's own free-text field and out_json reaches the
+// JSON subscription verbatim, so a shape sing-box will not start on has to be
+// caught on save. sing-box parses each entry as a range and refuses a bare port
+// at start-up, not at parse: `443` unmarshals and then dies on
+// `bad port range: 443` in every subscriber's client.
+func TestFillOutJsonNormalizesPortHoppingRanges(t *testing.T) {
+	tests := []struct {
+		name    string
+		outJson string
+		want    interface{}
+	}{
+		{"a bare single port becomes its own range",
+			`{"server_ports":["443","20000:30000"]}`, []interface{}{"443:443", "20000:30000"}},
+		{"a dash range becomes a colon range",
+			`{"server_ports":["20000-30000"]}`, []interface{}{"20000:30000"}},
+		{"an already correct row survives untouched",
+			`{"server_ports":["20000:30000"]}`, []interface{}{"20000:30000"}},
+		{"nothing usable is dropped rather than served",
+			`{"server_ports":["nonsense"]}`, nil},
+		{"no port hopping at all stays absent",
+			`{}`, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inbound := &model.Inbound{
+				Type: "hysteria2", Tag: "hy2-in",
+				Options: json.RawMessage(`{"listen_port":443}`),
+				OutJson: json.RawMessage(tt.outJson),
+			}
+			if err := FillOutJson(inbound, "example.com"); err != nil {
+				t.Fatal(err)
+			}
+			var out map[string]interface{}
+			if err := json.Unmarshal(inbound.OutJson, &out); err != nil {
+				t.Fatal(err)
+			}
+			got, present := out["server_ports"]
+			if tt.want == nil {
+				if present {
+					t.Errorf("server_ports = %#v, want the key absent", got)
+				}
+				return
+			}
+			gotJson, _ := json.Marshal(got)
+			wantJson, _ := json.Marshal(tt.want)
+			if string(gotJson) != string(wantJson) {
+				t.Errorf("server_ports = %s, want %s", gotJson, wantJson)
+			}
+		})
+	}
+}

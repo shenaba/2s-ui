@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -759,8 +760,13 @@ func addParams(uri string, params []LinkParam, remark string) string {
 // how the link half came to emit "20000:30000" while the Clash half emitted
 // "20000-30000" for the same row.
 //
-// A numeric entry is accepted as well as a string one: sing-box writes a single
-// port as a number, and asserting .(string) folded those into an empty entry.
+// A numeric entry is accepted as well as a string one. Not because sing-box
+// writes one -- server_ports is a Listable[string] there and a JSON number is
+// refused at parse, so a row holding one already fails the JSON subscription
+// before this runs; NormalizePortRanges is what keeps that shape out of the
+// column. It is read here so a row that somehow holds one still renders a link
+// and a Clash proxy rather than an entry silently folded to "".
+//
 // Both list shapes are read too -- hy2 builds server_ports with a strings.Split,
 // so an external or node-replica link carries []string where a stored row
 // carries []interface{}.
@@ -782,9 +788,99 @@ func PortHoppingRanges(v interface{}) string {
 	default:
 		return ""
 	}
-	// One pass at the end rather than per entry: the separator between entries
-	// is a comma, so nothing here can be confused for a range.
-	return strings.ReplaceAll(strings.Join(ports, ","), ":", "-")
+	rendered := make([]string, 0, len(ports))
+	for _, port := range ports {
+		// sing-box has no way to say "one port" but its own range, so a stored
+		// row spells it "443:443"; every client spells it bare. Folded back
+		// here, and serverPortsFromMport expands it again on the way in --
+		// each side keeps its own spelling and the conversion stays at the
+		// boundary.
+		if start, end, isRange := strings.Cut(port, ":"); isRange && start == end {
+			port = start
+		}
+		rendered = append(rendered, strings.ReplaceAll(port, ":", "-"))
+	}
+	return strings.Join(rendered, ",")
+}
+
+// normalizePortRange turns one port-hopping entry into the only shape sing-box
+// accepts in server_ports: "start:end".
+//
+// Two things have to change, and only the first is obvious. The separator is a
+// dash everywhere outside sing-box. The one that was missing is a *single*
+// port: "443" is what every client writes for one port and a legal mport entry,
+// but sing-box parses each server_ports entry as a range and refuses a bare one
+// -- and it refuses it at **startup**, not at parse, so the config is accepted
+// and then `bad port range: 443` comes out of NewBox. A single port is its own
+// range, so it goes out as "443:443", which is verified to start.
+//
+// Returns "" for an entry that is not a port at all, so a caller can drop it
+// rather than write something the subscriber's client will choke on.
+func normalizePortRange(entry string) string {
+	entry = strings.ReplaceAll(strings.TrimSpace(entry), "-", ":")
+	if entry == "" {
+		return ""
+	}
+	start, end, isRange := strings.Cut(entry, ":")
+	if !isRange {
+		end = start
+	}
+	// Both ends have to be numbers, or sing-box refuses this the same way.
+	for _, part := range []string{start, end} {
+		if part == "" {
+			return ""
+		}
+		if _, err := strconv.Atoi(part); err != nil {
+			return ""
+		}
+	}
+	return start + ":" + end
+}
+
+// NormalizePortRanges applies normalizePortRange to a stored server_ports list,
+// reading either list shape and dropping entries that are not ports.
+//
+// This is the write-side guard. The read side cannot be the only one: an
+// out_json row reaches the JSON subscription verbatim through getOutbounds, so
+// an operator typing the entirely reasonable "443,20000:30000" into the free
+// text box in OutJson.vue hands every sing-box subscriber a config that parses
+// and then will not start -- no link, no round trip, nothing for the link
+// builders to fix.
+func NormalizePortRanges(v interface{}) []string {
+	var entries []string
+	switch list := v.(type) {
+	case []string:
+		entries = list
+	case []interface{}:
+		for _, item := range list {
+			switch p := item.(type) {
+			case string:
+				entries = append(entries, p)
+			case float64:
+				entries = append(entries, fmt.Sprintf("%.0f", p))
+			}
+		}
+	default:
+		return nil
+	}
+	var ports []string
+	for _, entry := range entries {
+		if normalized := normalizePortRange(entry); normalized != "" {
+			ports = append(ports, normalized)
+		}
+	}
+	return ports
+}
+
+// serverPortsFromMport is PortHoppingRanges backwards: it reads the "mport"
+// param off a hysteria or hysteria2 link and returns what server_ports wants.
+// It used to be a bare ReplaceAll of the dash, which left a single port as the
+// bare "443" sing-box refuses to start on.
+func serverPortsFromMport(mport string) []string {
+	if mport == "" {
+		return nil
+	}
+	return NormalizePortRanges(strings.Split(mport, ","))
 }
 
 // portHoppingParam reads the multi-port range hysteria and hysteria2 advertise

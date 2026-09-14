@@ -608,7 +608,11 @@ func TestHysteria2LinkPortHoppingRoundTrips(t *testing.T) {
 		t.Fatalf("the generated link does not decode: %q: %v", links[0], err)
 	}
 	got, _ := (*out)["server_ports"].([]string)
-	want := []string{"443", "20000:30000"}
+	// The single port comes back as its own range. sing-box parses each
+	// server_ports entry as a range and refuses a bare one at startup -- the
+	// document is accepted and NewBox then says `bad port range: 443` -- so
+	// "443:443" is the only spelling a subscriber's client will run.
+	want := []string{"443:443", "20000:30000"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("server_ports = %#v, want %#v (link %q)", got, want, links[0])
 	}
