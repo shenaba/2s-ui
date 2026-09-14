@@ -119,6 +119,52 @@ func (s *StatsService) GetInboundTraffic() map[string]int64 {
 	return totals
 }
 
+// Traffic drained from the core that has not reached the database yet.
+//
+// StatsTracker.GetStats is destructive -- it Swap(0)s every counter -- so a
+// flush whose transaction fails has already taken the bytes out of the core and
+// nothing else remembers them. One SQLITE_BUSY used to lose the whole ten-second
+// window for every client on the panel.
+//
+// Only the database side is carried: the in-memory per-inbound totals are folded
+// from each drain exactly once, whether or not the write lands, so they stay
+// correct and simply run ahead of the table until the retry commits. The online
+// lists are not carried either -- they answer "who is sending right now", so
+// replaying a previous window would keep a client listed after it went away.
+var (
+	pendingMu    sync.Mutex
+	pendingStats []model.Stats
+)
+
+// maxPendingStats bounds that buffer. A panel whose database has been refusing
+// writes for hours should lose the oldest accounting rather than grow until it
+// is killed for it; at roughly a row per active (resource, tag, direction) per
+// ten seconds this is a few minutes of a busy panel.
+const maxPendingStats = 50000
+
+// takePending returns the rows still owed to the database and clears the buffer.
+func takePending() []model.Stats {
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	held := pendingStats
+	pendingStats = nil
+	return held
+}
+
+// holdPending keeps a batch that failed to commit, dropping the oldest rows if
+// it has grown past the cap.
+func holdPending(batch []model.Stats) {
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	if len(batch) > maxPendingStats {
+		dropped := len(batch) - maxPendingStats
+		logger.Warning("stats: dropping ", dropped,
+			" undelivered rows; the database has been refusing writes for a while")
+		batch = batch[dropped:]
+	}
+	pendingStats = batch
+}
+
 func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error {
 	if corePtr == nil || !corePtr.IsRunning() {
 		return nil
@@ -131,13 +177,17 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 	if st == nil {
 		return nil
 	}
-	stats := st.GetStats()
+	drained := st.GetStats()
 
 	// Built locally, then published in one swap at the end — writing the live
 	// struct field by field is what raced with readers.
 	var fresh onlines
 
-	if len(*stats) == 0 {
+	// What the database is owed: anything a previous cycle could not commit,
+	// then this drain. The online lists and the per-inbound deltas below come
+	// from the drain alone.
+	batch := append(takePending(), (*drained)...)
+	if len(batch) == 0 {
 		setOnlines(fresh)
 		return nil
 	}
@@ -147,9 +197,16 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 	tx := db.Begin()
 	defer func() {
 		if err == nil {
-			tx.Commit()
+			// The commit itself can fail, and its error is the one that
+			// decides whether these rows still need retrying.
+			if cErr := tx.Commit().Error; cErr != nil {
+				err = cErr
+			}
 		} else {
 			tx.Rollback()
+		}
+		if err != nil {
+			holdPending(batch)
 		}
 	}()
 
@@ -163,7 +220,7 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 	inboundDelta := map[string]int64{}
 	seenInbound := map[string]bool{}
 	seenOutbound := map[string]bool{}
-	for _, stat := range *stats {
+	for _, stat := range *drained {
 		switch stat.Resource {
 		case "inbound":
 			if !seenInbound[stat.Tag] {
@@ -177,17 +234,30 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 				fresh.Outbound = append(fresh.Outbound, stat.Tag)
 			}
 		case "user":
-			t, ok := userTraffic[stat.Tag]
-			if !ok {
-				t = &traffic{}
-				userTraffic[stat.Tag] = t
+			if _, seen := userTraffic[stat.Tag]; !seen {
+				userTraffic[stat.Tag] = &traffic{}
 				fresh.User = append(fresh.User, stat.Tag)
 			}
-			if stat.Direction {
-				t.up += stat.Traffic
-			} else {
-				t.down += stat.Traffic
-			}
+		}
+	}
+
+	// The per-client counters come from the whole batch, so a window that
+	// failed to commit is applied by the retry rather than lost. A user in
+	// the carried-over rows but not in this drain still gets its bytes, it
+	// just is not listed as online.
+	for _, stat := range batch {
+		if stat.Resource != "user" {
+			continue
+		}
+		t, ok := userTraffic[stat.Tag]
+		if !ok {
+			t = &traffic{}
+			userTraffic[stat.Tag] = t
+		}
+		if stat.Direction {
+			t.up += stat.Traffic
+		} else {
+			t.down += stat.Traffic
 		}
 	}
 
@@ -223,13 +293,13 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 		bucketSeconds = 1
 	}
 	bucket := now - (now % bucketSeconds)
-	for i := range *stats {
-		(*stats)[i].DateTime = bucket
+	for i := range batch {
+		batch[i].DateTime = bucket
 	}
 	err = tx.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "resource"}, {Name: "tag"}, {Name: "date_time"}, {Name: "direction"}},
 		DoUpdates: clause.Assignments(map[string]interface{}{"traffic": gorm.Expr("stats.traffic + excluded.traffic")}),
-	}).Create(&stats).Error
+	}).Create(&batch).Error
 	return err
 }
 
@@ -347,8 +417,29 @@ func (s *StatsService) GetOnlines() (onlines, error) {
 	defer onlineMu.RUnlock()
 	return *onlineResources, nil
 }
+
+// delOldStatsChunk caps how many rows one DELETE removes, so the write lock is
+// released between chunks.
+const delOldStatsChunk = 5000
+
+// DelOldStats drops stats past the retention window, in bounded chunks.
+//
+// One unbounded DELETE over a table that holds a row per active tag, bucket and
+// direction across the whole window held the write lock past the ten-second busy
+// timeout, which made the daily cleanup itself a cause of the lost traffic
+// accounting it shares a database with.
 func (s *StatsService) DelOldStats(days int) error {
 	oldTime := time.Now().AddDate(0, 0, -(days)).Unix()
 	db := database.GetDB()
-	return db.Where("date_time < ?", oldTime).Delete(model.Stats{}).Error
+	for {
+		res := db.Where("id IN (?)",
+			db.Model(model.Stats{}).Select("id").Where("date_time < ?", oldTime).Limit(delOldStatsChunk),
+		).Delete(model.Stats{})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected < delOldStatsChunk {
+			return nil
+		}
+	}
 }
