@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"runtime"
 	"strings"
 	"time"
 
@@ -36,8 +37,15 @@ func initUser() error {
 
 func OpenDB(dbPath string) error {
 	dir := path.Dir(dbPath)
-	err := os.MkdirAll(dir, 01740)
-	if err != nil {
+	// 0700, not 01740. That leading 01000 is not Go's sticky bit -- os.ModeSticky
+	// is 1<<24, so the bit was simply masked away and the directory came out
+	// 0740, group-readable. MkdirAll does nothing to a directory that already
+	// exists, hence the explicit Chmod: an install created before this keeps its
+	// old mode otherwise.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
 		return err
 	}
 
@@ -70,6 +78,7 @@ func OpenDB(dbPath string) error {
 	// does cover. Every transaction in this codebase writes, so nothing pays
 	// for a write lock it does not need.
 	dsn := dbPath + sep + "_busy_timeout=10000&_journal_mode=WAL&_cache_size=-200&_txlock=immediate"
+	var err error
 	db, err = gorm.Open(sqlite.Open(dsn), c)
 	if err != nil {
 		return err
@@ -83,6 +92,22 @@ func OpenDB(dbPath string) error {
 	sqlDB.SetMaxIdleConns(2)
 	sqlDB.SetConnMaxLifetime(time.Hour)
 	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
+
+	// SQLite creates the file 0666 & ~umask. The owner-only directory above
+	// already shields it in place, but a database that is copied, moved or
+	// restored out of a backup carries its own mode with it -- and this file
+	// holds every client's credentials and the panel's session secret. The two
+	// sidecars hold the same pages.
+	//
+	// Not fatal on Windows, where Chmod only moves the read-only bit and the
+	// directory ACL is what actually governs access.
+	if runtime.GOOS != "windows" {
+		for _, p := range []string{dbPath, dbPath + "-wal", dbPath + "-shm"} {
+			if err := os.Chmod(p, 0o600); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
 
 	if config.IsDebug() {
 		db = db.Debug()
