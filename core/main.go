@@ -57,6 +57,20 @@ func (c *Core) GetInstance() *Box {
 	return c.instance
 }
 
+// SetStateForTest puts the core into a state Start and Stop only ever pass
+// through, so a caller that reads the two fields separately can be tested
+// against it.
+//
+// Named for tests because nothing else may use it: Start and Stop write both
+// fields under one lock precisely so this combination is never observable, and
+// a caller reaching for it would be writing the bug back in.
+func (c *Core) SetStateForTest(isRunning bool, instance *Box) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.isRunning = isRunning
+	c.instance = instance
+}
+
 func (c *Core) Start(sbConfig []byte) error {
 	var opt option.Options
 	err := opt.UnmarshalJSONContext(globalCtx, sbConfig)

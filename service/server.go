@@ -182,10 +182,17 @@ var singboxVersion = func() string {
 func (s *ServerService) GetSingboxInfo() map[string]interface{} {
 	var rtm runtime.MemStats
 	runtime.ReadMemStats(&rtm)
-	isRunning := corePtr.IsRunning()
+	// One GetInstance, then a nil check. Reading IsRunning and dereferencing
+	// GetInstance separately let a stop land in between, and Box.Uptime reads
+	// a field without a nil receiver guard -- so the panel's own status poll,
+	// which the websocket hub runs every two seconds for every open tab, would
+	// panic on any config save that restarted the core. The hub's status loop
+	// is a bare goroutine with no recover, so that took the process down.
+	box := corePtr.GetInstance()
+	isRunning := box != nil
 	uptime := uint32(0)
 	if isRunning {
-		uptime = corePtr.GetInstance().Uptime()
+		uptime = box.Uptime()
 	}
 	return map[string]interface{}{
 		"running": isRunning,
