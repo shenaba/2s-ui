@@ -59,6 +59,7 @@ func ParseCmd() {
 		fmt.Println("    migrate        migrate form older version")
 		fmt.Println("    setting        set/reset/show settings")
 		fmt.Println("    backup         create a database backup")
+		fmt.Println("    healthcheck    exit 0 while the panel is accepting connections")
 		fmt.Println()
 		adminCmd.Usage()
 		fmt.Println()
@@ -105,6 +106,9 @@ func ParseCmd() {
 
 	case "uri":
 		getPanelURI()
+
+	case "healthcheck":
+		healthCheck()
 
 	case "migrate":
 		if err := migration.MigrateDb(); err != nil {
