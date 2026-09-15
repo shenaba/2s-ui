@@ -549,6 +549,25 @@ func (a *ApiService) RestartSb(c *gin.Context) {
 	jsonMsg(c, "restartSb", err)
 }
 
+// SetMaintenance stops the core and keeps it stopped, or puts it back.
+//
+// The two directions answer with different messages rather than one
+// "maintenance": the panel turns the message into the success toast, and a
+// toast that reads the same whichever way the switch went is no confirmation
+// at all.
+func (a *ApiService) SetMaintenance(c *gin.Context) {
+	enable, err := strconv.ParseBool(c.Request.FormValue("enable"))
+	if err != nil {
+		jsonMsg(c, "", common.NewError("maintenance: enable must be true or false"))
+		return
+	}
+	msg := "maintenanceOff"
+	if enable {
+		msg = "maintenanceOn"
+	}
+	jsonMsg(c, msg, a.ConfigService.SetMaintenance(enable))
+}
+
 func (a *ApiService) ResetTraffic(c *gin.Context) {
 	if err := a.ClientService.ResetAllClientsTraffic(); err != nil {
 		jsonMsg(c, "resetTraffic", err)

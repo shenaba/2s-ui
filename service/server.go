@@ -189,7 +189,10 @@ func (s *ServerService) GetSingboxInfo() map[string]interface{} {
 	}
 	return map[string]interface{}{
 		"running": isRunning,
-		"version": singboxVersion,
+		// Without this the panel cannot tell a core that was stopped on
+		// purpose from one that crashed -- both are running:false.
+		"maintenance": maintenanceMode.Load(),
+		"version":     singboxVersion,
 		"stats": map[string]interface{}{
 			"NumGoroutine": uint32(runtime.NumGoroutine()),
 			"Alloc":        rtm.Alloc,

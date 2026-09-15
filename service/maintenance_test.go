@@ -183,3 +183,20 @@ func TestStartBoxUndoesAStartThatRacedTheSwitch(t *testing.T) {
 		t.Error("a start that raced the switch left the core running with maintenance on")
 	}
 }
+
+// running:false alone cannot tell a core that was stopped on purpose from one
+// that crashed, and the panel has to draw them differently.
+func TestMaintenanceIsReportedInTheStatusPayload(t *testing.T) {
+	s := maintenanceEnv(t)
+	var server ServerService
+
+	if got := server.GetSingboxInfo()["maintenance"]; got != false {
+		t.Errorf("maintenance = %v on an in-service panel, want false", got)
+	}
+	if err := s.SetMaintenance(true); err != nil {
+		t.Fatalf("SetMaintenance(true): %v", err)
+	}
+	if got := server.GetSingboxInfo()["maintenance"]; got != true {
+		t.Errorf("maintenance = %v after the switch, want true", got)
+	}
+}
