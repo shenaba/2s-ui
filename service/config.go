@@ -78,6 +78,9 @@ func NewConfigService(c *core.Core) *ConfigService {
 	// The gate is read per connection rather than captured by each tracker, so
 	// installing it here does not have to be ordered against the first StartCore.
 	core.SetConnGate(ipLimits.allow)
+	// Read once here rather than per start: this runs after the database is
+	// open and before anything can start the core.
+	loadMaintenance()
 	return &ConfigService{}
 }
 
@@ -280,6 +283,11 @@ func isEmptyRawJSON(raw json.RawMessage) bool {
 }
 
 func (s *ConfigService) StartCore() error {
+	// First, so the five-second watchdog stops at this line while the core is
+	// out of service.
+	if maintenanceMode.Load() {
+		return nil
+	}
 	if corePtr.IsRunning() {
 		return nil
 	}
@@ -313,7 +321,7 @@ func (s *ConfigService) StartCore() error {
 		notify.Publish(notify.Event{Kind: notify.CoreCrash, Data: &notify.CoreData{Err: err.Error()}})
 		return err
 	}
-	err = corePtr.Start(*rawConfig)
+	up, err := startBox(*rawConfig)
 	if err != nil {
 		startCoreMu.Lock()
 		lastStartFailTime = time.Now()
@@ -325,6 +333,9 @@ func (s *ConfigService) StartCore() error {
 		// recovery has been reported in between.
 		notify.Publish(notify.Event{Kind: notify.CoreCrash, Data: &notify.CoreData{Err: err.Error()}})
 		return err
+	}
+	if !up {
+		return nil
 	}
 	logger.Info("sing-box started")
 	// Reached only on an actual start: the guard at the top of this function
@@ -341,6 +352,13 @@ func (s *ConfigService) CoreRunning() bool {
 }
 
 func (s *ConfigService) RestartCore() error {
+	// Reported rather than ignored, unlike StartCore above: every caller of
+	// this one is somebody asking for a restart -- the panel button, the bot,
+	// the scheduled reset -- and one that quietly left the core down would
+	// read as the button being broken.
+	if maintenanceMode.Load() {
+		return common.NewError("the core is stopped for maintenance")
+	}
 	err := s.StopCore()
 	if err != nil {
 		return err
@@ -349,6 +367,11 @@ func (s *ConfigService) RestartCore() error {
 }
 
 func (s *ConfigService) restartCoreWithConfig(config json.RawMessage) error {
+	// The config is saved either way; it takes effect when the core is
+	// started again.
+	if maintenanceMode.Load() {
+		return nil
+	}
 	startCoreMu.Lock()
 	if startCoreInProgress {
 		startCoreMu.Unlock()
@@ -373,12 +396,39 @@ func (s *ConfigService) restartCoreWithConfig(config json.RawMessage) error {
 		logger.Error("restart sing-box err (get config):", err.Error())
 		return err
 	}
-	if err := corePtr.Start(*rawConfig); err != nil {
+	up, err := startBox(*rawConfig)
+	if err != nil {
 		logger.Error("restart sing-box err (start):", err.Error())
 		return err
 	}
+	if !up {
+		return nil
+	}
 	logger.Info("sing-box restarted with new config")
 	return nil
+}
+
+// startBox starts the core, and undoes it when maintenance was switched on
+// while the config was being assembled -- the stop that switch issued found
+// nothing running, and the gates above are all it would otherwise pass.
+// Assembling a config reads most of the database, so on a busy panel that
+// window is wide enough for the five-second watchdog to sit in.
+//
+// up is false when the start was undone that way. It is not an error -- the
+// operator got what they asked for -- but the callers must not go on to log
+// a start or publish CoreUp for a core that is down.
+func startBox(rawConfig []byte) (up bool, err error) {
+	if err = corePtr.Start(rawConfig); err != nil {
+		return false, err
+	}
+	if maintenanceMode.Load() {
+		logger.Warning("maintenance switched on mid-start: stopping the core again")
+		if stopErr := corePtr.Stop(); stopErr != nil {
+			logger.Error("stop core after a mid-start maintenance switch:", stopErr.Error())
+		}
+		return false, nil
+	}
+	return true, nil
 }
 
 func (s *ConfigService) StopCore() error {
@@ -436,6 +486,11 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 	var savedIds []uint
 	// Set once the change row is in; the deferred commit is what publishes it.
 	var dt int64
+	// Set when the base config changed. The restart waits for the commit:
+	// launched from inside the transaction, a later failure -- the changes
+	// row, or anything after it -- rolls the write back while the core is
+	// already running a config that was never saved.
+	var restartWith json.RawMessage
 
 	db := database.GetDB()
 	tx := db.Begin()
@@ -452,8 +507,10 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 			// it for the whole TTL, outliving the push that would repair it
 			// (same entry, same cseq, so the SPA drops it as not newer).
 			SetLastUpdate(dt)
-			// Try to start core if it is not running
-			if !corePtr.IsRunning() {
+			if restartWith != nil {
+				go func() { _ = s.restartCoreWithConfig(restartWith) }()
+			} else if !corePtr.IsRunning() {
+				// Try to start core if it is not running
 				s.StartCore()
 			}
 		} else {
@@ -491,7 +548,7 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 		}
 		configData := make(json.RawMessage, len(data))
 		copy(configData, data)
-		go func() { _ = s.restartCoreWithConfig(configData) }()
+		restartWith = configData
 	case "settings":
 		err = s.SettingService.Save(tx, data)
 	case "nodes":

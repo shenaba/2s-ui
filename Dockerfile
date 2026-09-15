@@ -55,4 +55,9 @@ RUN set -ex && apk upgrade --no-cache --scripts=no apk-tools && \
     apk add --no-cache --upgrade bash ca-certificates nftables
 COPY --from=backend-builder /app/sui /app/libcronet.so /app/
 COPY --chmod=755 entrypoint.sh /app/
+# The port is read from the database, not written here: the operator can
+# change it from the panel, and a check with it baked in would go red on a
+# container that was working perfectly.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD [ "/app/sui", "healthcheck" ]
 ENTRYPOINT [ "./entrypoint.sh" ]

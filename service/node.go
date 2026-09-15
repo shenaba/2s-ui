@@ -57,6 +57,17 @@ const (
 	nodeProbeTimeout    = 4 * time.Second
 	nodeProbeParallel   = 8
 	nodeMaxResponseSize = 8 << 20
+
+	// A custom Transport inherits none of http.DefaultTransport's pool
+	// hygiene, and a zero IdleConnTimeout means an idle connection is held
+	// forever. Nothing reaps the Transport either — its readLoop goroutine
+	// keeps it reachable, so a dropped Transport is never collected — and the
+	// node panel's own http.Server sets no IdleTimeout, so without this
+	// neither end ever hangs up and every short-lived client costs one
+	// permanently ESTABLISHED socket (issue #176). Short-lived clients close
+	// their pool explicitly; this is the backstop for a path that forgets.
+	// Value mirrors http.DefaultTransport's.
+	nodeIdleConnTimeout = 90 * time.Second
 )
 
 type NodeService struct {
@@ -124,9 +135,29 @@ func buildNodeHTTPClient(n *model.Node) *http.Client {
 		} else if n.Insecure {
 			tlsConfig.InsecureSkipVerify = true
 		}
-		client.Transport = &http.Transport{TLSClientConfig: tlsConfig}
+		client.Transport = &http.Transport{
+			TLSClientConfig: tlsConfig,
+			IdleConnTimeout: nodeIdleConnTimeout,
+		}
 	}
 	return client
+}
+
+// closeIdle hands a node client's idle connections back.
+//
+// Not client.CloseIdleConnections() directly: buildNodeHTTPClient deliberately
+// leaves Transport nil for a plain-http node so it shares
+// http.DefaultTransport, and http.Client.CloseIdleConnections falls back to
+// that same default transport when Transport is nil. Calling it there would
+// empty a pool that belongs to every other caller in the process -- the update
+// check, warp, cmd/setting, notify without a proxy -- once a minute, for the
+// whole lifetime of one plain-http node. A shared pool needs no help from us:
+// it reaps itself on its own IdleConnTimeout.
+func closeIdle(client *http.Client) {
+	if client == nil || client.Transport == nil || client.Transport == http.DefaultTransport {
+		return
+	}
+	client.CloseIdleConnections()
 }
 
 func nodeHTTPClient(n *model.Node) *http.Client {
@@ -143,7 +174,13 @@ func nodeHTTPClient(n *model.Node) *http.Client {
 func invalidateNodeClient(id uint) {
 	nodeClientMu.Lock()
 	defer nodeClientMu.Unlock()
-	delete(nodeClients, id)
+	if client, ok := nodeClients[id]; ok {
+		// Dropping the map entry alone strands the Transport's idle
+		// connections for nodeIdleConnTimeout; the node's address or TLS mode
+		// just changed, so they are already useless.
+		closeIdle(client)
+		delete(nodeClients, id)
+	}
 }
 
 // nodeGet calls a remote panel's apiv2 GET action and unwraps the
@@ -396,7 +433,9 @@ func (s *NodeService) TestNode(data json.RawMessage) (NodeStatus, error) {
 		}
 		node.Token = oldToken
 	}
-	return s.probe(&node, buildNodeHTTPClient(&node)), nil
+	client := buildNodeHTTPClient(&node)
+	defer closeIdle(client)
+	return s.probe(&node, client), nil
 }
 
 // ---------- CRUD ----------

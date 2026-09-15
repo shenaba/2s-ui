@@ -43,6 +43,19 @@ export const logout = async () => {
   }
 }
 
+// A non-2xx answer still carries the panel's own Msg body -- checkLogin's 401
+// is the one that matters -- and axios rejects it for the status alone. Unwrap
+// it rather than reporting the transport error: without this an expired
+// session surfaces as "Request failed with status code 401" and never reaches
+// the logout path in _handleMsg.
+function _errToMsg(e: any): Msg {
+  const data = e?.response?.data
+  if (data != null && isMsg(data)) {
+    return { success: data.success, msg: data.msg, obj: data.obj ?? null }
+  }
+  return { success: false, msg: e.toString(), obj: null }
+}
+
 function _respToMsg(resp: any): Msg {
   const data = resp.data
   if (data == null) {
@@ -69,7 +82,7 @@ const HttpUtils = {
         const resp = await api.get(url, { params: data, ...options })
         msg = _respToMsg(resp)
     } catch (e: any) {
-        msg = { success: false, msg: e.toString(), obj: null }
+        msg = _errToMsg(e)
     }
     _handleMsg(msg)
     return msg
@@ -80,7 +93,7 @@ const HttpUtils = {
         const resp = await api.post(url, data, options)
         msg = _respToMsg(resp)
     } catch (e: any) {
-        msg = { success: false, msg: e.toString(), obj: null }
+        msg = _errToMsg(e)
     }
     _handleMsg(msg)
     return msg

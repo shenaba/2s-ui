@@ -12,23 +12,54 @@ import (
 	"github.com/shenaba/2s-ui/util/common"
 )
 
+// maxExternalSubBytes bounds one external subscription body.
+const maxExternalSubBytes = 8 << 20
+
+// One client for the process, not one per call: a custom Transport holds its
+// idle connections forever (zero IdleConnTimeout) and is never collected, so
+// building one per call leaked a socket for every external link in every
+// subscription fetch (issue #176). Sharing it also lets repeat fetches of the
+// same upstream reuse a connection.
+//
+// It verifies the certificate: the response is turned into the outbound
+// configurations this panel serves to its own subscribers, so whoever can
+// intercept the fetch chooses the servers every one of those clients connects
+// to -- and the panel would report success the whole time. This drops support
+// for a source with a self-signed certificate, or one reached by bare IP.
+// There is no setting to turn that off, deliberately: a source worth trusting
+// with that is worth a real certificate, and a toggle would be found by
+// exactly the operators who should not use it.
+var externalSubClient = &http.Client{
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+		IdleConnTimeout: 90 * time.Second,
+	},
+}
+
 func GetExternalLink(url string) string {
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-
-	client := &http.Client{Transport: tr, Timeout: 10 * time.Second}
-
-	response, err := client.Get(url)
+	response, err := externalSubClient.Get(url)
 	if err != nil {
 		logger.Warning("sub: Error making HTTP request:", err)
 		return ""
 	}
 	defer response.Body.Close()
 
-	body, err := io.ReadAll(response.Body)
+	// The body is an operator-configured URL's answer, which is not this
+	// panel's to size: an unbounded ReadAll lets a redirect to a large file --
+	// or a source that simply never stops -- take the process's memory with it,
+	// on a fetch that runs on every subscription request. Eight mebibytes is
+	// far past any real subscription; what does not fit is treated as a source
+	// that cannot be read, since a truncated one would be served as if it were
+	// the whole list.
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxExternalSubBytes+1))
 	if err != nil {
 		logger.Warning("sub: Error reading response body:", err)
+		return ""
+	}
+	if len(body) > maxExternalSubBytes {
+		logger.Warning("sub: external subscription is larger than ",
+			maxExternalSubBytes, " bytes, ignoring it: ", url)
 		return ""
 	}
 

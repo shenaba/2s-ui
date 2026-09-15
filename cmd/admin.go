@@ -8,7 +8,22 @@ import (
 	"github.com/shenaba/2s-ui/service"
 )
 
-func resetAdmin() {
+// resetAdmin puts the first account back to admin/admin.
+//
+// It asks first. Without that, a mistyped command turned a live panel into
+// one with the best-known default credentials in the world, reachable from
+// wherever the panel is reachable from, and printed nothing that looked like
+// a warning. assumeYes comes from -yes, for the scripted case.
+func resetAdmin(assumeYes bool) {
+	if !assumeYes {
+		fmt.Println("This resets the first admin account to the username \"admin\" and the password \"admin\".")
+		fmt.Println("Anyone who can reach the panel will be able to log in until you change it.")
+		if !confirm("Type y to continue: ") {
+			fmt.Println("cancelled")
+			return
+		}
+	}
+
 	err := database.InitDB(config.GetDBPath())
 	if err != nil {
 		fmt.Println(err)
@@ -19,9 +34,10 @@ func resetAdmin() {
 	err = userService.UpdateFirstUser("admin", "admin")
 	if err != nil {
 		fmt.Println("reset admin credentials failed:", err)
-	} else {
-		fmt.Println("reset admin credentials success")
+		return
 	}
+	fmt.Println("reset admin credentials success")
+	fmt.Println("Change them now: s-ui admin -username <user> -password <pass>")
 }
 
 // disableAdminTwoFa is the only way back in once the second factor cannot be

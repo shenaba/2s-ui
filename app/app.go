@@ -125,8 +125,12 @@ func (a *APP) Start() error {
 		return err
 	}
 
-	err = a.configService.StartCore()
-	if err != nil {
+	// StartCore is a no-op while the core is out of service, so say why
+	// rather than leave the operator reading a boot log that just never
+	// mentions sing-box.
+	if a.configService.InMaintenance() {
+		logger.Warning("maintenance mode is on: core not started, clients cannot connect")
+	} else if err = a.configService.StartCore(); err != nil {
 		logger.Error(err)
 	}
 

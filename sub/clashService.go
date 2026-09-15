@@ -85,13 +85,13 @@ const echConfigPemType = "ECH CONFIGS"
 //
 // Concatenating every line instead, which upstream changed this to in 1.6.1,
 // hands mihomo the armor in every case. Do not follow it.
-func echConfigForClash(config []interface{}) string {
-	lines := make([]string, 0, len(config))
-	for _, line := range config {
-		if s, ok := line.(string); ok {
-			lines = append(lines, s)
-		}
-	}
+// The stored value is read through util.AsStringList rather than asserted:
+// config is Listable[string], so a PEM pasted as one string with embedded
+// newlines -- and anything sing-box itself wrote for a single-entry list --
+// arrives as a bare string. That read as absent, and ech-opts was then left
+// out of a profile whose server requires ECH.
+func echConfigForClash(config interface{}) string {
+	lines := util.AsStringList(config)
 	if len(lines) == 0 {
 		return ""
 	}
@@ -363,8 +363,7 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 			}
 			// ech outbounds
 			if ech, ok := tls["ech"].(map[string]interface{}); ok && util.AsBool(ech["enabled"]) {
-				ech_config, _ := ech["config"].([]interface{})
-				if ech_string := echConfigForClash(ech_config); ech_string != "" {
+				if ech_string := echConfigForClash(ech["config"]); ech_string != "" {
 					proxy["ech-opts"] = map[string]interface{}{
 						"enable": true,
 						"config": ech_string,
@@ -508,9 +507,22 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 
 	// Merge proxies and proxy groups if exist
 	var output map[string]interface{}
-	err := yaml.Unmarshal([]byte(basicConfig), &output)
-	if err != nil {
-		logger.Error(err.Error())
+	if err := yaml.Unmarshal([]byte(basicConfig), &output); err != nil {
+		logger.Warning("sub: the Clash extension config is not valid YAML: ", err)
+	}
+	if output == nil {
+		// Valid YAML that is not a mapping -- a bare scalar, a list, or a
+		// document holding only comments -- decodes to a nil map, and so does
+		// one that failed to decode at all. The merge below writes into it,
+		// which took every Clash subscription down with a 500.
+		//
+		// The shipped defaults rather than an empty profile: they carry the
+		// dns and rules blocks, and mihomo has nothing to route with without
+		// them. The operator's own config is what is unusable here, not ours.
+		logger.Warning("sub: the Clash extension config is not a YAML mapping, using the defaults")
+		if err := yaml.Unmarshal([]byte(basicClashConfig), &output); err != nil {
+			return "", err
+		}
 	}
 
 	if p, ok := output["proxies"].([]interface{}); ok {

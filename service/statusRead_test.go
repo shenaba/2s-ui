@@ -1,13 +1,30 @@
 package service
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/shenaba/2s-ui/core"
+	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/logger"
 
 	"github.com/op/go-logging"
 )
+
+// statusReadDB stands up the empty database NewConfigService needs: it primes
+// the maintenance flag from the settings table, so a core built without one
+// panics before the test reaches what it is checking.
+func statusReadDB(t *testing.T, name string) {
+	t.Helper()
+	if err := database.InitDB(filepath.Join(t.TempDir(), name)); err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.CloseDBForTest(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	})
+}
 
 // GetSingboxInfo read IsRunning and then dereferenced GetInstance, two locks
 // apart. Start and Stop write both fields under one lock, so "running, but no
@@ -24,6 +41,7 @@ import (
 // directly instead. That is what SetStateForTest exists for.
 func TestSingboxInfoSurvivesAStopBetweenTheTwoReads(t *testing.T) {
 	logger.InitLogger(logging.CRITICAL)
+	statusReadDB(t, "status.db")
 
 	previous := corePtr
 	c := core.NewCore()
@@ -53,6 +71,7 @@ func TestSingboxInfoSurvivesAStopBetweenTheTwoReads(t *testing.T) {
 // passing because the flag is hard-wired to false.
 func TestSingboxInfoReportsARunningCore(t *testing.T) {
 	logger.InitLogger(logging.CRITICAL)
+	statusReadDB(t, "running.db")
 
 	previous := corePtr
 	c := core.NewCore()

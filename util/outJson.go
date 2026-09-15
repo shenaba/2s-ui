@@ -170,7 +170,10 @@ func addTls(out *map[string]interface{}, tls *model.Tls) {
 			realityConfig = map[string]interface{}{}
 		}
 		realityConfig["enabled"] = true
-		if shortIDs, ok := reality["short_id"].([]interface{}); ok && len(shortIDs) > 0 {
+		// Same Listable[string] as in genLink's prepareTls: a single stored id
+		// can be a bare string, and this is the snapshot a node hands its own
+		// subscribers.
+		if shortIDs := AsStringList(reality["short_id"]); len(shortIDs) > 0 {
 			realityConfig["short_id"] = shortIDs[common.RandomInt(len(shortIDs))]
 		}
 		tlsConfig["reality"] = realityConfig

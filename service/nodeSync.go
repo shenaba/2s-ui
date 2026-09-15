@@ -154,6 +154,11 @@ type remoteInbound struct {
 
 // nodeClient builds a short-lived HTTP client honouring the node's TLS mode,
 // with the longer push timeout.
+//
+// Every caller must defer closeIdle: the client is short-lived but its
+// Transport's idle pool is not, and letting it fall out of scope leaks one
+// ESTABLISHED socket per call (issue #176 — see nodeIdleConnTimeout). Go
+// through closeIdle rather than the client's own method; it says why.
 func nodePushClient(n *model.Node) *http.Client {
 	c := buildNodeHTTPClient(n)
 	c.Timeout = nodePushTimeout
@@ -167,7 +172,9 @@ func (s *NodeSyncService) FetchNodeInbounds(nodeId uint) ([]remoteInbound, error
 	if err != nil {
 		return nil, err
 	}
-	obj, err := s.nodeGet(node, nodePushClient(node), "inbounds", nil)
+	client := nodePushClient(node)
+	defer closeIdle(client)
+	obj, err := s.nodeGet(node, client, "inbounds", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -220,6 +227,7 @@ func (s *NodeSyncService) AdoptInbounds(nodeId uint, tags []string, actor string
 		return err
 	}
 	client := nodePushClient(node)
+	defer closeIdle(client)
 
 	wanted := map[string]bool{}
 	for _, t := range tags {
@@ -334,8 +342,8 @@ func buildReplicaInbound(raw json.RawMessage, nodeId uint) (*model.Inbound, erro
 		return nil, err
 	}
 	inb := &model.Inbound{
-		Type:   asString(full["type"]),
-		Tag:    asString(full["tag"]),
+		Type:   util.AsString(full["type"]),
+		Tag:    util.AsString(full["tag"]),
 		NodeId: &nodeId,
 	}
 	if addrs, ok := full["addrs"]; ok && addrs != nil {
@@ -414,6 +422,7 @@ func (s *NodeSyncService) runReconcile(nodeId uint, startGen uint64) error {
 		return common.NewError("node is disabled — enable it before syncing")
 	}
 	client := nodePushClient(node)
+	defer closeIdle(client)
 
 	// tag -> node-local inbound id
 	tagToId, err := s.nodeInboundTagMap(node, client)
@@ -599,10 +608,10 @@ func (s *NodeSyncService) nodeInboundTagMap(node *model.Node, client *http.Clien
 // clientDiffers compares the master's desired client against the node's current
 // one on the fields we own. Config is compared structurally to avoid whitespace noise.
 func clientDiffers(want map[string]interface{}, cur nodeClientState) bool {
-	if asBool(want["enable"]) != cur.Enable {
+	if util.AsBool(want["enable"]) != cur.Enable {
 		return true
 	}
-	if asInt64(want["expiry"]) != cur.Expiry {
+	if expiry, _ := util.AsInt64(want["expiry"]); expiry != cur.Expiry {
 		return true
 	}
 	// Compare config only when both sides actually carry one. jsonEqual fails on
@@ -629,7 +638,8 @@ func clientDiffers(want map[string]interface{}, cur nodeClientState) bool {
 	// Same "absent means cannot compare" stance as config above: a node too old
 	// to report the column omits it, and treating that as 0 would re-push every
 	// limited client on every round.
-	if cur.LimitIp != nil && int(asInt64(want["limitIp"])) != *cur.LimitIp {
+	limitIp, _ := util.AsInt64(want["limitIp"])
+	if cur.LimitIp != nil && int(limitIp) != *cur.LimitIp {
 		return true
 	}
 	return false
@@ -645,7 +655,23 @@ func clientDiffers(want map[string]interface{}, cur nodeClientState) bool {
 // (TLS terminates on the node, so adoption drops it), and with tls_id==0
 // LinkGenerator passes addr["tls"] straight through to the per-protocol builders
 // — reproducing exactly the reality/tls params the node itself would emit.
-func genNodeReplicaLinks(replica *model.Inbound, c *model.Client) []string {
+func genNodeReplicaLinks(replica *model.Inbound, c *model.Client) (links []string) {
+	// Everything below reads a snapshot the node sent: out_json, the address
+	// book, the option map. A compromised or version-skewed node decides the
+	// shape of all three, and this runs on the reconcile -- a cron tick, or a
+	// bare `go` from an API handler. Neither has a recover of its own, so a
+	// panic here takes the process down, and the reconcile that caused it runs
+	// again on the next boot.
+	//
+	// The guard used to sit one call deeper, around util.LinkGenerator alone.
+	// That is why a null address row got past it: the write that panicked was
+	// in the backfill below, not in the generator.
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Warning("reconcile: link generation panicked for ", replica.Tag, ": ", r)
+			links = nil
+		}
+	}()
 	if len(replica.OutJson) == 0 {
 		return nil
 	}
@@ -678,6 +704,14 @@ func genNodeReplicaLinks(replica *model.Inbound, c *model.Client) []string {
 	}
 	var addrs []map[string]interface{}
 	for _, a := range book {
+		// A row can be null: the book is whatever JSON that node's own panel
+		// stored, and json decodes null into a nil map -- which the backfill
+		// below writes into. That is not a type assertion, so
+		// safeLinkGenerator's recover is one call too deep to catch it, and
+		// the reconcile it runs under has no recover of its own.
+		if a == nil {
+			continue
+		}
 		if _, ok := a["server"]; !ok {
 			a["server"] = base["server"]
 		}
@@ -700,23 +734,7 @@ func genNodeReplicaLinks(replica *model.Inbound, c *model.Client) []string {
 	synthetic.Tls = nil
 	synthetic.Addrs, _ = json.Marshal(addrs)
 
-	return safeLinkGenerator(c.Config, &synthetic, server, c.Remark)
-}
-
-// safeLinkGenerator wraps util.LinkGenerator, which has unguarded type
-// assertions over the inbound/tls maps. Here the data originates from the node
-// (its out_json snapshot), so a malformed snapshot — a compromised or
-// version-skewed node — could panic. This runs inside a background reconcile
-// goroutine with no recover of its own, so a panic would take the whole process
-// down and then crash-loop. Contain it: a bad snapshot yields no link.
-func safeLinkGenerator(config json.RawMessage, i *model.Inbound, server, remark string) (links []string) {
-	defer func() {
-		if r := recover(); r != nil {
-			logger.Warning("reconcile: link generation panicked for ", i.Tag, ": ", r)
-			links = nil
-		}
-	}()
-	return util.LinkGenerator(config, i, server, remark)
+	return util.LinkGenerator(c.Config, &synthetic, server, c.Remark)
 }
 
 // refreshNodeLinks re-derives the "[node] " external links for every master
@@ -906,6 +924,7 @@ func (s *NodeSyncService) CollectTraffic() {
 
 func (s *NodeSyncService) collectNodeTraffic(node *model.Node) error {
 	client := nodePushClient(node)
+	defer closeIdle(client)
 	current, err := s.actualClusterClients(node, client)
 	if err != nil {
 		return err
@@ -1021,34 +1040,6 @@ func (s *NodeSyncService) releaseReconcile(nodeId uint) {
 	defer reconcileMu.Unlock()
 	reconcileBusy[nodeId] = false
 	reconcileLast[nodeId] = time.Now()
-}
-
-func asString(v interface{}) string {
-	s, _ := v.(string)
-	return s
-}
-
-func asBool(v interface{}) bool {
-	b, _ := v.(bool)
-	return b
-}
-
-func asInt64(v interface{}) int64 {
-	switch n := v.(type) {
-	case int64:
-		return n
-	case int:
-		return int64(n)
-	case float64:
-		return int64(n)
-	case json.Number:
-		i, _ := n.Int64()
-		return i
-	case string:
-		i, _ := strconv.ParseInt(n, 10, 64)
-		return i
-	}
-	return 0
 }
 
 // jsonEqual compares two JSON values structurally (ignoring key order / whitespace).

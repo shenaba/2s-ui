@@ -40,9 +40,20 @@
       <Field :label="$t('rule.portRange') + ' ' + $t('commaSeparated')">
         <input class="input mono" v-model="server_ports" />
       </Field>
-      <Field :label="$t('ruleset.interval') + ' (' + $t('date.s') + ')'">
-        <input class="input mono" type="number" min="0" v-model.number="hop_interval" />
-      </Field>
+      <!-- hop_interval_max is hysteria2-only: 1.14 picks each hop uniformly
+           from [hop_interval, hop_interval_max] instead of hopping on a fixed
+           beat. hysteria v1 has no such option, so it keeps the single field. -->
+      <div :class="{ grid2: type == inTypes.Hysteria2 }">
+        <Field :label="$t('ruleset.interval') + ' (' + $t('date.s') + ')'">
+          <input class="input mono" type="number" min="0" v-model.number="hop_interval" />
+        </Field>
+        <Field
+          v-if="type == inTypes.Hysteria2"
+          :label="$t('types.hy.hopIntervalMax') + ' (' + $t('date.s') + ')'"
+        >
+          <input class="input mono" type="number" min="0" v-model.number="hop_interval_max" />
+        </Field>
+      </div>
     </template>
     <template v-if="type == inTypes.Shadowsocks">
       <Field label="Plugin">
@@ -156,6 +167,14 @@ const hop_interval = computed({
   get: (): number =>
     props.inData.out_json.hop_interval ? parseInt(props.inData.out_json.hop_interval.replace('s', '')) : 0,
   set: (v: number) => { props.inData.out_json.hop_interval = v > 0 ? v + 's' : undefined },
+})
+
+const hop_interval_max = computed({
+  get: (): number =>
+    props.inData.out_json.hop_interval_max
+      ? parseInt(props.inData.out_json.hop_interval_max.replace('s', ''))
+      : 0,
+  set: (v: number) => { props.inData.out_json.hop_interval_max = v > 0 ? v + 's' : undefined },
 })
 
 // These two ride in out_json rather than the inbound itself: sing-box has no
