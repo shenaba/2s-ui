@@ -271,9 +271,11 @@ func TestEchConfigForClashHandlesStoredShapes(t *testing.T) {
 		return out
 	}
 
+	pem := "-----BEGIN ECH CONFIGS-----\n" + body + "\n" + body2 + "\n-----END ECH CONFIGS-----\n"
+
 	tests := []struct {
 		name   string
-		stored []interface{}
+		stored interface{}
 		want   string
 	}{
 		{"wrapped body with a trailing blank", list(
@@ -285,6 +287,12 @@ func TestEchConfigForClashHandlesStoredShapes(t *testing.T) {
 		// A list holding something that is not a string no longer panics.
 		{"non-string entries", []interface{}{
 			"-----BEGIN ECH CONFIGS-----", body, body2, float64(7), "-----END ECH CONFIGS-----"}, want},
+		// config is Listable[string]: sing-box writes a one-element list back
+		// out as a bare scalar, and an operator pasting a PEM types it as one
+		// string. Both used to read as absent, and ech-opts was then left out
+		// of a profile whose server requires ECH.
+		{"a whole PEM in one string", pem, want},
+		{"an empty string", "", ""},
 	}
 
 	for _, tt := range tests {
