@@ -200,7 +200,11 @@ func prepareTls(t *model.Tls) map[string]interface{} {
 				clientReality = map[string]interface{}{}
 			}
 			clientReality["enabled"] = reality["enabled"]
-			if shortIDs, hasSIds := reality["short_id"].([]interface{}); hasSIds && len(shortIDs) > 0 {
+			// Through the shared reader: short_id is Listable[string] too, so a
+			// row holding a single id can have it stored as a bare string --
+			// which the array assertion read as absent, and a reality link
+			// without a short_id is one the server refuses.
+			if shortIDs := AsStringList(reality["short_id"]); len(shortIDs) > 0 {
 				clientReality["short_id"] = shortIDs[common.RandomInt(len(shortIDs))]
 			}
 			oTls["reality"] = clientReality

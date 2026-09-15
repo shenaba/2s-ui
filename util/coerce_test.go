@@ -20,7 +20,14 @@ func TestAsStringList(t *testing.T) {
 		{"non-string entries are skipped", []interface{}{"h2", 3, nil}, []string{"h2"}},
 		{"empty", []interface{}{}, []string{}},
 		{"absent", nil, nil},
-		{"not a list", "h2", nil},
+		// A bare scalar is a list of one, not "not a list": every caller reads a
+		// sing-box Listable[string], which accepts a scalar and writes one back
+		// out for a single-element list. This case asserted nil, which is what
+		// dropped a single alpn, a single reality short_id and a one-line ECH
+		// config -- the shapes sing-box itself produces.
+		{"a scalar is a list of one", "h2", []string{"h2"}},
+		{"an empty scalar is an empty field", "", nil},
+		{"not a list at all", 42, nil},
 	}
 
 	for _, tt := range tests {

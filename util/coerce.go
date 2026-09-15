@@ -39,8 +39,22 @@ func AsBool(v interface{}) bool {
 
 // AsStringList reads a value the schema says is a list of strings, skipping
 // anything that is not one rather than asserting element by element.
+//
+// A bare string counts as a list of one. Most list-shaped sing-box fields --
+// alpn, ech.config, reality.short_id -- are declared Listable[string], which
+// unmarshals a scalar into a one-element list AND marshals a one-element list
+// back out as a scalar. So `"alpn": "h3"` is valid stored config, it is what
+// sing-box itself writes for a single value, and asserting only the array
+// shape read it as absent.
 func AsStringList(v interface{}) []string {
 	switch items := v.(type) {
+	case string:
+		// Not a one-element list holding "": an empty scalar is an empty
+		// field, and a Listable that held nothing would marshal as [].
+		if items == "" {
+			return nil
+		}
+		return []string{items}
 	case []string:
 		return items
 	case []interface{}:
