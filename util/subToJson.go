@@ -15,22 +15,25 @@ import (
 // maxExternalSubBytes bounds one external subscription body.
 const maxExternalSubBytes = 8 << 20
 
-// externalSubClient verifies the certificate. InsecureSkipVerify was set
-// here, and this is the call least able to afford it: the response is turned
-// into the outbound configurations this panel then serves to its own
-// subscribers, so whoever can intercept the fetch chooses the servers every
-// one of those clients connects to -- and the panel would report success the
-// whole time.
+// One client for the process, not one per call: a custom Transport holds its
+// idle connections forever (zero IdleConnTimeout) and is never collected, so
+// building one per call leaked a socket for every external link in every
+// subscription fetch (issue #176). Sharing it also lets repeat fetches of the
+// same upstream reuse a connection.
 //
-// This drops support for a subscription source with a self-signed
-// certificate, or one reached by bare IP. There is no setting to turn it back
-// on, deliberately: a source worth trusting with that is worth a real
-// certificate, and a toggle would be found by exactly the operators who
-// should not use it.
+// It verifies the certificate: the response is turned into the outbound
+// configurations this panel serves to its own subscribers, so whoever can
+// intercept the fetch chooses the servers every one of those clients connects
+// to -- and the panel would report success the whole time. This drops support
+// for a source with a self-signed certificate, or one reached by bare IP.
+// There is no setting to turn that off, deliberately: a source worth trusting
+// with that is worth a real certificate, and a toggle would be found by
+// exactly the operators who should not use it.
 var externalSubClient = &http.Client{
 	Timeout: 10 * time.Second,
 	Transport: &http.Transport{
 		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+		IdleConnTimeout: 90 * time.Second,
 	},
 }
 

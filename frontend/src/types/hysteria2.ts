@@ -45,3 +45,20 @@ export type BBRProfile = typeof bbrProfiles[number]
 export function createHysteria2Realm(): Hysteria2Realm {
   return { server_url: '', realm_id: '' }
 }
+
+// sing-quic validates the hop pair when the client dials, not when its config
+// loads, and only once a port range is set. An invalid combination therefore
+// costs a subscriber every connection while this panel and its core stay
+// quiet about it -- so the drawers refuse the save instead. Returns the i18n
+// key of the rule that was broken, or null. Takes the client half of either
+// protocol: a listener's out_json, or a hysteria/hysteria2 outbound.
+export function checkHopInterval(o: any): string | null {
+  if (!o?.server_ports?.length) return null
+  const secs = (v?: string): number => (v ? parseInt(v.replace('s', '')) : 0)
+  const min = secs(o.hop_interval)
+  const max = secs(o.hop_interval_max)
+  if (max > 0 && min == 0) return 'types.hy.hopBothRequired'
+  if (min > 0 && max > 0 && min > max) return 'types.hy.hopOrder'
+  if ((min > 0 && min < 5) || (max > 0 && max < 5)) return 'types.hy.hopTooShort'
+  return null
+}

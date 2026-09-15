@@ -694,13 +694,60 @@ func toBase64(d []byte) string {
 	return base64.StdEncoding.EncodeToString(d)
 }
 
+// rawParamIsSafe reports whether a value may go into the query unescaped.
+//
+// mport and alpn are the two written raw, because client parsers expect their
+// commas literal. Escaping them instead is not an option: url.QueryEscape also
+// encodes '/', and alpn's most common value is "h2,http/1.1" -- a client that
+// does not url-decode would negotiate a protocol named "http%2F1.1". So the
+// values are checked rather than escaped, against the characters each can
+// legitimately hold: digits, commas, ranges and colons for a port list, and
+// the ALPN identifier alphabet for the other.
+//
+// It has to be checked because neither value is necessarily this panel's. A
+// managed node supplies both through its out_json -- server_ports becomes
+// mport, tls.alpn becomes alpn -- and the master generates its subscribers'
+// links for that node's replica inbounds from it. An unescaped '&' therefore
+// let a node append parameters of its own choosing to links the master hands
+// out under its own name.
+func rawParamIsSafe(key, value string) bool {
+	if value == "" {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		ok := c >= '0' && c <= '9'
+		switch key {
+		case "mport":
+			ok = ok || c == ',' || c == '-' || c == ':'
+		case "alpn":
+			ok = ok || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+				c == ',' || c == '.' || c == '-' || c == '/' || c == '+'
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // encodeParams renders the query. mport and alpn keep their commas, which the
-// client parsers expect unescaped.
+// client parsers expect unescaped; see rawParamIsSafe for what that costs and
+// how it is paid for.
 func encodeParams(params []LinkParam) string {
 	var q []string
 	for _, p := range params {
 		switch p.Key {
 		case "mport", "alpn":
+			// Dropped rather than escaped or passed through: every legitimate
+			// value is inside the allowed set, so anything outside it is a
+			// typo or an injection, and a link carrying either is worse than
+			// a link missing one optional parameter.
+			if !rawParamIsSafe(p.Key, p.Value) {
+				logger.Warning("sub: dropping ", p.Key,
+					" from a generated link, it holds characters it cannot hold: ", p.Value)
+				continue
+			}
 			q = append(q, fmt.Sprintf("%s=%s", p.Key, p.Value))
 		default:
 			q = append(q, fmt.Sprintf("%s=%s", p.Key, url.QueryEscape(p.Value)))

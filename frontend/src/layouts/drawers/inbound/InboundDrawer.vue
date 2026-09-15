@@ -107,6 +107,8 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Data from '@/store/modules/data'
 import { InTypes, createInbound, Addr } from '@/types/inbounds'
+import { checkHopInterval } from '@/types/hysteria2'
+import { push } from 'notivue'
 import RandomUtil from '@/plugins/randomUtil'
 import { protoColor } from '@/plugins/colors'
 import MDrawer from '@/components/ui/MDrawer.vue'
@@ -321,6 +323,12 @@ const saveChanges = async () => {
   // check duplicate tag
   const isDuplicatedTag = Data().checkTag('inbound', inbound.value.id, inbound.value.tag)
   if (isDuplicatedTag) return
+  // the port hopping fields live in the generated client config
+  const hopError = checkHopInterval(inbound.value.out_json)
+  if (hopError) {
+    push.error({ message: t(hopError) })
+    return
+  }
 
   // save data
   loading.value = true

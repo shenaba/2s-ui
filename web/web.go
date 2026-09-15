@@ -20,6 +20,7 @@ import (
 	"github.com/shenaba/2s-ui/middleware"
 	"github.com/shenaba/2s-ui/network"
 	"github.com/shenaba/2s-ui/service"
+	"github.com/shenaba/2s-ui/util/common"
 
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-contrib/sessions"
@@ -207,9 +208,18 @@ func (s *Server) Start() (err error) {
 			listener = tls.NewListener(listener, tlsConfig)
 			scheme = "https (ACME)"
 		}
-	} else if certFile != "" || keyFile != "" {
+	} else if certFile != "" && keyFile != "" {
+		// Both, not either, same as the sub server: the condition was an OR,
+		// so filling in one of the two put the panel into TLS mode with half
+		// a configuration and failed to start with an error that named
+		// neither setting. The half-configured case is answered below.
 		webDomain, err := s.settingService.GetWebDomain()
 		if err != nil {
+			// Closed on every path out of this branch: the listener is
+			// already bound, and returning without it leaves the panel's own
+			// port held by a process that is about to report it could not
+			// start -- which is the port the operator needs to get back in.
+			listener.Close()
 			return err
 		}
 		c, err := network.NewTLSConfig(certFile, keyFile, webDomain)
@@ -220,6 +230,9 @@ func (s *Server) Start() (err error) {
 		listener = network.NewAutoHttpsListener(listener)
 		listener = tls.NewListener(listener, c)
 		scheme = "https"
+	} else if certFile != "" || keyFile != "" {
+		listener.Close()
+		return common.NewError("web: webCertFile and webKeyFile must both be set, or both be empty")
 	}
 
 	logger.Info("web server run "+scheme+" on", listener.Addr())

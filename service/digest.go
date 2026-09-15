@@ -74,9 +74,14 @@ func StatusDigest(lang string) string {
 			notify.Label(lang, "digest.nodesOnline")))
 	}
 
+	// "stopped" on its own reads as a crash, which is the one thing this
+	// report must not say about a core the operator took down deliberately.
 	core := notify.Label(lang, "digest.stopped")
-	if configService.CoreRunning() {
+	switch {
+	case configService.CoreRunning():
 		core = notify.Label(lang, "digest.running")
+	case configService.InMaintenance():
+		core = notify.Label(lang, "digest.maintenance")
 	}
 	b.WriteString("\n" + notify.Label(lang, "digest.core") + " " + core)
 

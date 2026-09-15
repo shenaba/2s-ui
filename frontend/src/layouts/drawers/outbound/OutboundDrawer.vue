@@ -82,6 +82,8 @@ import HttpUtils from '@/plugins/httputil'
 import RandomUtil from '@/plugins/randomUtil'
 import { outColor } from '@/plugins/colors'
 import { OutTypes, Outbound, createOutbound } from '@/types/outbounds'
+import { checkHopInterval } from '@/types/hysteria2'
+import { push } from 'notivue'
 import MDrawer from '@/components/ui/MDrawer.vue'
 import Tabs from '@/components/ui/Tabs.vue'
 import Field from '@/components/ui/Field.vue'
@@ -173,6 +175,11 @@ const saveChanges = async () => {
   // check duplicate tag
   const isDuplicatedTag = Data().checkTag('outbound', props.id, outbound.value.tag)
   if (isDuplicatedTag) return
+  const hopError = checkHopInterval(outbound.value)
+  if (hopError) {
+    push.error({ message: t(hopError) })
+    return
+  }
 
   // save data
   loading.value = true
