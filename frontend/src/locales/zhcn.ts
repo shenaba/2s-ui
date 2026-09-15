@@ -598,6 +598,8 @@ export default {
       cipher: "加密算法",
       auth: "认证摘要",
       staticKeyPath: "静态密钥路径",
+      staticKey: "静态密钥",
+      staticKeyGenerated: "已生成静态密钥",
       keyDirection: "密钥方向",
     },
     oomKiller: {

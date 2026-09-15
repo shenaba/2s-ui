@@ -598,6 +598,8 @@ export default {
       cipher: "رمز",
       auth: "خلاصهٔ احراز",
       staticKeyPath: "مسیر کلید ثابت",
+      staticKey: "کلید ثابت",
+      staticKeyGenerated: "کلید ثابت ساخته شد",
       keyDirection: "جهت کلید",
     },
     oomKiller: {

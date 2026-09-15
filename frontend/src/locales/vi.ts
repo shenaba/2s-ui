@@ -598,6 +598,8 @@ export default {
       cipher: "Mật mã",
       auth: "Thuật toán xác thực",
       staticKeyPath: "Đường dẫn khóa tĩnh",
+      staticKey: "Khóa tĩnh",
+      staticKeyGenerated: "Đã tạo khóa tĩnh",
       keyDirection: "Hướng khóa",
     },
     oomKiller: {

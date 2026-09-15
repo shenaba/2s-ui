@@ -599,6 +599,8 @@ export default {
       cipher: "Шифр",
       auth: "Хеш аутентификации",
       staticKeyPath: "Путь к статическому ключу",
+      staticKey: "Статический ключ",
+      staticKeyGenerated: "Статический ключ создан",
       keyDirection: "Направление ключа",
     },
     oomKiller: {

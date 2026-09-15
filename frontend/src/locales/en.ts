@@ -598,6 +598,8 @@ export default {
       cipher: "Cipher",
       auth: "Auth digest",
       staticKeyPath: "Static key path",
+      staticKey: "Static key",
+      staticKeyGenerated: "Static key generated",
       keyDirection: "Key direction",
     },
     oomKiller: {
