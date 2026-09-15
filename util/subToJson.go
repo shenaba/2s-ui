@@ -15,14 +15,27 @@ import (
 // maxExternalSubBytes bounds one external subscription body.
 const maxExternalSubBytes = 8 << 20
 
+// externalSubClient verifies the certificate. InsecureSkipVerify was set
+// here, and this is the call least able to afford it: the response is turned
+// into the outbound configurations this panel then serves to its own
+// subscribers, so whoever can intercept the fetch chooses the servers every
+// one of those clients connects to -- and the panel would report success the
+// whole time.
+//
+// This drops support for a subscription source with a self-signed
+// certificate, or one reached by bare IP. There is no setting to turn it back
+// on, deliberately: a source worth trusting with that is worth a real
+// certificate, and a toggle would be found by exactly the operators who
+// should not use it.
+var externalSubClient = &http.Client{
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+	},
+}
+
 func GetExternalLink(url string) string {
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-
-	client := &http.Client{Transport: tr, Timeout: 10 * time.Second}
-
-	response, err := client.Get(url)
+	response, err := externalSubClient.Get(url)
 	if err != nil {
 		logger.Warning("sub: Error making HTTP request:", err)
 		return ""

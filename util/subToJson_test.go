@@ -30,6 +30,24 @@ func TestGetExternalLinkRefusesAnOversizedBody(t *testing.T) {
 	}
 }
 
+// The response becomes the outbound configurations this panel serves to its own
+// subscribers, so whoever can intercept the fetch chooses the servers every one
+// of those clients connects to. InsecureSkipVerify was set on this call, which
+// made that free.
+//
+// httptest's TLS server presents a certificate signed by nobody, which is the
+// same thing a MITM presents.
+func TestGetExternalLinkRefusesAnUntrustedCertificate(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("trojan://pw@e.com:443#node\n"))
+	}))
+	defer srv.Close()
+
+	if got := GetExternalLink(srv.URL); got != "" {
+		t.Errorf("got %q, want nothing: the certificate is signed by nobody", got)
+	}
+}
+
 // And a subscription of an ordinary size still comes through whole, so the
 // above is not passing because the fetch stopped working.
 func TestGetExternalLinkReadsAnOrdinaryBody(t *testing.T) {
