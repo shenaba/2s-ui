@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -420,6 +421,88 @@ func seedLocalIPv6Client(t *testing.T, subId, remark string) {
 	}
 	if err := db.Create(client).Error; err != nil {
 		t.Fatalf("seed client: %v", err)
+	}
+}
+
+// seedMultiAddrClient gives one inbound several addresses, which is what makes
+// the subscription emit several outbounds from a single row.
+func seedMultiAddrClient(t *testing.T, subId, addrs string) {
+	t.Helper()
+	db := database.GetDB()
+
+	inbound := &model.Inbound{
+		Type:    "vless",
+		Tag:     "multi-in",
+		Addrs:   json.RawMessage(addrs),
+		OutJson: json.RawMessage(`{"type":"vless","tag":"multi-in","server":"a.example.com","server_port":443}`),
+		Options: json.RawMessage(`{}`),
+	}
+	if err := db.Create(inbound).Error; err != nil {
+		t.Fatalf("seed inbound: %v", err)
+	}
+	client := &model.Client{
+		Enable:   true,
+		Name:     subId,
+		Config:   json.RawMessage(clientVlessConfig),
+		Inbounds: json.RawMessage(fmt.Sprintf(`[%d]`, inbound.Id)),
+		Links:    json.RawMessage(`[]`),
+	}
+	if err := db.Create(client).Error; err != nil {
+		t.Fatalf("seed client: %v", err)
+	}
+}
+
+// Every address used to be prefixed with its own position ("1.", "2."), so
+// addresses that already carried distinct remarks were renamed for no reason
+// and the node names a subscriber saw shifted whenever an address was added or
+// removed (upstream #1249). Distinct remarks now stand as written.
+func TestSubMultiAddrTagsAreNotNumbered(t *testing.T) {
+	setupSubDB(t)
+	seedMultiAddrClient(t, "submulti", `[
+		{"server":"a.example.com","server_port":443,"remark":"-jp"},
+		{"server":"b.example.com","server_port":443,"remark":"-us"}
+	]`)
+
+	raw, _, err := (&JsonService{}).GetJson("submulti", "json")
+	if err != nil {
+		t.Fatalf("GetJson: %v", err)
+	}
+	var got []string
+	for _, ob := range outboundsOf(t, *raw) {
+		if ob["type"] == "vless" {
+			got = append(got, fmt.Sprint(ob["tag"]))
+		}
+	}
+	want := []string{"multi-in-jp", "multi-in-us"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("tags = %v, want %v", got, want)
+	}
+}
+
+// Dropping the position prefix means two addresses with the same remark now
+// collide, and sing-box rejects the whole config on a duplicate tag. The
+// uniqueOutboundTags pass is what has to catch that.
+func TestSubMultiAddrTagsStayUniqueWithoutRemarks(t *testing.T) {
+	setupSubDB(t)
+	seedMultiAddrClient(t, "submulti", `[
+		{"server":"a.example.com","server_port":443,"remark":""},
+		{"server":"b.example.com","server_port":443,"remark":""}
+	]`)
+
+	raw, _, err := (&JsonService{}).GetJson("submulti", "json")
+	if err != nil {
+		t.Fatalf("GetJson: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, ob := range outboundsOf(t, *raw) {
+		tag := fmt.Sprint(ob["tag"])
+		if seen[tag] {
+			t.Fatalf("duplicate outbound tag %q -- sing-box refuses the whole config:\n%s", tag, *raw)
+		}
+		seen[tag] = true
+	}
+	if !seen["multi-in"] || !seen["multi-in-2"] {
+		t.Errorf("want the second address renamed to multi-in-2, got %v", seen)
 	}
 }
 

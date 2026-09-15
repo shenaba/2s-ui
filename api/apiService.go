@@ -374,12 +374,19 @@ func (a *ApiService) Login(c *gin.Context) {
 		logger.Infof("Unable to get session's max age from DB")
 	}
 
-	err = SetLoginUser(c, loginUser, sessionMaxAge)
-	if err == nil {
-		logger.Info("user ", loginUser, " login success")
-	} else {
-		logger.Warning("login failed: ", err)
+	if err = SetLoginUser(c, loginUser, sessionMaxAge); err != nil {
+		// Answered, not logged and swallowed. This reported success with no
+		// cookie set, so the panel bounced straight back to the login form
+		// with nothing anywhere saying why -- and the operator retypes a
+		// password that was never the problem.
+		//
+		// The detail stays in the log: it describes the session store, which
+		// is nothing the person at the login form can act on.
+		logger.Warning("login failed to start a session: ", err)
+		jsonMsg(c, "", common.NewError("unable to start a session"))
+		return
 	}
+	logger.Info("user ", loginUser, " login success")
 
 	jsonMsg(c, "", nil)
 }
@@ -549,6 +556,25 @@ func (a *ApiService) RestartApp(c *gin.Context) {
 func (a *ApiService) RestartSb(c *gin.Context) {
 	err := a.ConfigService.RestartCore()
 	jsonMsg(c, "restartSb", err)
+}
+
+// SetMaintenance stops the core and keeps it stopped, or puts it back.
+//
+// The two directions answer with different messages rather than one
+// "maintenance": the panel turns the message into the success toast, and a
+// toast that reads the same whichever way the switch went is no confirmation
+// at all.
+func (a *ApiService) SetMaintenance(c *gin.Context) {
+	enable, err := strconv.ParseBool(c.Request.FormValue("enable"))
+	if err != nil {
+		jsonMsg(c, "", common.NewError("maintenance: enable must be true or false"))
+		return
+	}
+	msg := "maintenanceOff"
+	if enable {
+		msg = "maintenanceOn"
+	}
+	jsonMsg(c, msg, a.ConfigService.SetMaintenance(enable))
 }
 
 func (a *ApiService) ResetTraffic(c *gin.Context) {

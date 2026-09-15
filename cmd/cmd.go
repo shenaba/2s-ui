@@ -25,6 +25,7 @@ func ParseCmd() {
 	var subPort int
 	var subPath string
 	var reset bool
+	var assumeYes bool
 	var show bool
 	var disableTwoFa bool
 	var unlockLogin bool
@@ -33,6 +34,7 @@ func ParseCmd() {
 	backupCmd.StringVar(&output, "output", "", "backup output file path (use - for stdout)")
 	backupCmd.StringVar(&exclude, "exclude", "", "comma-separated tables to exclude: changes,stats")
 	settingCmd.BoolVar(&reset, "reset", false, "reset all settings")
+	settingCmd.BoolVar(&assumeYes, "yes", false, "skip the confirmation prompt for -reset")
 	settingCmd.BoolVar(&show, "show", false, "show current settings")
 	settingCmd.IntVar(&port, "port", 0, "set panel port")
 	settingCmd.StringVar(&path, "path", "", "set panel path")
@@ -41,6 +43,7 @@ func ParseCmd() {
 
 	adminCmd.BoolVar(&show, "show", false, "show first admin credentials")
 	adminCmd.BoolVar(&reset, "reset", false, "reset first admin credentials")
+	adminCmd.BoolVar(&assumeYes, "yes", false, "skip the confirmation prompt for -reset")
 	adminCmd.StringVar(&username, "username", "", "set login username")
 	adminCmd.StringVar(&password, "password", "", "set login password")
 	adminCmd.BoolVar(&disableTwoFa, "disable-2fa", false, "turn off two-factor authentication (recovery for a lost authenticator)")
@@ -56,6 +59,7 @@ func ParseCmd() {
 		fmt.Println("    migrate        migrate form older version")
 		fmt.Println("    setting        set/reset/show settings")
 		fmt.Println("    backup         create a database backup")
+		fmt.Println("    healthcheck    exit 0 while the panel is accepting connections")
 		fmt.Println()
 		adminCmd.Usage()
 		fmt.Println()
@@ -90,7 +94,7 @@ func ParseCmd() {
 		case show:
 			showAdmin()
 		case reset:
-			resetAdmin()
+			resetAdmin(assumeYes)
 		case disableTwoFa:
 			disableAdminTwoFa()
 		case unlockLogin:
@@ -102,6 +106,9 @@ func ParseCmd() {
 
 	case "uri":
 		getPanelURI()
+
+	case "healthcheck":
+		healthCheck()
 
 	case "migrate":
 		if err := migration.MigrateDb(); err != nil {
@@ -119,7 +126,7 @@ func ParseCmd() {
 		case show:
 			showSetting()
 		case reset:
-			resetSetting()
+			resetSetting(assumeYes)
 		default:
 			updateSetting(port, path, subPort, subPath)
 			showSetting()

@@ -165,7 +165,16 @@ func (j *JsonService) getOutbounds(clientConfig json.RawMessage, inbounds []*mod
 				inbPass, _ := inbOptions["password"].(string)
 				userPass = append(userPass, inbPass)
 			}
-			pass, _ := configs[util.ShadowsocksClientConfigKey(method)].(map[string]interface{})["password"].(string)
+			// Read in one guarded step. The chained form this replaces looked
+			// harmless but was not: the inner assertion sat in single-value
+			// context, so a client config missing the method's key -- after an
+			// inbound was switched from aes-128-gcm to 2022-blake3-*, say --
+			// panicked and took the whole subscription request down with it.
+			// The comma-ok in `pass, _ :=` only ever covered the outer .(string).
+			var pass string
+			if cfg, ok := configs[util.ShadowsocksClientConfigKey(method)].(map[string]interface{}); ok {
+				pass, _ = cfg["password"].(string)
+			}
 			userPass = append(userPass, pass)
 			outbound["password"] = strings.Join(userPass, ":")
 
@@ -218,7 +227,7 @@ func (j *JsonService) getOutbounds(clientConfig json.RawMessage, inbounds []*mod
 				outbounds = append(outbounds, outbound)
 			}
 		} else {
-			for index, addr := range addrs {
+			for _, addr := range addrs {
 				// Copy original config
 				newOut := make(map[string]interface{}, len(outbound))
 				for key, value := range outbound {
@@ -254,7 +263,13 @@ func (j *JsonService) getOutbounds(clientConfig json.RawMessage, inbounds []*mod
 				}
 
 				remark, _ := addr["remark"].(string)
-				newTag := fmt.Sprintf("%d.%s", index+1, util.JoinRemark(clientRemark, tag+remark))
+				// Multiple addresses share one inbound tag, so the name only
+				// needs disambiguating when the addresses don't already carry
+				// distinct remarks. Numbering every one of them renamed nodes
+				// that had no conflict to begin with (upstream #1249); the
+				// uniqueOutboundTags pass below is what handles a real
+				// collision, across every source that feeds this list.
+				newTag := util.JoinRemark(clientRemark, tag+remark)
 				newOut["tag"] = newTag
 				// For mixed protocol, use separated socks and http
 				if protocol == "mixed" {

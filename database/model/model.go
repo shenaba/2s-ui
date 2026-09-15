@@ -94,7 +94,10 @@ type Client struct {
 
 type Stats struct {
 	Id        uint64 `json:"id" gorm:"primaryKey;autoIncrement"`
-	DateTime  int64  `json:"dateTime" gorm:"uniqueIndex:idx_stats_bucket,priority:3"`
+	// date_time sits third in idx_stats_bucket, so that index cannot serve the
+	// retention purge, which filters on date_time alone and scans the table
+	// instead.
+	DateTime  int64  `json:"dateTime" gorm:"uniqueIndex:idx_stats_bucket,priority:3;index:idx_stats_date_time"`
 	Resource  string `json:"resource" gorm:"uniqueIndex:idx_stats_bucket,priority:1"`
 	Tag       string `json:"tag" gorm:"uniqueIndex:idx_stats_bucket,priority:2"`
 	Direction bool   `json:"direction" gorm:"uniqueIndex:idx_stats_bucket,priority:4"`

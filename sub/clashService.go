@@ -1,6 +1,8 @@
 package sub
 
 import (
+	"encoding/base64"
+	"encoding/pem"
 	"regexp"
 	"strings"
 
@@ -61,6 +63,53 @@ const ProxyGroups = `- name: Proxy
   interval: 300
   tolerance: 50
 `
+
+// echConfigPemType is the block sing-box writes for an ECH config; its key goes
+// into an "ECH KEYS" block, which must never leave the panel.
+const echConfigPemType = "ECH CONFIGS"
+
+// echConfigForClash converts a stored ECH config into what mihomo's ech-opts
+// wants, and returns "" when there is nothing usable to convert.
+//
+// The two sides disagree on shape. sing-box holds the PEM text line by line
+// (common/tls/ech.go joins the list with newlines and pem.Decodes it, block
+// type "ECH CONFIGS"), while mihomo wants the bare base64 of the ECHConfigList
+// with no armor around it.
+//
+// Decoding the PEM is what makes that robust. Slicing the list positionally --
+// everything but the first and last entry -- is right only when it holds
+// exactly BEGIN, one body line, END: generateECHKeyPair splits a PEM that ends
+// in a newline, so the panel's own output carries a trailing empty entry, and a
+// body over 64 characters wraps onto a second line. Both shapes left the END
+// marker in the value mihomo received.
+//
+// Concatenating every line instead, which upstream changed this to in 1.6.1,
+// hands mihomo the armor in every case. Do not follow it.
+// The stored value is read through util.AsStringList rather than asserted:
+// config is Listable[string], so a PEM pasted as one string with embedded
+// newlines -- and anything sing-box itself wrote for a single-entry list --
+// arrives as a bare string. That read as absent, and ech-opts was then left
+// out of a profile whose server requires ECH.
+func echConfigForClash(config interface{}) string {
+	lines := util.AsStringList(config)
+	if len(lines) == 0 {
+		return ""
+	}
+	// The type is checked, not just the parse. pem.Decode is just as happy with
+	// an "ECH KEYS" or "CERTIFICATE" block, and generateECHKeyPair hands the
+	// operator the config PEM and the key PEM concatenated into one array while
+	// the field itself is a free-text textarea -- so pasting the wrong half
+	// would have published the ECH private key to every subscriber, silently.
+	block, _ := pem.Decode([]byte(strings.Join(lines, "\n") + "\n"))
+	if block == nil || block.Type != echConfigPemType {
+		logger.Warning("sub: stored ECH config is not a ", echConfigPemType,
+			" PEM block, omitting ech-opts")
+		return ""
+	}
+	// Standard base64 with padding, which is byte for byte the PEM body this
+	// used to concatenate -- so a config that already worked keeps working.
+	return base64.StdEncoding.EncodeToString(block.Bytes)
+}
 
 func (s *ClashService) GetClash(subId string) (*string, []string, error) {
 
@@ -133,7 +182,11 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 		case "vmess", "vless", "tuic":
 			proxy["uuid"] = obMap["uuid"]
 			if t == "vmess" {
-				if alterId, ok := obMap["alter_id"].(float64); ok {
+				// Through the shared reader: vmess() stores alter_id as a Go
+				// int, so a .(float64) here answered 0 for every external link
+				// and mihomo -- which, unlike sing-box, still speaks
+				// non-AEAD vmess -- could not connect to an alterId node.
+				if alterId, ok := util.AsInt64(obMap["alter_id"]); ok {
 					proxy["alterId"] = int(alterId)
 				} else {
 					proxy["alterId"] = 0
@@ -160,10 +213,16 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 			proxy["username"] = obMap["username"]
 			proxy["password"] = obMap["password"]
 		case "hysteria", "hysteria2":
-			if _, ok := obMap["up_mbps"].(float64); ok {
+			// hy() runs the bandwidths through strconv.Atoi, so an external
+			// link carries them as Go ints and the .(float64) these replace
+			// dropped both -- mihomo needs them to size its send window, and a
+			// hysteria proxy without them falls back to its own default.
+			// The value is still passed through rather than the parsed one, so
+			// a stored row keeps whatever it holds.
+			if _, ok := util.AsInt64(obMap["up_mbps"]); ok {
 				proxy["up"] = obMap["up_mbps"]
 			}
-			if _, ok := obMap["down_mbps"].(float64); ok {
+			if _, ok := util.AsInt64(obMap["down_mbps"]); ok {
 				proxy["down"] = obMap["down_mbps"]
 			}
 			if t == "hysteria" {
@@ -179,13 +238,11 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 				}
 			}
 
-			if portLists, ok := obMap["server_ports"].([]interface{}); ok {
-				var ports []string
-				for _, portList := range portLists {
-					portRange, _ := portList.(string)
-					ports = append(ports, strings.ReplaceAll(portRange, ":", "-"))
-				}
-				proxy["ports"] = strings.Join(ports, ",")
+			// The same renderer the "mport" link param goes through: mihomo's
+			// `ports` and the link both want a dash where sing-box stores a
+			// colon, and two copies of that rule drifted apart once already.
+			if ports := util.PortHoppingRanges(obMap["server_ports"]); ports != "" {
+				proxy["ports"] = ports
 			}
 		case "anytls":
 			proxy["password"] = obMap["password"]
@@ -244,27 +301,37 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 		}
 
 		// TLS params
+		//
+		// A missing enabled key means off, the same reading the link builders
+		// use. It used to mean on here (only an explicit false turned TLS off),
+		// so one hand-written or imported row produced a Clash proxy with the
+		// full TLS block and a share link with none at all.
 		tls, isTls := obMap["tls"].(map[string]interface{})
 		if isTls {
-			tlsEnabled, ok := tls["enabled"].(bool)
-			if ok && !tlsEnabled {
-				isTls = false
-			}
+			isTls = util.AsBool(tls["enabled"])
 		}
 		if isTls {
-			proxy["tls"] = tls["enabled"]
+			// A literal true, not the value read back: an absent key wrote
+			// `tls: null` into the YAML, and mihomo wants a bool there.
+			proxy["tls"] = true
 
 			switch t {
 			case "hysteria", "hysteria2", "tuic":
 				proxy["alpn"] = []string{"h3"}
 			default:
-				if alpn, ok := tls["alpn"].([]interface{}); ok {
+				// Through the same reader the link builders use, rather than
+				// passing the raw []interface{} on: mihomo decodes alpn into a
+				// []string, so one non-string entry poisons the whole proxy.
+				if alpn := util.AsStringList(tls["alpn"]); len(alpn) > 0 {
 					proxy["alpn"] = alpn
 				}
 			}
 
 			// Add reality if exists
-			if reality, ok := tls["reality"].(map[string]interface{}); ok && reality["enabled"].(bool) {
+			// Comma-ok on enabled as well: a config written by hand, or one
+			// carried over from an older schema, can leave the key absent, and
+			// the bare assertion took the whole subscription endpoint down.
+			if reality, ok := tls["reality"].(map[string]interface{}); ok && util.AsBool(reality["enabled"]) {
 				reality_opts := make(map[string]interface{})
 				if pbk, ok := reality["public_key"].(string); ok {
 					reality_opts["public-key"] = pbk
@@ -295,15 +362,12 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 				proxy["fingerprint"] = fp
 			}
 			// ech outbounds
-			if ech, ok := tls["ech"].(map[string]interface{}); ok && ech["enabled"].(bool) {
-				ech_config, _ := ech["config"].([]interface{})
-				ech_string := ""
-				for i := 1; i < len(ech_config)-1; i++ {
-					ech_string += ech_config[i].(string)
-				}
-				proxy["ech-opts"] = map[string]interface{}{
-					"enable": true,
-					"config": ech_string,
+			if ech, ok := tls["ech"].(map[string]interface{}); ok && util.AsBool(ech["enabled"]) {
+				if ech_string := echConfigForClash(ech["config"]); ech_string != "" {
+					proxy["ech-opts"] = map[string]interface{}{
+						"enable": true,
+						"config": ech_string,
+					}
 				}
 			}
 		}
@@ -314,20 +378,38 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 			switch tt {
 			case "http":
 				httpOpts := make(map[string]interface{})
-				if path, ok := transport["path"].([]interface{}); ok {
+				if path, ok := transport["path"].([]interface{}); ok && len(path) > 0 {
 					httpOpts["path"] = path[0]
 				} else if path, ok := transport["path"].(string); ok {
 					httpOpts["path"] = path
 				}
-				if host, ok := transport["host"].([]interface{}); ok {
-					httpOpts["host"] = host[0]
+				// Through the shared reader as well: getTransport splits the
+				// host query param, so an external link carries []string here
+				// and the bare .([]interface{}) dropped the Host outright --
+				// a listener that routes on it then refuses the request. The
+				// path on the line above is a plain string from the same
+				// decoder, which is why only the host was lost.
+				if hosts := util.AsStringList(transport["host"]); len(hosts) > 0 {
+					httpOpts["host"] = hosts[0]
 				}
 				if isTls {
 					proxy["network"] = "h2"
 					proxy["h2-opts"] = httpOpts
 				} else {
 					proxy["network"] = "http"
-					proxy["http-opts"] = map[string]interface{}{"path": []interface{}{httpOpts["path"]}, "host": httpOpts["host"]}
+					// Only the keys that are actually set. Reading them back
+					// unconditionally emitted `path: [null]` and `host: null`
+					// for a transport that carries neither, and mihomo decodes
+					// both as strings. The empty-array case reaches here now
+					// that the bounds check above stops it panicking.
+					httpProxyOpts := make(map[string]interface{}, 2)
+					if path, ok := httpOpts["path"]; ok {
+						httpProxyOpts["path"] = []interface{}{path}
+					}
+					if host, ok := httpOpts["host"]; ok {
+						httpProxyOpts["host"] = host
+					}
+					proxy["http-opts"] = httpProxyOpts
 				}
 			case "ws", "httpupgrade":
 				proxy["network"] = "ws"
@@ -425,9 +507,22 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 
 	// Merge proxies and proxy groups if exist
 	var output map[string]interface{}
-	err := yaml.Unmarshal([]byte(basicConfig), &output)
-	if err != nil {
-		logger.Error(err.Error())
+	if err := yaml.Unmarshal([]byte(basicConfig), &output); err != nil {
+		logger.Warning("sub: the Clash extension config is not valid YAML: ", err)
+	}
+	if output == nil {
+		// Valid YAML that is not a mapping -- a bare scalar, a list, or a
+		// document holding only comments -- decodes to a nil map, and so does
+		// one that failed to decode at all. The merge below writes into it,
+		// which took every Clash subscription down with a 500.
+		//
+		// The shipped defaults rather than an empty profile: they carry the
+		// dns and rules blocks, and mihomo has nothing to route with without
+		// them. The operator's own config is what is unusable here, not ours.
+		logger.Warning("sub: the Clash extension config is not a YAML mapping, using the defaults")
+		if err := yaml.Unmarshal([]byte(basicClashConfig), &output); err != nil {
+			return "", err
+		}
 	}
 
 	if p, ok := output["proxies"].([]interface{}); ok {

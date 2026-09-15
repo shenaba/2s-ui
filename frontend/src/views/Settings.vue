@@ -1691,6 +1691,10 @@ const clashRules = computed({
 const saveClashEditor = (data: string) => {
   try {
     const result = yaml.parse(data)
+    // null passes this on purpose, and must keep doing so: an empty editor is
+    // how the config is cleared, and it parses to null — as does one holding
+    // only comments. The backend falls back to its own defaults for both.
+    // What has to be refused is YAML that is neither empty nor a mapping.
     if (typeof result != 'object' || Array.isArray(result)) throw new Error()
   } catch (e) {
     push.error({

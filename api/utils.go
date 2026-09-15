@@ -202,14 +202,18 @@ func pureJsonMsg(c *gin.Context, success bool, msg string) {
 }
 
 func checkLogin(c *gin.Context) {
-	if !IsLogin(c) {
-		if c.GetHeader("X-Requested-With") == "XMLHttpRequest" {
-			pureJsonMsg(c, false, "Invalid login")
-		} else {
-			c.Redirect(http.StatusTemporaryRedirect, "/login")
-		}
-		c.Abort()
-	} else {
+	if IsLogin(c) {
 		c.Next()
+		return
 	}
+	if c.GetHeader("X-Requested-With") == "XMLHttpRequest" {
+		// 401, not 200. The body is unchanged, so anything matching on the
+		// message still works -- but a client should not have to match on
+		// English prose to find out that its session expired, and the panel is
+		// not the only thing that talks to this API.
+		c.JSON(http.StatusUnauthorized, Msg{Success: false, Msg: "Invalid login"})
+	} else {
+		c.Redirect(http.StatusTemporaryRedirect, "/login")
+	}
+	c.Abort()
 }

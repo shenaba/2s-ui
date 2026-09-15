@@ -157,16 +157,32 @@ func addTls(out *map[string]interface{}, tls *model.Tls) {
 	if cipherSuites, ok := tlsServer["cipher_suites"]; ok {
 		tlsConfig["cipher_suites"] = cipherSuites
 	}
-	if reality, ok := tlsServer["reality"].(map[string]interface{}); ok && reality["enabled"].(bool) {
-		realityConfig := tlsConfig["reality"].(map[string]interface{})
+	// Comma-ok on both halves, the same way prepareTls reads the same row for
+	// the link builders. These four assertions were bare, and a row whose
+	// server half carries reality (or ech) while its client half does not --
+	// hand-written, imported from an older schema, or written through apiv2 --
+	// panicked here. This is the write path: FillOutJson runs on every inbound
+	// save and on every certificate renewal through UpdateOutJsons, and the
+	// renewal path has no recover in front of it.
+	if reality, ok := tlsServer["reality"].(map[string]interface{}); ok && AsBool(reality["enabled"]) {
+		realityConfig, ok := tlsConfig["reality"].(map[string]interface{})
+		if !ok {
+			realityConfig = map[string]interface{}{}
+		}
 		realityConfig["enabled"] = true
-		if shortIDs, ok := reality["short_id"].([]interface{}); ok && len(shortIDs) > 0 {
+		// Same Listable[string] as in genLink's prepareTls: a single stored id
+		// can be a bare string, and this is the snapshot a node hands its own
+		// subscribers.
+		if shortIDs := AsStringList(reality["short_id"]); len(shortIDs) > 0 {
 			realityConfig["short_id"] = shortIDs[common.RandomInt(len(shortIDs))]
 		}
 		tlsConfig["reality"] = realityConfig
 	}
-	if ech, ok := tlsServer["ech"].(map[string]interface{}); ok && ech["enabled"].(bool) {
-		echConfig := tlsConfig["ech"].(map[string]interface{})
+	if ech, ok := tlsServer["ech"].(map[string]interface{}); ok && AsBool(ech["enabled"]) {
+		echConfig, ok := tlsConfig["ech"].(map[string]interface{})
+		if !ok {
+			echConfig = map[string]interface{}{}
+		}
 		echConfig["enabled"] = true
 		echConfig["pq_signature_schemes_enabled"] = ech["pq_signature_schemes_enabled"]
 		echConfig["dynamic_record_sizing_disabled"] = ech["dynamic_record_sizing_disabled"]
@@ -181,7 +197,15 @@ func addTls(out *map[string]interface{}, tls *model.Tls) {
 }
 
 func naiveOut(out *map[string]interface{}, inbound map[string]interface{}) {
-	if quic_congestion_control, ok := inbound["quic_congestion_control"].(string); ok {
+	// FillOutJson merges into the previously stored out_json, and this helper
+	// never removed what it had written before: clearing the QUIC congestion
+	// control field on an existing naive inbound left "quic": true and the old
+	// algorithm in the generated config. Delete both first, as the other *Out
+	// helpers do (upstream #1243).
+	delete(*out, "quic")
+	delete(*out, "quic_congestion_control")
+
+	if quic_congestion_control, ok := inbound["quic_congestion_control"].(string); ok && quic_congestion_control != "" {
 		(*out)["quic"] = true
 		switch quic_congestion_control {
 		case "bbr_standard":
@@ -273,6 +297,7 @@ func hysteriaOut(out *map[string]interface{}, inbound map[string]interface{}) {
 			(*out)[field] = value
 		}
 	}
+	normalizeOutPortRanges(out)
 }
 
 // snellOut builds the client half of a snell listener.
@@ -324,6 +349,31 @@ func hysteria2Out(out *map[string]interface{}, inbound map[string]interface{}) {
 	}
 	if obfs, ok := inbound["obfs"]; ok {
 		(*out)["obfs"] = obfs
+	}
+	normalizeOutPortRanges(out)
+}
+
+// normalizeOutPortRanges rewrites a stored server_ports list into the only
+// shape sing-box starts on.
+//
+// server_ports is the operator's own field -- the free text box in OutJson.vue
+// splits on commas and stores whatever was typed -- and out_json reaches the
+// JSON subscription verbatim through getOutbounds. So "443,20000:30000", which
+// is the natural way to write "the listening port plus the hop range", was
+// handed to every sing-box subscriber as an entry their client accepts and then
+// refuses to start on: `bad port range: 443`. Normalising on save fixes the
+// stored row for the links, the Clash proxy and the JSON subscription at once,
+// and an existing row heals itself the next time the inbound is saved.
+func normalizeOutPortRanges(out *map[string]interface{}) {
+	raw, ok := (*out)["server_ports"]
+	if !ok {
+		return
+	}
+	if ports := NormalizePortRanges(raw); len(ports) > 0 {
+		(*out)["server_ports"] = ports
+	} else {
+		// Nothing usable in there; carrying it would only fail the subscriber.
+		delete(*out, "server_ports")
 	}
 }
 

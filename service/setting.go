@@ -56,6 +56,13 @@ var protectedSettings = map[string]bool{
 	"config":          true,
 	"version":         true,
 	"globalResetLast": true,
+	// Not seeded with the others, but GetAllSetting reads the whole table, so
+	// the row reaches the settings form as soon as the switch has been used
+	// once -- and the form posts back what it was given. maintenance has an
+	// action of its own that stops or starts the core alongside writing the
+	// row, so a write arriving through the settings endpoint would leave the
+	// two disagreeing.
+	maintenanceKey: true,
 }
 
 var defaultValueMap = map[string]string{

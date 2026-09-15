@@ -33,9 +33,103 @@ func GetOutbound(uri string, i int) (*map[string]interface{}, string, error) {
 			return ss(u, i)
 		case "naive+https", "naive+quic", "http2":
 			return parseNaiveLink(u, i)
+		case "socks", "socks5":
+			return socksProxy(u, i)
+		case "http", "https":
+			return httpProxy(u, i)
 		}
 	}
 	return nil, "", common.NewError("Unsupported link format")
+}
+
+// socksProxy and httpProxy read back the links socksLink and httpLink write.
+//
+// GetOutbound answered "Unsupported link format" for both, and the callers
+// drop a link they cannot parse without a word -- so a node replica of a
+// socks, http or mixed inbound was served in the plain-link subscription and
+// silently missing from the JSON and Clash ones. Those are three of the twelve
+// types in InboundTypeWithLink.
+//
+// Both insist on an explicit port. http:// and https:// are also what an
+// ordinary web address looks like, and a text subscription body is fed to
+// GetOutbound a line at a time -- so without a rule that tells the two apart,
+// every URL in one would become a proxy. A proxy link always carries a port
+// (there is no well-known one to fall back on) and never a path.
+func proxyEndpoint(u *url.URL) (string, int, error) {
+	if u.Path != "" && u.Path != "/" {
+		return "", 0, common.NewError("Unsupported link format")
+	}
+	host, portStr, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		return "", 0, common.NewError("Unsupported link format")
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port <= 0 || port > 65535 {
+		return "", 0, common.NewError("Unsupported link format")
+	}
+	return host, port, nil
+}
+
+// proxyCredentials copies the userinfo proxyUserinfo wrote. Both fields are
+// omitted when there is no userinfo at all: sing-box reads their presence as
+// "authenticate", and an empty username and password is not the same request
+// as none.
+func proxyCredentials(out map[string]interface{}, u *url.URL) {
+	if u.User == nil {
+		return
+	}
+	out["username"] = u.User.Username()
+	password, _ := u.User.Password()
+	out["password"] = password
+}
+
+func socksProxy(u *url.URL, i int) (*map[string]interface{}, string, error) {
+	host, port, err := proxyEndpoint(u)
+	if err != nil {
+		return nil, "", err
+	}
+	tag := u.Fragment
+	if i > 0 {
+		tag = fmt.Sprintf("%d.%s", i, u.Fragment)
+	}
+	socks := map[string]interface{}{
+		"type":        "socks",
+		"tag":         tag,
+		"server":      host,
+		"server_port": port,
+		// socksLink writes a SOCKS5 userinfo, and 4/4a carry no password at
+		// all. sing-box defaults to 5 too, but writing it keeps the outbound
+		// readable on its own.
+		"version": "5",
+	}
+	proxyCredentials(socks, u)
+	return &socks, tag, nil
+}
+
+func httpProxy(u *url.URL, i int) (*map[string]interface{}, string, error) {
+	host, port, err := proxyEndpoint(u)
+	if err != nil {
+		return nil, "", err
+	}
+	tag := u.Fragment
+	if i > 0 {
+		tag = fmt.Sprintf("%d.%s", i, u.Fragment)
+	}
+	http := map[string]interface{}{
+		"type":        "http",
+		"tag":         tag,
+		"server":      host,
+		"server_port": port,
+	}
+	if u.Scheme == "https" {
+		// httpLink picks its scheme from each address's own tls.enabled, so
+		// the scheme is the only thing in the link that says the listener
+		// speaks TLS. server_name is left to sing-box, which defaults it to
+		// the server address -- which is what the link carries.
+		http["tls"] = map[string]interface{}{"enabled": true}
+	}
+	proxyCredentials(http, u)
+	return &http, tag, nil
 }
 
 func vmess(data string, i int) (*map[string]interface{}, string, error) {
@@ -121,11 +215,29 @@ func vmess(data string, i int) (*map[string]interface{}, string, error) {
 	if aid, ok := dataJson["aid"].(float64); ok {
 		alter_id = int(aid)
 	}
+	// A vmess link carries the port as a *string* by convention -- vmessLink
+	// writes fmt.Sprintf("%.0f", port) and so does every other generator -- and
+	// this used to hand that string on as server_port. sing-box declares the
+	// field uint16 and refuses a JSON string, which fails the **whole** config
+	// rather than this one outbound: a single vmess node replica took the
+	// entire sing-box subscription down for every client referencing it. The
+	// Clash side survived only because mihomo decodes weakly typed.
+	//
+	// Both shapes are read: some clients write the port as a number instead.
+	// Every other protocol here reaches server_port through strconv.Atoi, so
+	// this was the only one left carrying the wrong type.
+	var vmess_port int
+	switch p := dataJson["port"].(type) {
+	case string:
+		vmess_port, _ = strconv.Atoi(p)
+	case float64:
+		vmess_port = int(p)
+	}
 	vmess := map[string]interface{}{
 		"type":        "vmess",
 		"tag":         tag,
 		"server":      dataJson["add"],
-		"server_port": dataJson["port"],
+		"server_port": vmess_port,
 		"uuid":        dataJson["id"],
 		"security":    "auto",
 		"alter_id":    alter_id,
@@ -224,12 +336,22 @@ func hy(u *url.URL, i int) (*map[string]interface{}, string, error) {
 	up, _ := strconv.Atoi(query.Get("upmbps"))
 	recv_window_conn, _ := strconv.Atoi(query.Get("recv_window_conn"))
 	recv_window, _ := strconv.Atoi(query.Get("recv_window"))
-	if down > 0 {
-		hy["down_mbps"] = down
+	// Both bandwidths are mandatory for hysteria v1 and the URI makes them
+	// optional, so a link can legally arrive without them -- and sing-quic
+	// refuses such a client with "missing upload speed" at start-up, after the
+	// document has already parsed. That failure is not survivable by the one
+	// outbound: option.Options fails whole, so a single bandwidth-less external
+	// link costs every client referencing it its entire sing-box subscription.
+	//
+	// Refused as a link instead. GetExternalOutbounds already skips a link it
+	// cannot decode, so the bad one drops itself rather than the document, and
+	// api/linkConvert tells the operator why at the moment they paste it --
+	// which is the only place a useful message can still reach them.
+	if down <= 0 || up <= 0 {
+		return nil, "", common.NewError("hysteria link is missing upmbps/downmbps, which sing-box requires")
 	}
-	if up > 0 {
-		hy["up_mbps"] = up
-	}
+	hy["down_mbps"] = down
+	hy["up_mbps"] = up
 	if recv_window_conn > 0 {
 		hy["recv_window_conn"] = recv_window_conn
 	}
@@ -267,7 +389,7 @@ func hy2(u *url.URL, i int) (*map[string]interface{}, string, error) {
 	down, _ := strconv.Atoi(query.Get("downmbps"))
 	up, _ := strconv.Atoi(query.Get("upmbps"))
 	obfs := query.Get("obfs")
-	mport := strings.ReplaceAll(query.Get("mport"), "-", ":")
+	mport := serverPortsFromMport(query.Get("mport"))
 	fastopen := query.Get("fastopen")
 	if down > 0 {
 		hy2["down_mbps"] = down
@@ -282,7 +404,7 @@ func hy2(u *url.URL, i int) (*map[string]interface{}, string, error) {
 		}
 	}
 	if len(mport) > 0 {
-		hy2["server_ports"] = strings.Split(mport, ",")
+		hy2["server_ports"] = mport
 	}
 	if fastopen == "1" || fastopen == "true" {
 		hy2["fastopen"] = true
@@ -360,7 +482,10 @@ func ss(u *url.URL, i int) (*map[string]interface{}, string, error) {
 	method := u.User.Username()
 	password, ok := u.User.Password()
 	if !ok {
-		decrypted := StrOrBase64Encoded(method)
+		// Any base64 form: SIP002 mandates base64url without padding, which is
+		// what this panel now writes and what third-party links carry, while
+		// links written before that are standard base64.
+		decrypted := StrOrBase64AnyEncoded(method)
 		decrypted_arr := strings.Split(decrypted, ":")
 		if len(decrypted_arr) > 1 {
 			method = decrypted_arr[0]

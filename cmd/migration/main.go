@@ -167,6 +167,15 @@ func migrateDb(out io.Writer) (err error) {
 		}
 	}
 
+	// Repair the stored shapes sing-box refuses: a string server_port an
+	// imported vmess link left on an outbound row, and a bare single port in
+	// an inbound's server_ports
+	if versionBefore(dbVersion, "1.8.2") {
+		if err = to1_8_2(tx); err != nil {
+			return fmt.Errorf("migration to 1.8.2 failed: %w", err)
+		}
+	}
+
 	// Set version
 	if err = tx.Exec("UPDATE settings SET value = ? WHERE key = ?", currentVersion, "version").Error; err != nil {
 		return fmt.Errorf("update version failed: %w", err)

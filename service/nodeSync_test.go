@@ -7,6 +7,7 @@ import (
 
 	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/database/model"
+	"github.com/shenaba/2s-ui/util"
 )
 
 func TestIsNodeOwnedRemark(t *testing.T) {
@@ -115,15 +116,15 @@ func TestExpectedClientsCarriesLimitIp(t *testing.T) {
 		t.Fatalf("client missing from the push payload: %v", expected)
 	}
 
-	if asInt64(got["limitIp"]) != 3 {
+	if limitIp, _ := util.AsInt64(got["limitIp"]); limitIp != 3 {
 		t.Errorf("limitIp = %v, want the master's 3 copied verbatim", got["limitIp"])
 	}
 	// The contrast that makes the above meaningful: a quota is additive across
 	// nodes so it is deliberately zeroed, an IP cap is not so it is replicated.
-	if asInt64(got["volume"]) != 0 {
+	if volume, _ := util.AsInt64(got["volume"]); volume != 0 {
 		t.Errorf("volume = %v, want 0 — quota stays the master's job", got["volume"])
 	}
-	if asInt64(got["expiry"]) != 1786000000 {
+	if expiry, _ := util.AsInt64(got["expiry"]); expiry != 1786000000 {
 		t.Errorf("expiry = %v, want it copied", got["expiry"])
 	}
 }

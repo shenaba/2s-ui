@@ -121,7 +121,19 @@ func (s *LinkService) addClientInfo(uri string, clientInfo string) string {
 			logger.Warning("sub: Error decoding vmess content:", err)
 			return uri
 		}
-		vmessJson["ps"] = vmessJson["ps"].(string) + clientInfo
+		// A vmess link carrying no "ps", or one whose "ps" is not a string, used
+		// to panic here and take down the whole subscription response.
+		//
+		// So did a payload that decodes to JSON null or to anything else that
+		// is not an object: that yields a nil map, and the write below is a
+		// write, not an assertion. The two branches above already hand back an
+		// unreadable link untouched; this is the third shape of unreadable.
+		if vmessJson == nil {
+			logger.Warning("sub: vmess content is not an object, leaving the link as it is")
+			return uri
+		}
+		ps, _ := vmessJson["ps"].(string)
+		vmessJson["ps"] = ps + clientInfo
 		result, err := json.MarshalIndent(vmessJson, "", "  ")
 		if err != nil {
 			logger.Warning("sub: Error decoding vmess + clientInfo content:", err)

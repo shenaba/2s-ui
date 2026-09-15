@@ -35,10 +35,23 @@
         </div>
         <div class="srv-status">
           <Chip v-if="sbd.running" color="emerald" dot>{{ $t('ui.singboxRunning') }}</Chip>
+          <!-- Stopped on purpose and crashed are both running:false, and only
+               one of them is something to go and fix. -->
+          <Chip v-else-if="sbd.maintenance" color="amber" dot>{{ $t('ui.maintenance') }}</Chip>
           <Chip v-else color="rose" dot>sing-box · {{ $t('main.info.running') }}: {{ $t('no') }}</Chip>
-          <Btn variant="subtle" sm style="margin-inline-start: auto;" :loading="restarting" @click="restartSb">
-            <Ico name="refresh" :size="14" /> {{ $t('ui.restart') }}
+          <Btn v-if="sbd.maintenance" variant="subtle" sm style="margin-inline-start: auto;" :loading="switching" @click="setMaintenance(false)">
+            <Ico name="bolt" :size="14" /> {{ $t('ui.maintenanceEnd') }}
           </Btn>
+          <template v-else>
+            <Btn variant="subtle" sm style="margin-inline-start: auto;" :loading="switching" @click="setMaintenance(true)">
+              <Ico name="pause" :size="14" /> {{ $t('ui.maintenanceStart') }}
+            </Btn>
+            <!-- No restart while out of service: the backend refuses it, so the
+                 button could only turn red. -->
+            <Btn variant="subtle" sm :loading="restarting" @click="restartSb">
+              <Ico name="refresh" :size="14" /> {{ $t('ui.restart') }}
+            </Btn>
+          </template>
         </div>
       </DPanel>
 
@@ -393,6 +406,17 @@ const restartSb = async () => {
   restarting.value = true
   await HttpUtils.post('api/restartSb', {})
   restarting.value = false
+}
+
+/* ---------- maintenance ---------- */
+// No local copy of the flag: the panel already samples status every 2s, so
+// the chip follows the server. An optimistic one would disagree with it
+// whenever another session or a panel restart moved the switch.
+const switching = ref(false)
+const setMaintenance = async (enable: boolean) => {
+  switching.value = true
+  await HttpUtils.post('api/maintenance', { enable })
+  switching.value = false
 }
 </script>
 
