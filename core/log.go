@@ -70,6 +70,7 @@ func NewFactory(options log.Options) (log.Factory, error) {
 		logFormatter,
 		logWriter,
 		logFilePath,
+		options.Observable,
 	)
 	if logOptions.Level != "" {
 		logLevel, err := log.ParseLevel(logOptions.Level)
@@ -86,14 +87,15 @@ func NewFactory(options log.Options) (log.Factory, error) {
 var _ log.Factory = (*defaultFactory)(nil)
 
 type defaultFactory struct {
-	ctx        context.Context
-	formatter  log.Formatter
-	writer     io.Writer
-	file       *os.File
-	filePath   string
-	level      log.Level
-	subscriber *observable.Subscriber[log.Entry]
-	observer   *observable.Observer[log.Entry]
+	ctx            context.Context
+	formatter      log.Formatter
+	writer         io.Writer
+	file           *os.File
+	filePath       string
+	level          log.Level
+	needObservable bool
+	subscriber     *observable.Subscriber[log.Entry]
+	observer       *observable.Observer[log.Entry]
 }
 
 func NewDefaultFactory(
@@ -101,14 +103,16 @@ func NewDefaultFactory(
 	formatter log.Formatter,
 	writer io.Writer,
 	filePath string,
+	needObservable bool,
 ) log.ObservableFactory {
 	factory := &defaultFactory{
-		ctx:        ctx,
-		formatter:  formatter,
-		writer:     writer,
-		filePath:   filePath,
-		level:      log.LevelTrace,
-		subscriber: observable.NewSubscriber[log.Entry](128),
+		ctx:            ctx,
+		formatter:      formatter,
+		writer:         writer,
+		filePath:       filePath,
+		level:          log.LevelTrace,
+		needObservable: needObservable,
+		subscriber:     observable.NewSubscriber[log.Entry](128),
 	}
 	return factory
 }
@@ -121,6 +125,12 @@ func (f *defaultFactory) Start() error {
 		}
 		f.writer = logFile
 		f.file = logFile
+	}
+	// The observer is the only thing that drains the subscriber and the only
+	// thing Subscribe can hand a caller. Creating it here rather than in the
+	// constructor mirrors sing-box, whose own factory does the same.
+	if f.needObservable {
+		f.observer = observable.NewObserver(f.subscriber, 64)
 	}
 	return nil
 }
@@ -148,11 +158,20 @@ func (f *defaultFactory) NewLogger(tag string) log.ContextLogger {
 	return &observableLogger{f, tag}
 }
 
+// Subscribe reports rather than dereferencing a nil observer when this factory
+// was not built observable -- clash api's GET /logs answers 204 on an error and
+// would otherwise take down the handler goroutine.
 func (f *defaultFactory) Subscribe() (subscription observable.Subscription[log.Entry], done <-chan struct{}, err error) {
+	if f.observer == nil {
+		return nil, nil, os.ErrClosed
+	}
 	return f.observer.Subscribe()
 }
 
 func (f *defaultFactory) UnSubscribe(sub observable.Subscription[log.Entry]) {
+	if f.observer == nil {
+		return
+	}
 	f.observer.UnSubscribe(sub)
 }
 
@@ -182,6 +201,11 @@ func (l *observableLogger) Log(ctx context.Context, level log.Level, args []any)
 	if (l.filePath != "" || l.writer != os.Stderr) && l.writer != nil {
 		message := l.formatter.Format(ctx, level, l.tag, msg, time.Now())
 		l.writer.Write([]byte(message))
+	}
+	// Nothing drains the subscriber unless the observer exists, so emitting
+	// unconditionally would just fill 128 slots and drop the rest forever.
+	if l.needObservable {
+		l.subscriber.Emit(log.Entry{Level: level, Message: l.formatter.FormatSimple(ctx, l.tag, msg)})
 	}
 }
 
