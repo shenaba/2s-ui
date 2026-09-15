@@ -49,18 +49,30 @@ func TestJsonSubscriptionParsesAsSingBoxConfig(t *testing.T) {
 		name     string
 		protocol string
 		config   string
+		options  string // "" = the shared default below
 		outJson  string
 	}{
 		// One per protocol whose links the panel generates and reads back --
 		// GetOutbound has no case for socks/http/mixed, and naive is not a
 		// sing-box outbound type.
-		{"vmess", "vmess", `{"vmess":{"uuid":"11111111-1111-1111-1111-111111111111","alterId":0}}`, ""},
-		{"vless", "vless", `{"vless":{"uuid":"11111111-1111-1111-1111-111111111111"}}`, ""},
-		{"trojan", "trojan", `{"trojan":{"password":"p4ss"}}`, ""},
-		{"hysteria2", "hysteria2", `{"hysteria2":{"password":"p4ss"}}`, ""},
-		{"anytls", "anytls", `{"anytls":{"password":"p4ss"}}`, ""},
-		{"tuic", "tuic", `{"tuic":{"uuid":"11111111-1111-1111-1111-111111111111","password":"p4ss"}}`, ""},
-		{"shadowsocks", "shadowsocks", `{"shadowsocks":{"password":"c2hvcnRrZXkxMjM0NTY3OA=="}}`, ""},
+		{"vmess", "vmess", `{"vmess":{"uuid":"11111111-1111-1111-1111-111111111111","alterId":0}}`, "", ""},
+		{"vless", "vless", `{"vless":{"uuid":"11111111-1111-1111-1111-111111111111"}}`, "", ""},
+		{"trojan", "trojan", `{"trojan":{"password":"p4ss"}}`, "", ""},
+		{"hysteria2", "hysteria2", `{"hysteria2":{"password":"p4ss"}}`, "", ""},
+		{"anytls", "anytls", `{"anytls":{"password":"p4ss"}}`, "", ""},
+		{"tuic", "tuic", `{"tuic":{"uuid":"11111111-1111-1111-1111-111111111111","password":"p4ss"}}`, "", ""},
+		{"shadowsocks", "shadowsocks", `{"shadowsocks":{"password":"c2hvcnRrZXkxMjM0NTY3OA=="}}`, "", ""},
+		{
+			// hysteria v1 is the one protocol carrying a requirement only
+			// NewBox enforces: sing-quic refuses a client with no bandwidth.
+			// The listener requires it too, so a hysteria inbound that runs at
+			// all has the values for hysteriaOut to copy -- which is exactly
+			// why the generated link has to keep carrying them.
+			"hysteria", "hysteria",
+			`{"hysteria":{"auth_str":"a"}}`,
+			`{"listen_port":443,"up_mbps":100,"down_mbps":200}`,
+			"",
+		},
 		{
 			// The port-hopping round trip, which is where parse-only passed and
 			// NewBox did not: a single port has to leave as the bare "443" the
@@ -68,12 +80,17 @@ func TestJsonSubscriptionParsesAsSingBoxConfig(t *testing.T) {
 			// on. A stored row spelling it bare exercises the same path.
 			"hysteria2 port hopping", "hysteria2",
 			`{"hysteria2":{"password":"p4ss"}}`,
+			"",
 			`{"server_ports":["443","20000:30000"]}`,
 		},
 	}
 
 	for _, tt := range tests {
 		protocol, config := tt.protocol, tt.config
+		options := tt.options
+		if options == "" {
+			options = `{"listen_port":443,"method":"aes-128-gcm"}`
+		}
 		t.Run(tt.name, func(t *testing.T) {
 			setupSubDB(t)
 
@@ -84,7 +101,7 @@ func TestJsonSubscriptionParsesAsSingBoxConfig(t *testing.T) {
 				&model.Inbound{
 					Type: protocol, Tag: protocol + "-node",
 					Addrs:   json.RawMessage("null"),
-					Options: json.RawMessage(`{"listen_port":443,"method":"aes-128-gcm"}`),
+					Options: json.RawMessage(options),
 					OutJson: json.RawMessage(tt.outJson),
 				},
 				"node.example.com", "alice")

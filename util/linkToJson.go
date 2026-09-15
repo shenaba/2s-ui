@@ -242,12 +242,22 @@ func hy(u *url.URL, i int) (*map[string]interface{}, string, error) {
 	up, _ := strconv.Atoi(query.Get("upmbps"))
 	recv_window_conn, _ := strconv.Atoi(query.Get("recv_window_conn"))
 	recv_window, _ := strconv.Atoi(query.Get("recv_window"))
-	if down > 0 {
-		hy["down_mbps"] = down
+	// Both bandwidths are mandatory for hysteria v1 and the URI makes them
+	// optional, so a link can legally arrive without them -- and sing-quic
+	// refuses such a client with "missing upload speed" at start-up, after the
+	// document has already parsed. That failure is not survivable by the one
+	// outbound: option.Options fails whole, so a single bandwidth-less external
+	// link costs every client referencing it its entire sing-box subscription.
+	//
+	// Refused as a link instead. GetExternalOutbounds already skips a link it
+	// cannot decode, so the bad one drops itself rather than the document, and
+	// api/linkConvert tells the operator why at the moment they paste it --
+	// which is the only place a useful message can still reach them.
+	if down <= 0 || up <= 0 {
+		return nil, "", common.NewError("hysteria link is missing upmbps/downmbps, which sing-box requires")
 	}
-	if up > 0 {
-		hy["up_mbps"] = up
-	}
+	hy["down_mbps"] = down
+	hy["up_mbps"] = up
 	if recv_window_conn > 0 {
 		hy["recv_window_conn"] = recv_window_conn
 	}

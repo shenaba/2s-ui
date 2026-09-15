@@ -825,12 +825,12 @@ func normalizePortRange(entry string) string {
 	if !isRange {
 		end = start
 	}
-	// Both ends have to be numbers, or sing-box refuses this the same way.
+	// ParseUint with a 16-bit bound, byte for byte the check sing-box performs
+	// on the same text. Atoi is not the same check and let two shapes through
+	// the guard rather than around it: it accepts a value above 65535, and a
+	// leading '+', both of which reach NewBox as `bad port range`.
 	for _, part := range []string{start, end} {
-		if part == "" {
-			return ""
-		}
-		if _, err := strconv.Atoi(part); err != nil {
+		if _, err := strconv.ParseUint(part, 10, 16); err != nil {
 			return ""
 		}
 	}

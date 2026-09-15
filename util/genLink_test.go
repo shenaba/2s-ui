@@ -711,3 +711,42 @@ func TestLinkBuildersTolerateMalformedOptions(t *testing.T) {
 		})
 	}
 }
+
+// A hysteria v1 link may legally omit upmbps/downmbps -- the URI makes them
+// optional -- but sing-quic refuses such a client with "missing upload speed"
+// at start-up, after option.Options has already accepted the document. That
+// failure is not survivable by the one outbound: the whole config fails, so a
+// single bandwidth-less external link would cost every client referencing it
+// its entire sing-box subscription. Refused as a link instead, which
+// GetExternalOutbounds already knows how to skip.
+func TestHysteriaLinkRequiresBandwidth(t *testing.T) {
+	tests := []struct {
+		name    string
+		uri     string
+		wantErr bool
+	}{
+		{"both present", "hy://e.com:443?auth=a&upmbps=100&downmbps=200#n", false},
+		{"neither present", "hy://e.com:443?auth=a#n", true},
+		{"upload missing", "hy://e.com:443?auth=a&downmbps=200#n", true},
+		{"download missing", "hy://e.com:443?auth=a&upmbps=100#n", true},
+		{"zero is missing", "hy://e.com:443?auth=a&upmbps=0&downmbps=200#n", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, _, err := GetOutbound(tt.uri, 0)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("want the link refused, got %v", *out)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("want the link accepted, got %v", err)
+			}
+			if (*out)["up_mbps"] != 100 || (*out)["down_mbps"] != 200 {
+				t.Errorf("bandwidths = %v/%v, want 100/200", (*out)["up_mbps"], (*out)["down_mbps"])
+			}
+		})
+	}
+}

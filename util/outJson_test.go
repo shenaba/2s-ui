@@ -405,6 +405,17 @@ func TestFillOutJsonNormalizesPortHoppingRanges(t *testing.T) {
 			`{"server_ports":["20000:30000"]}`, []interface{}{"20000:30000"}},
 		{"nothing usable is dropped rather than served",
 			`{"server_ports":["nonsense"]}`, nil},
+		// Atoi called these ports and sing-box does not: it reads the same text
+		// with ParseUint into a uint16, so both reach NewBox as
+		// `bad port range` after the document has already parsed.
+		{"a port above 65535 is not a port",
+			`{"server_ports":["99999"]}`, nil},
+		{"a signed number is not a port",
+			`{"server_ports":["+443"]}`, nil},
+		{"the top of the range is bounded too",
+			`{"server_ports":["20000:99999"]}`, nil},
+		{"65535 is still a port",
+			`{"server_ports":["65535"]}`, []interface{}{"65535:65535"}},
 		{"no port hopping at all stays absent",
 			`{}`, nil},
 	}

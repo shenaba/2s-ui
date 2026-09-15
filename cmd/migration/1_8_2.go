@@ -56,11 +56,12 @@ func repairOutboundPorts(tx *gorm.DB) error {
 		if !isString {
 			continue
 		}
-		// Left alone unless it is plainly a port. A migration has no business
-		// inventing a value for anything else in that field, and dropping the
-		// key would change what the outbound points at.
-		number, err := strconv.Atoi(port)
-		if err != nil || number < 0 || number > 65535 {
+		// Left alone unless it is plainly a port, checked the same way sing-box
+		// checks it. A migration has no business inventing a value for anything
+		// else in that field, and dropping the key would change what the
+		// outbound points at.
+		number, err := strconv.ParseUint(port, 10, 16)
+		if err != nil {
 			continue
 		}
 		options["server_port"] = number
