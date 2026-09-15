@@ -406,10 +406,12 @@ func (s *ConfigService) CheckOutbound(tag string, link string) core.CheckOutboun
 	if tag == "" {
 		return core.CheckOutboundResult{Error: "missing query parameter: tag"}
 	}
-	if corePtr == nil || !corePtr.IsRunning() {
+	if corePtr == nil {
 		return core.CheckOutboundResult{Error: "core not running"}
 	}
-	return core.CheckOutbound(corePtr.GetCtx(), tag, link)
+	// The running check moved inside: asking here and dereferencing there is
+	// the pattern that hands out a box a restart has already replaced.
+	return corePtr.CheckOutbound(tag, link)
 }
 
 // SaveResult describes what a save wrote -- never what a caller should read

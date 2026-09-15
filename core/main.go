@@ -5,25 +5,13 @@ import (
 	"sync"
 
 	"github.com/shenaba/2s-ui/logger"
+	"github.com/shenaba/2s-ui/util/common"
 
 	sb "github.com/sagernet/sing-box"
-	"github.com/sagernet/sing-box/adapter"
 	_ "github.com/sagernet/sing-box/experimental/clashapi"
 	_ "github.com/sagernet/sing-box/experimental/v2rayapi"
-	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	_ "github.com/sagernet/sing-box/transport/v2rayquic"
-	"github.com/sagernet/sing/service"
-)
-
-var (
-	globalCtx        context.Context
-	inbound_manager  adapter.InboundManager
-	outbound_manager adapter.OutboundManager
-	service_manager  adapter.ServiceManager
-	endpoint_manager adapter.EndpointManager
-	router           adapter.Router
-	factory          log.Factory
 )
 
 type Core struct {
@@ -36,19 +24,41 @@ type Core struct {
 	mu        sync.RWMutex
 	isRunning bool
 	instance  *Box
+
+	// ctx carries the protocol registries. Built once in NewCore and never
+	// reassigned, so it needs no lock -- unlike the managers this type used to
+	// keep beside it in package-level vars, which Start wrote unsynchronised
+	// while the endpoint methods read them from gin handlers. Those were
+	// copies of fields the Box already holds, so a hot-reload could apply an
+	// add to the manager of a box a restart had already closed. They are read
+	// off the live Box now; see running.
+	ctx context.Context
+}
+
+// running returns the live box, or an error naming why there is none.
+//
+// One lock, so the answer and the box come from the same moment. Callers
+// that asked IsRunning and then GetInstance were reading two of them, and a
+// Stop in between handed them a nil box they went on to dereference.
+func (c *Core) running() (*Box, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if !c.isRunning || c.instance == nil {
+		return nil, common.NewError("sing-box is not running")
+	}
+	return c.instance, nil
 }
 
 func NewCore() *Core {
-	globalCtx = context.Background()
-	globalCtx = sb.Context(globalCtx, InboundRegistry(), OutboundRegistry(), EndpointRegistry(), DNSTransportRegistry(), ServiceRegistry(), CertificateProviderRegistry())
 	return &Core{
-		isRunning: false,
-		instance:  nil,
+		ctx: sb.Context(context.Background(), InboundRegistry(), OutboundRegistry(),
+			EndpointRegistry(), DNSTransportRegistry(), ServiceRegistry(),
+			CertificateProviderRegistry()),
 	}
 }
 
 func (c *Core) GetCtx() context.Context {
-	return globalCtx
+	return c.ctx
 }
 
 func (c *Core) GetInstance() *Box {
@@ -73,7 +83,7 @@ func (c *Core) SetStateForTest(isRunning bool, instance *Box) {
 
 func (c *Core) Start(sbConfig []byte) error {
 	var opt option.Options
-	err := opt.UnmarshalJSONContext(globalCtx, sbConfig)
+	err := opt.UnmarshalJSONContext(c.ctx, sbConfig)
 	if err != nil {
 		logger.Error("Unmarshal config err:", err.Error())
 	}
@@ -82,7 +92,7 @@ func (c *Core) Start(sbConfig []byte) error {
 	// exposed a box that had not started yet, and the write itself raced every
 	// GetInstance reader.
 	instance, err := NewBox(Options{
-		Context: globalCtx,
+		Context: c.ctx,
 		Options: opt,
 	})
 	if err != nil {
@@ -98,13 +108,6 @@ func (c *Core) Start(sbConfig []byte) error {
 		c.mu.Unlock()
 		return err
 	}
-
-	globalCtx = service.ContextWith(globalCtx, c)
-	inbound_manager = service.FromContext[adapter.InboundManager](globalCtx)
-	outbound_manager = service.FromContext[adapter.OutboundManager](globalCtx)
-	service_manager = service.FromContext[adapter.ServiceManager](globalCtx)
-	endpoint_manager = service.FromContext[adapter.EndpointManager](globalCtx)
-	router = service.FromContext[adapter.Router](globalCtx)
 
 	c.mu.Lock()
 	c.instance = instance
