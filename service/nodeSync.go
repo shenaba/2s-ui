@@ -645,7 +645,23 @@ func clientDiffers(want map[string]interface{}, cur nodeClientState) bool {
 // (TLS terminates on the node, so adoption drops it), and with tls_id==0
 // LinkGenerator passes addr["tls"] straight through to the per-protocol builders
 // — reproducing exactly the reality/tls params the node itself would emit.
-func genNodeReplicaLinks(replica *model.Inbound, c *model.Client) []string {
+func genNodeReplicaLinks(replica *model.Inbound, c *model.Client) (links []string) {
+	// Everything below reads a snapshot the node sent: out_json, the address
+	// book, the option map. A compromised or version-skewed node decides the
+	// shape of all three, and this runs on the reconcile -- a cron tick, or a
+	// bare `go` from an API handler. Neither has a recover of its own, so a
+	// panic here takes the process down, and the reconcile that caused it runs
+	// again on the next boot.
+	//
+	// The guard used to sit one call deeper, around util.LinkGenerator alone.
+	// That is why a null address row got past it: the write that panicked was
+	// in the backfill below, not in the generator.
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Warning("reconcile: link generation panicked for ", replica.Tag, ": ", r)
+			links = nil
+		}
+	}()
 	if len(replica.OutJson) == 0 {
 		return nil
 	}
@@ -708,23 +724,7 @@ func genNodeReplicaLinks(replica *model.Inbound, c *model.Client) []string {
 	synthetic.Tls = nil
 	synthetic.Addrs, _ = json.Marshal(addrs)
 
-	return safeLinkGenerator(c.Config, &synthetic, server, c.Remark)
-}
-
-// safeLinkGenerator wraps util.LinkGenerator, which has unguarded type
-// assertions over the inbound/tls maps. Here the data originates from the node
-// (its out_json snapshot), so a malformed snapshot — a compromised or
-// version-skewed node — could panic. This runs inside a background reconcile
-// goroutine with no recover of its own, so a panic would take the whole process
-// down and then crash-loop. Contain it: a bad snapshot yields no link.
-func safeLinkGenerator(config json.RawMessage, i *model.Inbound, server, remark string) (links []string) {
-	defer func() {
-		if r := recover(); r != nil {
-			logger.Warning("reconcile: link generation panicked for ", i.Tag, ": ", r)
-			links = nil
-		}
-	}()
-	return util.LinkGenerator(config, i, server, remark)
+	return util.LinkGenerator(c.Config, &synthetic, server, c.Remark)
 }
 
 // refreshNodeLinks re-derives the "[node] " external links for every master
