@@ -334,8 +334,8 @@ func buildReplicaInbound(raw json.RawMessage, nodeId uint) (*model.Inbound, erro
 		return nil, err
 	}
 	inb := &model.Inbound{
-		Type:   asString(full["type"]),
-		Tag:    asString(full["tag"]),
+		Type:   util.AsString(full["type"]),
+		Tag:    util.AsString(full["tag"]),
 		NodeId: &nodeId,
 	}
 	if addrs, ok := full["addrs"]; ok && addrs != nil {
@@ -599,10 +599,10 @@ func (s *NodeSyncService) nodeInboundTagMap(node *model.Node, client *http.Clien
 // clientDiffers compares the master's desired client against the node's current
 // one on the fields we own. Config is compared structurally to avoid whitespace noise.
 func clientDiffers(want map[string]interface{}, cur nodeClientState) bool {
-	if asBool(want["enable"]) != cur.Enable {
+	if util.AsBool(want["enable"]) != cur.Enable {
 		return true
 	}
-	if asInt64(want["expiry"]) != cur.Expiry {
+	if expiry, _ := util.AsInt64(want["expiry"]); expiry != cur.Expiry {
 		return true
 	}
 	// Compare config only when both sides actually carry one. jsonEqual fails on
@@ -629,7 +629,8 @@ func clientDiffers(want map[string]interface{}, cur nodeClientState) bool {
 	// Same "absent means cannot compare" stance as config above: a node too old
 	// to report the column omits it, and treating that as 0 would re-push every
 	// limited client on every round.
-	if cur.LimitIp != nil && int(asInt64(want["limitIp"])) != *cur.LimitIp {
+	limitIp, _ := util.AsInt64(want["limitIp"])
+	if cur.LimitIp != nil && int(limitIp) != *cur.LimitIp {
 		return true
 	}
 	return false
@@ -1021,34 +1022,6 @@ func (s *NodeSyncService) releaseReconcile(nodeId uint) {
 	defer reconcileMu.Unlock()
 	reconcileBusy[nodeId] = false
 	reconcileLast[nodeId] = time.Now()
-}
-
-func asString(v interface{}) string {
-	s, _ := v.(string)
-	return s
-}
-
-func asBool(v interface{}) bool {
-	b, _ := v.(bool)
-	return b
-}
-
-func asInt64(v interface{}) int64 {
-	switch n := v.(type) {
-	case int64:
-		return n
-	case int:
-		return int64(n)
-	case float64:
-		return int64(n)
-	case json.Number:
-		i, _ := n.Int64()
-		return i
-	case string:
-		i, _ := strconv.ParseInt(n, 10, 64)
-		return i
-	}
-	return 0
 }
 
 // jsonEqual compares two JSON values structurally (ignoring key order / whitespace).
