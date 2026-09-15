@@ -16,7 +16,21 @@ import (
 	"github.com/shirou/gopsutil/v4/net"
 )
 
-func resetSetting() {
+// resetSetting puts every setting back to its default.
+//
+// Asked for the same reason as the admin reset, and this one is arguably
+// worse: the panel port, path and TLS settings go with it, so the operator
+// can lose the address they were about to reconnect on.
+func resetSetting(assumeYes bool) {
+	if !assumeYes {
+		fmt.Println("This resets every setting to its default, including the panel port, path and certificates.")
+		fmt.Println("The address you reach the panel on will change.")
+		if !confirm("Type y to continue: ") {
+			fmt.Println("cancelled")
+			return
+		}
+	}
+
 	err := database.InitDB(config.GetDBPath())
 	if err != nil {
 		fmt.Println(err)
