@@ -49,8 +49,6 @@ func TestSameOrigin(t *testing.T) {
 		// compared.
 		{"same host over http", http.MethodPost,
 			map[string]string{"Origin": "http://" + host}, http.StatusOK},
-		{"same host on a custom port", http.MethodPost,
-			map[string]string{"Origin": "http://" + host}, http.StatusOK},
 
 		{"another origin", http.MethodPost,
 			map[string]string{"Origin": "https://evil.example"}, http.StatusForbidden},
@@ -82,6 +80,48 @@ func TestSameOrigin(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := sameOriginStatus(t, tt.method, host, tt.headers); got != tt.want {
 				t.Errorf("status = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// The request Host and the Origin do not always carry the same port, and the
+// panel is reachable in all of these shapes:
+//
+//   - directly on its own port, where the browser dialled exactly what the
+//     panel sees;
+//   - behind the nginx vhost this panel generates, which forwards $host --
+//     no port -- while the browser's Origin carries the one it dialled;
+//   - behind a proxy that forwards $http_host, where the two match again.
+//
+// So the hostname is what is compared. Comparing host:port whole rejected
+// every write on a proxied panel reachable on anything but 443, which is a
+// configuration that works today -- DomainValidator strips the port before its
+// own comparison for the same reason.
+func TestSameOriginIgnoresThePort(t *testing.T) {
+	tests := []struct {
+		name   string
+		host   string // what the panel sees as Host
+		origin string // what the browser sends
+		want   int
+	}{
+		{"direct, same port on both", "1.2.3.4:2095", "http://1.2.3.4:2095", http.StatusOK},
+		{"nginx $host, browser on 8443", "panel.example.com", "https://panel.example.com:8443", http.StatusOK},
+		{"nginx $http_host, both carry the port", "panel.example.com:8443", "https://panel.example.com:8443", http.StatusOK},
+		{"nginx $host, browser on 443", "panel.example.com", "https://panel.example.com", http.StatusOK},
+		{"IPv6 literal", "[::1]:2095", "http://[::1]:2095", http.StatusOK},
+		{"IPv6 literal, port only on one side", "[::1]", "http://[::1]:2095", http.StatusOK},
+
+		// Dropping the port must not start accepting a different host.
+		{"another host on the same port", "panel.example.com:8443", "https://evil.example:8443", http.StatusForbidden},
+		{"a subdomain, ports aside", "panel.example.com", "https://evil.panel.example.com:8443", http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sameOriginStatus(t, http.MethodPost, tt.host, map[string]string{"Origin": tt.origin})
+			if got != tt.want {
+				t.Errorf("Host %q, Origin %q -> %d, want %d", tt.host, tt.origin, got, tt.want)
 			}
 		})
 	}

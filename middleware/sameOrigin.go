@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -18,10 +19,16 @@ import (
 // current, and it is what answers a request that arrives with an Origin from
 // somewhere else.
 //
-// Only the host is compared, never a hardcoded scheme. The panel has to work on
-// plain HTTP as well as HTTPS, and behind a TLS-terminating proxy the scheme
-// the browser used and the one the panel sees differ anyway -- requiring https
-// here would reject every legitimate request in two of the three deployments.
+// Only the hostname is compared -- never a hardcoded scheme, and never the
+// port. The panel has to work on plain HTTP as well as HTTPS, and behind a
+// TLS-terminating proxy the scheme the browser used and the one the panel sees
+// differ anyway, so requiring https here would reject every legitimate request
+// in two of the three deployments. The port is dropped for the same kind of
+// reason: nginx's $host, which the vhost this panel generates forwards as
+// Host, carries no port, while the browser's Origin carries the one it
+// actually dialled -- so comparing them whole rejects every write on a proxied
+// panel reachable on anything but 443. DomainValidator already strips the port
+// before its own comparison, for the same deployment.
 //
 // Mounted on the cookie-authenticated group only. apiv2 authenticates with a
 // Token header, which a cross-site page cannot set without a CORS preflight the
@@ -51,10 +58,19 @@ func SameOrigin() gin.HandlerFunc {
 		}
 
 		u, err := url.Parse(origin)
-		if err != nil || u.Host == "" || !strings.EqualFold(u.Host, c.Request.Host) {
+		if err != nil || u.Host == "" || !strings.EqualFold(hostname(u.Host), hostname(c.Request.Host)) {
 			c.AbortWithStatus(http.StatusForbidden)
 			return
 		}
 		c.Next()
 	}
+}
+
+// hostname drops the port from a host:port, leaving anything without one --
+// and an IPv6 literal's brackets -- as it is.
+func hostname(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		return h
+	}
+	return strings.Trim(host, "[]")
 }
