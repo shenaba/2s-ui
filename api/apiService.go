@@ -374,12 +374,19 @@ func (a *ApiService) Login(c *gin.Context) {
 		logger.Infof("Unable to get session's max age from DB")
 	}
 
-	err = SetLoginUser(c, loginUser, sessionMaxAge)
-	if err == nil {
-		logger.Info("user ", loginUser, " login success")
-	} else {
-		logger.Warning("login failed: ", err)
+	if err = SetLoginUser(c, loginUser, sessionMaxAge); err != nil {
+		// Answered, not logged and swallowed. This reported success with no
+		// cookie set, so the panel bounced straight back to the login form
+		// with nothing anywhere saying why -- and the operator retypes a
+		// password that was never the problem.
+		//
+		// The detail stays in the log: it describes the session store, which
+		// is nothing the person at the login form can act on.
+		logger.Warning("login failed to start a session: ", err)
+		jsonMsg(c, "", common.NewError("unable to start a session"))
+		return
 	}
+	logger.Info("user ", loginUser, " login success")
 
 	jsonMsg(c, "", nil)
 }
