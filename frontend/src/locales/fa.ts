@@ -148,6 +148,8 @@ export default {
     close: "بستن",
     restartApp: "ریستارت پنل",
     restartSb: "ریستارت سینگ‌باکس",
+    maintenanceOn: "حالت نگهداری فعال شد",
+    maintenanceOff: "حالت نگهداری غیرفعال شد",
     cancel: "لغو",
     reconcileNode: "همگام‌سازی نود",
     adoptInbounds: "ورود درون‌آیی‌ها",

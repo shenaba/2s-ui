@@ -148,6 +148,8 @@ export default {
     close: "Закрыть",
     restartApp: "Перезапустить приложение",
     restartSb: "Перезапустить Singbox",
+    maintenanceOn: "Режим обслуживания включён",
+    maintenanceOff: "Режим обслуживания выключен",
     apply: "Применить",
     cancel: "Отмена",
     reconcileNode: "Синхронизация узла",

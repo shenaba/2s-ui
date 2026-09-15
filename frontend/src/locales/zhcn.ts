@@ -148,6 +148,8 @@ export default {
     close: "关闭",
     restartApp: "重启面板",
     restartSb: "重启 Singbox",
+    maintenanceOn: "已进入维护模式",
+    maintenanceOff: "已退出维护模式",
     cancel: "取消",
     reconcileNode: "同步节点",
     adoptInbounds: "导入入站",

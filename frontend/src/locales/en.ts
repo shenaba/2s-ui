@@ -150,6 +150,8 @@ export default {
     close: "Close",
     restartApp: "Restart App",
     restartSb: "Restart Singbox",
+    maintenanceOn: "Maintenance mode on",
+    maintenanceOff: "Maintenance mode off",
     cancel: "Cancel",
     reconcileNode: "Sync node",
     adoptInbounds: "Import inbounds",

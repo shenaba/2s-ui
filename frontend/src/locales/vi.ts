@@ -148,6 +148,8 @@ export default {
     close: "Đóng",
     restartApp: "Khởi động lại ứng dụng",
     restartSb: "Khởi động lại Singbox",
+    maintenanceOn: "Đã bật chế độ bảo trì",
+    maintenanceOff: "Đã tắt chế độ bảo trì",
     cancel: "Hủy",
     reconcileNode: "Đồng bộ node",
     adoptInbounds: "Nhập inbound",
