@@ -12,6 +12,9 @@ import (
 	"github.com/shenaba/2s-ui/util/common"
 )
 
+// maxExternalSubBytes bounds one external subscription body.
+const maxExternalSubBytes = 8 << 20
+
 func GetExternalLink(url string) string {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
@@ -26,9 +29,21 @@ func GetExternalLink(url string) string {
 	}
 	defer response.Body.Close()
 
-	body, err := io.ReadAll(response.Body)
+	// The body is an operator-configured URL's answer, which is not this
+	// panel's to size: an unbounded ReadAll lets a redirect to a large file --
+	// or a source that simply never stops -- take the process's memory with it,
+	// on a fetch that runs on every subscription request. Eight mebibytes is
+	// far past any real subscription; what does not fit is treated as a source
+	// that cannot be read, since a truncated one would be served as if it were
+	// the whole list.
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxExternalSubBytes+1))
 	if err != nil {
 		logger.Warning("sub: Error reading response body:", err)
+		return ""
+	}
+	if len(body) > maxExternalSubBytes {
+		logger.Warning("sub: external subscription is larger than ",
+			maxExternalSubBytes, " bytes, ignoring it: ", url)
 		return ""
 	}
 
