@@ -33,9 +33,103 @@ func GetOutbound(uri string, i int) (*map[string]interface{}, string, error) {
 			return ss(u, i)
 		case "naive+https", "naive+quic", "http2":
 			return parseNaiveLink(u, i)
+		case "socks", "socks5":
+			return socksProxy(u, i)
+		case "http", "https":
+			return httpProxy(u, i)
 		}
 	}
 	return nil, "", common.NewError("Unsupported link format")
+}
+
+// socksProxy and httpProxy read back the links socksLink and httpLink write.
+//
+// GetOutbound answered "Unsupported link format" for both, and the callers
+// drop a link they cannot parse without a word -- so a node replica of a
+// socks, http or mixed inbound was served in the plain-link subscription and
+// silently missing from the JSON and Clash ones. Those are three of the twelve
+// types in InboundTypeWithLink.
+//
+// Both insist on an explicit port. http:// and https:// are also what an
+// ordinary web address looks like, and a text subscription body is fed to
+// GetOutbound a line at a time -- so without a rule that tells the two apart,
+// every URL in one would become a proxy. A proxy link always carries a port
+// (there is no well-known one to fall back on) and never a path.
+func proxyEndpoint(u *url.URL) (string, int, error) {
+	if u.Path != "" && u.Path != "/" {
+		return "", 0, common.NewError("Unsupported link format")
+	}
+	host, portStr, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		return "", 0, common.NewError("Unsupported link format")
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port <= 0 || port > 65535 {
+		return "", 0, common.NewError("Unsupported link format")
+	}
+	return host, port, nil
+}
+
+// proxyCredentials copies the userinfo proxyUserinfo wrote. Both fields are
+// omitted when there is no userinfo at all: sing-box reads their presence as
+// "authenticate", and an empty username and password is not the same request
+// as none.
+func proxyCredentials(out map[string]interface{}, u *url.URL) {
+	if u.User == nil {
+		return
+	}
+	out["username"] = u.User.Username()
+	password, _ := u.User.Password()
+	out["password"] = password
+}
+
+func socksProxy(u *url.URL, i int) (*map[string]interface{}, string, error) {
+	host, port, err := proxyEndpoint(u)
+	if err != nil {
+		return nil, "", err
+	}
+	tag := u.Fragment
+	if i > 0 {
+		tag = fmt.Sprintf("%d.%s", i, u.Fragment)
+	}
+	socks := map[string]interface{}{
+		"type":        "socks",
+		"tag":         tag,
+		"server":      host,
+		"server_port": port,
+		// socksLink writes a SOCKS5 userinfo, and 4/4a carry no password at
+		// all. sing-box defaults to 5 too, but writing it keeps the outbound
+		// readable on its own.
+		"version": "5",
+	}
+	proxyCredentials(socks, u)
+	return &socks, tag, nil
+}
+
+func httpProxy(u *url.URL, i int) (*map[string]interface{}, string, error) {
+	host, port, err := proxyEndpoint(u)
+	if err != nil {
+		return nil, "", err
+	}
+	tag := u.Fragment
+	if i > 0 {
+		tag = fmt.Sprintf("%d.%s", i, u.Fragment)
+	}
+	http := map[string]interface{}{
+		"type":        "http",
+		"tag":         tag,
+		"server":      host,
+		"server_port": port,
+	}
+	if u.Scheme == "https" {
+		// httpLink picks its scheme from each address's own tls.enabled, so
+		// the scheme is the only thing in the link that says the listener
+		// speaks TLS. server_name is left to sing-box, which defaults it to
+		// the server address -- which is what the link carries.
+		http["tls"] = map[string]interface{}{"enabled": true}
+	}
+	proxyCredentials(http, u)
+	return &http, tag, nil
 }
 
 func vmess(data string, i int) (*map[string]interface{}, string, error) {
