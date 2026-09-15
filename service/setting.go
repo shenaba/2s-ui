@@ -170,6 +170,10 @@ func (s *SettingService) GetAllSetting() (*map[string]string, error) {
 	delete(allSetting, "version")
 	// Internal bookkeeping, advanced automatically by the reset job
 	delete(allSetting, "globalResetLast")
+	// Not seeded above, but this reads the whole table, so the row appears
+	// here as soon as the switch has been used once -- and the settings form
+	// posts back what it was given, which Save refuses.
+	delete(allSetting, maintenanceKey)
 
 	// Notification credentials go the same way, but silently dropping them
 	// would leave the settings page showing an empty field, which reads as "not
@@ -705,6 +709,16 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 	// from the raw value while storing the trimmed one.
 	for key, value := range settings {
 		settings[key] = strings.TrimSpace(value)
+	}
+
+	// maintenance is not a settings field. It has an action of its own that
+	// stops or starts the core alongside writing the row, so a write arriving
+	// here would leave the two disagreeing: the flag set with the core still
+	// serving clients, or cleared with the core still down. The settings form
+	// never sends it -- GetAllSetting does not seed the key -- so anything
+	// that does is hand-built and better answered than quietly dropped.
+	if _, ok := settings[maintenanceKey]; ok {
+		return common.NewError("maintenance is changed through its own action, not the settings form")
 	}
 
 	// When ACME auto-cert is enabled the manual cert/key paths are unused (and
