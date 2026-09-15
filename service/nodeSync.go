@@ -678,6 +678,14 @@ func genNodeReplicaLinks(replica *model.Inbound, c *model.Client) []string {
 	}
 	var addrs []map[string]interface{}
 	for _, a := range book {
+		// A row can be null: the book is whatever JSON that node's own panel
+		// stored, and json decodes null into a nil map -- which the backfill
+		// below writes into. That is not a type assertion, so
+		// safeLinkGenerator's recover is one call too deep to catch it, and
+		// the reconcile it runs under has no recover of its own.
+		if a == nil {
+			continue
+		}
 		if _, ok := a["server"]; !ok {
 			a["server"] = base["server"]
 		}
