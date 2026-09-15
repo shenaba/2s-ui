@@ -10,6 +10,7 @@ import (
 	"github.com/shenaba/2s-ui/core"
 	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/logger"
+	"github.com/shenaba/2s-ui/service/notify"
 
 	"github.com/op/go-logging"
 )
@@ -181,6 +182,28 @@ func TestStartBoxUndoesAStartThatRacedTheSwitch(t *testing.T) {
 	}
 	if corePtr.IsRunning() {
 		t.Error("a start that raced the switch left the core running with maintenance on")
+	}
+}
+
+// The scheduled report and the bot's /status both read this line. "stopped" on
+// its own is what a crash looks like, and it is the one thing the report must
+// not say about a core the operator took down on purpose.
+func TestStatusDigestSaysWhyTheCoreIsDown(t *testing.T) {
+	s := maintenanceEnv(t)
+	coreLine := func() string {
+		lines := strings.Split(StatusDigest("en"), "\n")
+		return lines[len(lines)-1]
+	}
+
+	if want := "Core " + notify.Label("en", "digest.stopped"); coreLine() != want {
+		t.Errorf("core line = %q, want %q for a core that is simply down", coreLine(), want)
+	}
+
+	if err := s.SetMaintenance(true); err != nil {
+		t.Fatalf("SetMaintenance(true): %v", err)
+	}
+	if want := "Core " + notify.Label("en", "digest.maintenance"); coreLine() != want {
+		t.Errorf("core line = %q, want %q", coreLine(), want)
 	}
 }
 
