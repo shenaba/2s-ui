@@ -508,9 +508,22 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 
 	// Merge proxies and proxy groups if exist
 	var output map[string]interface{}
-	err := yaml.Unmarshal([]byte(basicConfig), &output)
-	if err != nil {
-		logger.Error(err.Error())
+	if err := yaml.Unmarshal([]byte(basicConfig), &output); err != nil {
+		logger.Warning("sub: the Clash extension config is not valid YAML: ", err)
+	}
+	if output == nil {
+		// Valid YAML that is not a mapping -- a bare scalar, a list, or a
+		// document holding only comments -- decodes to a nil map, and so does
+		// one that failed to decode at all. The merge below writes into it,
+		// which took every Clash subscription down with a 500.
+		//
+		// The shipped defaults rather than an empty profile: they carry the
+		// dns and rules blocks, and mihomo has nothing to route with without
+		// them. The operator's own config is what is unusable here, not ours.
+		logger.Warning("sub: the Clash extension config is not a YAML mapping, using the defaults")
+		if err := yaml.Unmarshal([]byte(basicClashConfig), &output); err != nil {
+			return "", err
+		}
 	}
 
 	if p, ok := output["proxies"].([]interface{}); ok {
