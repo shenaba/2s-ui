@@ -146,17 +146,21 @@ func TestRemovalMuteDoesNotLiftOnQuiet(t *testing.T) {
 	}
 }
 
-func TestRemovalMuteLiftsAtBackstop(t *testing.T) {
+// "Long dead" means the session stopped trying -- not merely that the block was
+// written a while ago. Ageing the block itself was what the earlier version of
+// this test did, and it let a real defect through: a client hammering away for
+// ten minutes got its traffic back on the timer.
+func TestRemovalMuteLiftsWhenSessionGivesUp(t *testing.T) {
 	r := NewRegistry()
 	r.Bind("gone", "1.2.3.4:1000")
 	r.CloseUsers(keep())
 
 	r.access.Lock()
-	r.blocked["1.2.3.4:1000"].at = time.Now().Add(-blockTimeout - time.Second)
+	r.blocked["1.2.3.4:1000"].lastAttempt = time.Now().Add(-blockTimeout - time.Second)
 	r.access.Unlock()
 
 	if !r.Allowed("1.2.3.4:1000") {
-		t.Error("the backstop must free an address whose session is long dead")
+		t.Error("an address whose session gave up must eventually be let go")
 	}
 }
 
@@ -323,5 +327,73 @@ func TestBindAndTrackWithNilCloserMutes(t *testing.T) {
 	}
 	if r.Allowed("1.2.3.4:1000") {
 		t.Error("with no closer the session must be muted")
+	}
+}
+
+// The counterpart to the one above, and the defect it was hiding: a client that
+// keeps retrying is a session that is still alive -- which for QUIC means still
+// authenticated, because the streams it opens never re-check the user table.
+// The mute must outlast the retries, however long they go on.
+//
+// The sweep is the second road to the same place: Allowed has to keep the entry
+// looking live, or the sweep drops it and takes the block with it.
+func TestRemovalMuteSurvivesTheSweepWhileClientRetries(t *testing.T) {
+	r := NewRegistry()
+	r.Bind("gone", "1.2.3.4:1000")
+	r.CloseUsers(keep())
+
+	// Age the entry as though it had gone quiet long ago.
+	r.access.Lock()
+	r.sources["1.2.3.4:1000"].lastSeen = time.Now().Add(-idleTimeout - time.Minute)
+	r.lastSweep = time.Now().Add(-idleTimeout - time.Minute)
+	r.access.Unlock()
+
+	// But the client is in fact still hammering: one refused attempt is enough
+	// to mark the source live again.
+	if r.Allowed("1.2.3.4:1000") {
+		t.Fatal("precondition: the source should still be muted")
+	}
+
+	// Someone else's traffic, which is what triggers the sweep.
+	r.Bind("other", "5.6.7.8:2000")
+
+	if r.Allowed("1.2.3.4:1000") {
+		t.Error("the sweep lifted a mute whose client is still trying")
+	}
+}
+
+// A kick assumes the user may come back; a removal does not. Applying a kick on
+// top of a removal must not shorten it to the kick window.
+func TestKickDoesNotDowngradeARemoval(t *testing.T) {
+	r := NewRegistry()
+	r.Bind("gone", "1.2.3.4:1000")
+	r.CloseUsers(keep())
+	r.KickUserSessions("gone")
+
+	// Past the kick window, nowhere near the removal one.
+	r.access.Lock()
+	r.blocked["1.2.3.4:1000"].lastAttempt = time.Now().Add(-kickQuietWindow - time.Second)
+	r.access.Unlock()
+
+	if r.Allowed("1.2.3.4:1000") {
+		t.Error("a kick downgraded a removal to the short window")
+	}
+}
+
+// The reverse: a kick is a decision about a user who is still enabled, so it
+// must survive an unrelated save that happens to list them in keep.
+func TestUnrelatedSaveDoesNotClearAKick(t *testing.T) {
+	r := NewRegistry()
+	r.Bind("live", "1.2.3.4:1000")
+	r.KickUserSessions("live")
+	if r.Allowed("1.2.3.4:1000") {
+		t.Fatal("precondition: the kicked source should be muted")
+	}
+
+	// Another client is saved; "live" is still enabled, so it is in keep.
+	r.CloseUsers(keep("live", "other"))
+
+	if r.Allowed("1.2.3.4:1000") {
+		t.Error("an unrelated save cleared the operator's kick")
 	}
 }

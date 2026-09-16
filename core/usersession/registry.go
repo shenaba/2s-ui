@@ -31,8 +31,10 @@ const (
 	// A source that has not opened a connection for this long is forgotten;
 	// its session is either gone or idle enough to be re-learned on use.
 	idleTimeout = 10 * time.Minute
-	// Backstop for blocks: a client whose session is really dead stops being
-	// blocked, so the address is reusable even if the user is never re-added.
+	// How long a removed user's session has to stay quiet before its address is
+	// let go. Measured from the last refused attempt, not from when the block
+	// was written: a client that keeps trying is a session that is still alive,
+	// and it stays muted for as long as that lasts.
 	blockTimeout = 10 * time.Minute
 	// A kicked session is muted only while it keeps trying. Once it has been
 	// quiet this long, the next attempt from the address is a new session and
@@ -46,11 +48,10 @@ type entry struct {
 	closer   io.Closer
 }
 
-// block mutes one client address. A removal keeps it muted until the backstop;
-// a kick, which must not lock a still-enabled user out, lifts as soon as the
-// muted session stops trying.
+// block mutes one client address. Both kinds lift on quiet rather than on a
+// timer (see Allowed) -- a kick far sooner, because the user behind it is
+// still enabled and must not be locked out.
 type block struct {
-	at          time.Time
 	lastAttempt time.Time
 	kick        bool
 }
@@ -121,7 +122,7 @@ func (r *Registry) sweepLocked(now time.Time) {
 		}
 	}
 	for source, b := range r.blocked {
-		if now.Sub(b.at) > blockTimeout {
+		if now.Sub(b.lastAttempt) > blockTimeout {
 			delete(r.blocked, source)
 		}
 	}
@@ -198,18 +199,30 @@ func (r *Registry) Allowed(source string) bool {
 		return true
 	}
 	now := time.Now()
-	if now.Sub(b.at) > blockTimeout {
-		delete(r.blocked, source)
-		return true
+	// Both windows are measured from the last attempt, never from when the
+	// block was written. A client that keeps hammering is a session that is
+	// still alive, and a session that is still alive is still authenticated:
+	// letting it back in on a timer would hand a removed user their traffic
+	// back, because the streams it opens afterwards never consult the user
+	// table again. Quiet is the only evidence that a session is really gone.
+	//
+	// A kick lifts quickly because the user is still enabled and must not be
+	// locked out; a removal holds until the session gives up for good.
+	window := blockTimeout
+	if b.kick {
+		window = kickQuietWindow
 	}
-	// A gap this long means the muted session gave up; whatever is connecting
-	// now is a new one. Only for a kick: a removed user stays muted until the
-	// backstop, because there is nothing to let back in.
-	if b.kick && now.Sub(b.lastAttempt) > kickQuietWindow {
+	if now.Sub(b.lastAttempt) > window {
 		delete(r.blocked, source)
 		return true
 	}
 	b.lastAttempt = now
+	// A source being refused is anything but idle. Without this the sweep
+	// would see a stale lastSeen, drop the entry and take the block with it --
+	// lifting the mute by the other road.
+	if e, ok := r.sources[source]; ok {
+		e.lastSeen = now
+	}
 	return false
 }
 
@@ -232,7 +245,12 @@ func (r *Registry) CloseUsers(keep map[string]struct{}) int {
 			continue
 		}
 		if _, ok := keep[e.user]; ok {
-			delete(r.blocked, source)
+			// Lift a removal: the user is back on the inbound. A kick is a
+			// separate decision an operator just made about a user who was
+			// never removed, so an unrelated save must not undo it.
+			if b, muted := r.blocked[source]; muted && !b.kick {
+				delete(r.blocked, source)
+			}
 			continue
 		}
 		cut++
@@ -242,10 +260,10 @@ func (r *Registry) CloseUsers(keep map[string]struct{}) int {
 			delete(r.blocked, source)
 			continue
 		}
-		r.blocked[source] = &block{at: now, lastAttempt: now}
+		r.blocked[source] = &block{lastAttempt: now}
 	}
 	for source, b := range r.blocked {
-		if now.Sub(b.at) > blockTimeout {
+		if now.Sub(b.lastAttempt) > blockTimeout {
 			delete(r.blocked, source)
 		}
 	}
@@ -284,7 +302,14 @@ func (r *Registry) KickUserSessions(user string) int {
 			closers = append(closers, e.closer)
 			continue
 		}
-		r.blocked[source] = &block{at: now, lastAttempt: now, kick: true}
+		// A removal already standing is the stricter of the two and must not be
+		// downgraded: that user is gone from the inbound, while a kick assumes
+		// they are still entitled to reconnect once they stop hammering.
+		if existing, muted := r.blocked[source]; muted && !existing.kick {
+			existing.lastAttempt = now
+			continue
+		}
+		r.blocked[source] = &block{lastAttempt: now, kick: true}
 	}
 	r.access.Unlock()
 
