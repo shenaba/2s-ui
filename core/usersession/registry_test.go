@@ -2,8 +2,8 @@ package usersession
 
 import (
 	"errors"
+	"strconv"
 	"testing"
-	"time"
 )
 
 type fakeCloser struct {
@@ -23,40 +23,120 @@ func keep(users ...string) map[string]struct{} {
 	return set
 }
 
+// What the QUIC inbounds turn a CloseUsers result into. Asking for a restart
+// when nothing was left connected would disconnect a whole inbound on every
+// ordinary save; not asking when something was leaves the removed user online.
+func TestResultRestartRequired(t *testing.T) {
+	for _, c := range []struct {
+		result Result
+		want   error
+	}{
+		{Result{}, nil},
+		{Result{Cut: 3}, nil},
+		{Result{Unclosable: 1}, ErrRestartRequired},
+		{Result{Cut: 2, Unclosable: 1}, ErrRestartRequired},
+	} {
+		if got := c.result.RestartRequired(); !errors.Is(got, c.want) {
+			t.Errorf("%+v.RestartRequired() = %v, want %v", c.result, got, c.want)
+		}
+	}
+}
+
 func TestCloseUsersClosesTrackedSession(t *testing.T) {
 	r := NewRegistry()
 	conn := &fakeCloser{}
 	r.Track("1.2.3.4:1000", conn)
 	r.Bind("gone", "1.2.3.4:1000")
 
-	if cut := r.CloseUsers(keep("stays")); cut != 1 {
-		t.Fatalf("cut = %d, want 1", cut)
+	got := r.CloseUsers(keep("stays"))
+	if got != (Result{Cut: 1}) {
+		t.Fatalf("CloseUsers = %+v, want {Cut:1}", got)
 	}
 	if !conn.closed {
-		t.Error("a tracked session must be closed, not muted")
-	}
-	// Nothing is left muted: the session is gone, so the address is free for
-	// whoever connects from it next.
-	if !r.Allowed("1.2.3.4:1000") {
-		t.Error("address stayed muted after its session was closed")
+		t.Error("a tracked session must be closed")
 	}
 }
 
-func TestCloseUsersMutesUntrackedSession(t *testing.T) {
+// The QUIC shape: nothing was tracked, so there is no session to cut. Saying so
+// is the whole contract -- it is what makes the inbound ask to be rebuilt.
+func TestCloseUsersReportsUntrackedUser(t *testing.T) {
 	r := NewRegistry()
-	// No Track: this is the QUIC shape, where the session has no closer we can
-	// reach. Muting is the only thing left.
 	r.Bind("gone", "1.2.3.4:1000")
 
-	if cut := r.CloseUsers(keep("stays")); cut != 1 {
-		t.Fatalf("cut = %d, want 1", cut)
+	got := r.CloseUsers(keep("stays"))
+	if got != (Result{Unclosable: 1}) {
+		t.Fatalf("CloseUsers = %+v, want {Unclosable:1}", got)
 	}
-	if r.Allowed("1.2.3.4:1000") {
-		t.Error("a session with no closer must be muted")
+}
+
+// THE regression this package exists for, and the one an earlier revision got
+// wrong twice. A QUIC session that has routed nothing for a long time is not a
+// session that ended: quic-go keeps it alive with a 10s PING, and the streams
+// it opens later never re-check the user table. Nothing may therefore expire a
+// user out of the seen set -- only their removal takes them out of it.
+//
+// There is no clock to advance here, which is the point: the fix was to delete
+// the notion of an idle session rather than to tune it. What stands in for
+// elapsed time is unbounded unrelated activity.
+func TestIdleUserIsNeverForgotten(t *testing.T) {
+	r := NewRegistry()
+	r.Bind("idle", "1.2.3.4:1000")
+
+	// Lots of other traffic and lots of ordinary saves, none of which concern
+	// "idle" -- who sends nothing at all for the whole stretch.
+	for i := 0; i < 500; i++ {
+		r.Bind("busy", "5.6.7.8:"+strconv.Itoa(2000+i))
+		r.CloseUsers(keep("idle", "busy"))
 	}
-	// An address nobody authenticated from is not affected.
-	if !r.Allowed("5.6.7.8:2000") {
-		t.Error("an unrelated address must stay allowed")
+
+	got := r.CloseUsers(keep("busy"))
+	if got != (Result{Unclosable: 1}) {
+		t.Fatalf("CloseUsers = %+v, want {Unclosable:1} -- an idle user was forgotten", got)
+	}
+}
+
+// The seen set is keyed by user, not by address, and that is what makes it safe
+// to keep forever: it is bounded by the client count, not by how many sessions
+// or source ports a client burns through. A QUIC client whose address moves
+// (NAT rebind, DisablePathManager) is also still the same one entry.
+func TestSeenSetIsKeyedByUser(t *testing.T) {
+	r := NewRegistry()
+	for i := 0; i < 1000; i++ {
+		r.Bind("roamer", "1.2.3.4:"+strconv.Itoa(1000+i))
+	}
+
+	r.access.Lock()
+	size := len(r.seen)
+	sources := len(r.sources)
+	r.access.Unlock()
+	if size != 1 {
+		t.Errorf("len(seen) = %d after 1000 addresses, want 1", size)
+	}
+	if sources != 0 {
+		t.Errorf("len(sources) = %d, want 0 -- an untracked user must not allocate per address", sources)
+	}
+
+	got := r.CloseUsers(keep())
+	if got != (Result{Unclosable: 1}) {
+		t.Errorf("CloseUsers = %+v, want {Unclosable:1} -- one user is one report", got)
+	}
+}
+
+// Re-enabling a user has to work: their next connection puts them back.
+func TestRemovedUserIsRecordedAgainOnReconnect(t *testing.T) {
+	r := NewRegistry()
+	r.Bind("flip", "1.2.3.4:1000")
+	if got := r.CloseUsers(keep()); got != (Result{Unclosable: 1}) {
+		t.Fatalf("precondition: CloseUsers = %+v, want {Unclosable:1}", got)
+	}
+	// Reported once and dropped, so an unrelated later save says nothing.
+	if got := r.CloseUsers(keep()); got != (Result{}) {
+		t.Fatalf("CloseUsers = %+v on the second pass, want an empty result", got)
+	}
+
+	r.Bind("flip", "1.2.3.4:2000")
+	if got := r.CloseUsers(keep()); got != (Result{Unclosable: 1}) {
+		t.Errorf("CloseUsers = %+v after reconnect, want {Unclosable:1}", got)
 	}
 }
 
@@ -67,26 +147,27 @@ func TestCloseUsersLeavesUnauthenticatedSourceAlone(t *testing.T) {
 	// nothing to say about it.
 	r.Bind("", "1.2.3.4:1000")
 
-	if cut := r.CloseUsers(keep("stays")); cut != 0 {
-		t.Fatalf("cut = %d, want 0", cut)
-	}
-	if !r.Allowed("1.2.3.4:1000") {
-		t.Error("an unauthenticated source must not be muted")
+	got := r.CloseUsers(keep("stays"))
+	if got != (Result{}) {
+		t.Fatalf("CloseUsers = %+v, want an empty result", got)
 	}
 }
 
-func TestCloseUsersLiftsMuteWhenUserComesBack(t *testing.T) {
+// A user still on the inbound is not touched, however many sessions they have.
+func TestCloseUsersKeepsEnabledUsers(t *testing.T) {
 	r := NewRegistry()
-	r.Bind("flip", "1.2.3.4:1000")
-	r.CloseUsers(keep())
-	if r.Allowed("1.2.3.4:1000") {
-		t.Fatal("precondition: the session should be muted")
-	}
+	first := &fakeCloser{}
+	second := &fakeCloser{}
+	r.BindAndTrack("stays", "1.2.3.4:1000", first)
+	r.BindAndTrack("stays", "1.2.3.4:1001", second)
+	r.Bind("stays", "5.6.7.8:2000")
 
-	// Re-enabling has to take effect now, not when the block times out.
-	r.CloseUsers(keep("flip"))
-	if !r.Allowed("1.2.3.4:1000") {
-		t.Error("re-enabling a user must lift the mute immediately")
+	got := r.CloseUsers(keep("stays"))
+	if got != (Result{}) {
+		t.Fatalf("CloseUsers = %+v, want an empty result", got)
+	}
+	if first.closed || second.closed {
+		t.Error("a user who is still enabled must keep their sessions")
 	}
 }
 
@@ -96,71 +177,57 @@ func TestKickClosesTrackedSession(t *testing.T) {
 	r.Track("1.2.3.4:1000", conn)
 	r.Bind("noisy", "1.2.3.4:1000")
 
-	if kicked := r.KickUserSessions("noisy"); kicked != 1 {
-		t.Fatalf("kicked = %d, want 1", kicked)
+	got := r.KickUserSessions("noisy")
+	if got != (Result{Cut: 1}) {
+		t.Fatalf("KickUserSessions = %+v, want {Cut:1}", got)
 	}
 	if !conn.closed {
 		t.Error("a tracked session must be closed on kick")
 	}
-	if !r.Allowed("1.2.3.4:1000") {
-		t.Error("a kicked client must be free to reconnect at once")
-	}
 }
 
-func TestKickMuteLiftsAfterQuietWindow(t *testing.T) {
+// A kick cannot reach a QUIC session either. It says so rather than pretending,
+// and leaves what to do about it to the caller.
+func TestKickReportsUntrackedUser(t *testing.T) {
 	r := NewRegistry()
 	r.Bind("noisy", "1.2.3.4:1000")
-	r.KickUserSessions("noisy")
 
-	// The kicked session keeps trying and keeps being refused.
-	for i := 0; i < 3; i++ {
-		if r.Allowed("1.2.3.4:1000") {
-			t.Fatalf("attempt %d was let through while the session kept trying", i)
-		}
+	got := r.KickUserSessions("noisy")
+	if got != (Result{Unclosable: 1}) {
+		t.Fatalf("KickUserSessions = %+v, want {Unclosable:1}", got)
 	}
-
-	// Once it has been quiet for the window, the next attempt is a new session.
-	r.access.Lock()
-	r.blocked["1.2.3.4:1000"].lastAttempt = time.Now().Add(-kickQuietWindow - time.Second)
-	r.access.Unlock()
-
-	if !r.Allowed("1.2.3.4:1000") {
-		t.Error("a kick must not turn into a lockout")
+	// Unlike a removal, a kick leaves the user in the set: they are still on
+	// the inbound, so a removal later still has to report them.
+	if got := r.CloseUsers(keep()); got != (Result{Unclosable: 1}) {
+		t.Errorf("CloseUsers = %+v after a kick, want {Unclosable:1} -- the kick dropped a user who is still enabled", got)
 	}
 }
 
-func TestRemovalMuteDoesNotLiftOnQuiet(t *testing.T) {
+// The other shape a kick can fail to reach: an entry that was tracked but
+// carries no closer (a packet conn addressed to the mux destination). It has to
+// be reported for the same reason the seen set is.
+func TestKickReportsATrackedEntryWithNoCloser(t *testing.T) {
 	r := NewRegistry()
-	r.Bind("gone", "1.2.3.4:1000")
-	r.CloseUsers(keep())
+	r.BindAndTrack("live", "1.2.3.4:1000", nil)
 
-	// Same quiet gap that would lift a kick. A removal is not a kick: the user
-	// is no longer on the inbound, so there is nothing to let back in and the
-	// mute holds until the backstop.
-	r.access.Lock()
-	r.blocked["1.2.3.4:1000"].lastAttempt = time.Now().Add(-kickQuietWindow - time.Second)
-	r.access.Unlock()
-
-	if r.Allowed("1.2.3.4:1000") {
-		t.Error("a removal mute must not lift just because the session went quiet")
+	got := r.KickUserSessions("live")
+	if got != (Result{Unclosable: 1}) {
+		t.Fatalf("KickUserSessions = %+v, want {Unclosable:1}", got)
 	}
 }
 
-// "Long dead" means the session stopped trying -- not merely that the block was
-// written a while ago. Ageing the block itself was what the earlier version of
-// this test did, and it let a real defect through: a client hammering away for
-// ten minutes got its traffic back on the timer.
-func TestRemovalMuteLiftsWhenSessionGivesUp(t *testing.T) {
+func TestKickIgnoresOtherUsers(t *testing.T) {
 	r := NewRegistry()
-	r.Bind("gone", "1.2.3.4:1000")
-	r.CloseUsers(keep())
+	conn := &fakeCloser{}
+	r.BindAndTrack("bystander", "1.2.3.4:1000", conn)
+	r.Bind("other", "5.6.7.8:2000")
 
-	r.access.Lock()
-	r.blocked["1.2.3.4:1000"].lastAttempt = time.Now().Add(-blockTimeout - time.Second)
-	r.access.Unlock()
-
-	if !r.Allowed("1.2.3.4:1000") {
-		t.Error("an address whose session gave up must eventually be let go")
+	got := r.KickUserSessions("noisy")
+	if got != (Result{}) {
+		t.Fatalf("KickUserSessions = %+v, want an empty result", got)
+	}
+	if conn.closed {
+		t.Error("a kick must not touch another user's session")
 	}
 }
 
@@ -171,229 +238,89 @@ func TestUntrackForgetsSession(t *testing.T) {
 	r.Bind("gone", "1.2.3.4:1000")
 	r.Untrack("1.2.3.4:1000")
 
-	if cut := r.CloseUsers(keep()); cut != 0 {
-		t.Fatalf("cut = %d, want 0 -- the session was already gone", cut)
+	got := r.CloseUsers(keep())
+	if got != (Result{}) {
+		t.Fatalf("CloseUsers = %+v, want an empty result -- the session was already gone", got)
 	}
 	if conn.closed {
 		t.Error("an untracked session must not be closed again")
 	}
 }
 
-// The QUIC inbounds never Untrack, so Bind is the only place that can drop what
-// they leave behind.
-func TestSweepDropsIdleSources(t *testing.T) {
-	r := NewRegistry()
-	r.Bind("old", "1.2.3.4:1000")
-
-	r.access.Lock()
-	r.sources["1.2.3.4:1000"].lastSeen = time.Now().Add(-idleTimeout - time.Minute)
-	r.lastSweep = time.Now().Add(-idleTimeout - time.Minute)
-	r.access.Unlock()
-
-	r.Bind("fresh", "5.6.7.8:2000")
-
-	r.access.Lock()
-	_, stale := r.sources["1.2.3.4:1000"]
-	count := len(r.sources)
-	r.access.Unlock()
-
-	if stale {
-		t.Error("an idle source must be swept")
-	}
-	if count != 1 {
-		t.Errorf("len(sources) = %d, want 1 (the fresh one)", count)
-	}
-}
-
-func TestSweepIsRateLimited(t *testing.T) {
-	r := NewRegistry()
-	r.Bind("old", "1.2.3.4:1000")
-
-	r.access.Lock()
-	r.sources["1.2.3.4:1000"].lastSeen = time.Now().Add(-idleTimeout - time.Minute)
-	r.access.Unlock()
-
-	// lastSweep is fresh (NewRegistry set it), so this Bind must not walk the
-	// map -- the whole point is that the data plane does not pay per call.
-	r.Bind("fresh", "5.6.7.8:2000")
-
-	r.access.Lock()
-	_, stale := r.sources["1.2.3.4:1000"]
-	r.access.Unlock()
-
-	if !stale {
-		t.Error("sweep ran on a Bind inside the rate limit window")
-	}
-}
-
-func TestRejectReportsClose(t *testing.T) {
-	conn := &fakeCloser{}
-	var reported error
-	Reject(conn, func(err error) { reported = err })
-
-	if !conn.closed {
-		t.Error("Reject must close the connection")
-	}
-	if !errors.Is(reported, ErrRemoved) {
-		t.Errorf("close handler got %v, want ErrRemoved", reported)
-	}
-}
-
-func TestRejectWithoutCloseHandler(t *testing.T) {
-	conn := &fakeCloser{}
-	Reject(conn, nil)
-	if !conn.closed {
-		t.Error("Reject must close the connection even with no close handler")
-	}
-}
-
-// A tracked session is alive however quiet it has been: lastSeen only moves
-// when it opens another connection, so one carrying a single long-lived stream
-// looks idle. Sweeping it would discard the closer, and the removal that came
-// next would find nothing to cut -- which is issue #175 all over again.
-func TestSweepKeepsTrackedSession(t *testing.T) {
+// A tracked session is alive however quiet it has been -- it carries a single
+// long-lived stream, an ssh session or a download, and opens nothing new. It
+// must stay closable, which is why nothing ages sources out: Untrack is the
+// only thing that removes an entry, and it runs when the session really ends.
+func TestQuietTrackedSessionStaysClosable(t *testing.T) {
 	r := NewRegistry()
 	conn := &fakeCloser{}
 	r.BindAndTrack("quiet", "1.2.3.4:1000", conn)
 
-	r.access.Lock()
-	r.sources["1.2.3.4:1000"].lastSeen = time.Now().Add(-idleTimeout - time.Minute)
-	r.lastSweep = time.Now().Add(-idleTimeout - time.Minute)
-	r.access.Unlock()
+	// Plenty of unrelated activity while "quiet" routes nothing.
+	for i := 0; i < 500; i++ {
+		r.Bind("busy", "5.6.7.8:"+strconv.Itoa(2000+i))
+		r.CloseUsers(keep("quiet", "busy"))
+	}
 
-	// Another client's traffic, which is what triggers the sweep.
-	r.Bind("other", "5.6.7.8:2000")
-
-	if cut := r.CloseUsers(keep("other")); cut != 1 {
-		t.Fatalf("cut = %d, want 1 -- the idle session was swept away", cut)
+	got := r.CloseUsers(keep("busy"))
+	if got != (Result{Cut: 1}) {
+		t.Fatalf("CloseUsers = %+v, want {Cut:1} -- the quiet session was lost", got)
 	}
 	if !conn.closed {
-		t.Error("a tracked session must survive the sweep and stay closable")
+		t.Error("a quiet tracked session must still be closable")
 	}
 }
 
-// Same defect, second site: CloseUsers drops idle entries before it decides
-// what to cut, so an idle carrier would be skipped by the very call meant to
-// close it.
-func TestCloseUsersCutsIdleTrackedSession(t *testing.T) {
-	r := NewRegistry()
-	conn := &fakeCloser{}
-	r.BindAndTrack("quiet", "1.2.3.4:1000", conn)
-
-	r.access.Lock()
-	r.sources["1.2.3.4:1000"].lastSeen = time.Now().Add(-idleTimeout - time.Minute)
-	r.access.Unlock()
-
-	if cut := r.CloseUsers(keep()); cut != 1 {
-		t.Fatalf("cut = %d, want 1 -- an idle tracked session was skipped", cut)
-	}
-	if !conn.closed {
-		t.Error("an idle but tracked session must still be closed")
-	}
-}
-
-// This pins the outcome -- a carrier registered this way is closed, not muted.
+// This pins the outcome -- a carrier registered this way is cut, not reported.
 // The atomicity it exists for cannot be asserted here: it comes from doing both
 // writes under one lock, and a sequential Bind-then-Track would pass this test
 // just the same. What that split would lose is the interleaving where a
-// CloseUsers lands between the two, sees a user with no closer yet, files the
-// session as unclosable and mutes it -- and a mux carrier is never gated, so
-// the mute would do nothing.
-func TestBindAndTrackClosesRatherThanMutes(t *testing.T) {
+// CloseUsers lands between the two, sees a user with no session yet, and puts
+// them in the seen set -- costing a mux inbound a restart it never needed.
+func TestBindAndTrackCutsRatherThanReports(t *testing.T) {
 	r := NewRegistry()
 	conn := &fakeCloser{}
 	r.BindAndTrack("live", "1.2.3.4:1000", conn)
 
-	if cut := r.CloseUsers(keep()); cut != 1 {
-		t.Fatalf("cut = %d, want 1", cut)
+	got := r.CloseUsers(keep())
+	if got != (Result{Cut: 1}) {
+		t.Fatalf("CloseUsers = %+v, want {Cut:1}", got)
 	}
 	if !conn.closed {
-		t.Error("the carrier must be closed, not muted")
-	}
-	if !r.Allowed("1.2.3.4:1000") {
-		t.Error("a closed carrier must not leave a mute behind")
+		t.Error("the carrier must be closed")
 	}
 }
 
 // A packet conn cannot be a mux carrier, so the router passes a nil closer. It
 // must stay nil: a nil net.Conn placed in an io.Closer is not a nil interface,
 // and would register as a closer that panics when the session is cut.
-func TestBindAndTrackWithNilCloserMutes(t *testing.T) {
+func TestBindAndTrackWithNilCloserReportsUnclosable(t *testing.T) {
 	r := NewRegistry()
 	r.BindAndTrack("live", "1.2.3.4:1000", nil)
 
-	if cut := r.CloseUsers(keep()); cut != 1 {
-		t.Fatalf("cut = %d, want 1", cut)
-	}
-	if r.Allowed("1.2.3.4:1000") {
-		t.Error("with no closer the session must be muted")
+	got := r.CloseUsers(keep())
+	if got != (Result{Unclosable: 1}) {
+		t.Fatalf("CloseUsers = %+v, want {Unclosable:1}", got)
 	}
 }
 
-// The counterpart to the one above, and the defect it was hiding: a client that
-// keeps retrying is a session that is still alive -- which for QUIC means still
-// authenticated, because the streams it opens never re-check the user table.
-// The mute must outlast the retries, however long they go on.
-//
-// The sweep is the second road to the same place: Allowed has to keep the entry
-// looking live, or the sweep drops it and takes the block with it.
-func TestRemovalMuteSurvivesTheSweepWhileClientRetries(t *testing.T) {
+// Sessions are counted one by one because each is a separate transport to
+// close; users without one are counted once, because one restart ends all of
+// theirs at the same time.
+func TestCloseUsersCountsSessionsAndUsers(t *testing.T) {
 	r := NewRegistry()
-	r.Bind("gone", "1.2.3.4:1000")
-	r.CloseUsers(keep())
+	first := &fakeCloser{}
+	second := &fakeCloser{}
+	r.BindAndTrack("gone", "1.2.3.4:1000", first)
+	r.BindAndTrack("gone", "1.2.3.4:1001", second)
+	r.Bind("gone", "1.2.3.4:1002")
+	r.Bind("gone", "1.2.3.4:1003")
 
-	// Age the entry as though it had gone quiet long ago.
-	r.access.Lock()
-	r.sources["1.2.3.4:1000"].lastSeen = time.Now().Add(-idleTimeout - time.Minute)
-	r.lastSweep = time.Now().Add(-idleTimeout - time.Minute)
-	r.access.Unlock()
-
-	// But the client is in fact still hammering: one refused attempt is enough
-	// to mark the source live again.
-	if r.Allowed("1.2.3.4:1000") {
-		t.Fatal("precondition: the source should still be muted")
+	got := r.CloseUsers(keep())
+	if got != (Result{Cut: 2, Unclosable: 1}) {
+		t.Fatalf("CloseUsers = %+v, want {Cut:2 Unclosable:1}", got)
 	}
-
-	// Someone else's traffic, which is what triggers the sweep.
-	r.Bind("other", "5.6.7.8:2000")
-
-	if r.Allowed("1.2.3.4:1000") {
-		t.Error("the sweep lifted a mute whose client is still trying")
-	}
-}
-
-// A kick assumes the user may come back; a removal does not. Applying a kick on
-// top of a removal must not shorten it to the kick window.
-func TestKickDoesNotDowngradeARemoval(t *testing.T) {
-	r := NewRegistry()
-	r.Bind("gone", "1.2.3.4:1000")
-	r.CloseUsers(keep())
-	r.KickUserSessions("gone")
-
-	// Past the kick window, nowhere near the removal one.
-	r.access.Lock()
-	r.blocked["1.2.3.4:1000"].lastAttempt = time.Now().Add(-kickQuietWindow - time.Second)
-	r.access.Unlock()
-
-	if r.Allowed("1.2.3.4:1000") {
-		t.Error("a kick downgraded a removal to the short window")
-	}
-}
-
-// The reverse: a kick is a decision about a user who is still enabled, so it
-// must survive an unrelated save that happens to list them in keep.
-func TestUnrelatedSaveDoesNotClearAKick(t *testing.T) {
-	r := NewRegistry()
-	r.Bind("live", "1.2.3.4:1000")
-	r.KickUserSessions("live")
-	if r.Allowed("1.2.3.4:1000") {
-		t.Fatal("precondition: the kicked source should be muted")
-	}
-
-	// Another client is saved; "live" is still enabled, so it is in keep.
-	r.CloseUsers(keep("live", "other"))
-
-	if r.Allowed("1.2.3.4:1000") {
-		t.Error("an unrelated save cleared the operator's kick")
+	if !first.closed || !second.closed {
+		t.Error("both tracked sessions must be cut")
 	}
 }

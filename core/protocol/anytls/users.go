@@ -23,11 +23,16 @@ func (h *Inbound) UpdateUsers(users []option.AnyTLSUser) error {
 	h.service.UpdateUsers(common.Map(users, func(it option.AnyTLSUser) anytls.User {
 		return (anytls.User)(it)
 	}))
-	keep := make(map[string]struct{}, len(users))
-	for _, user := range users {
-		keep[user.Name] = struct{}{}
-	}
-	h.sessions().CloseUsers(keep)
+	// Unclosable is deliberately not checked: newSessionConnection registers
+	// the transport of every anytls session, so a removed user's session is
+	// always cut outright and never costs the inbound a rebuild. The only thing
+	// that can be counted here is a straggler stream that reached the router
+	// after its own session had already ended -- not a session, and not worth
+	// disconnecting everyone else for. If anytls ever grows a session this
+	// inbound does not hold the transport of, that stops being true.
+	h.sessions().CloseUsers(usersession.KeepSet(common.Map(users, func(it option.AnyTLSUser) string {
+		return it.Name
+	})))
 	return nil
 }
 
@@ -52,15 +57,10 @@ func (h *Inbound) sessions() *usersession.Registry {
 // here is what makes it closable; the streams it later opens reach the router
 // individually and cannot be used to find it.
 //
-// Returning an error rather than closing the connection reuses the rejection
-// the call site already has (N.CloseOnHandshakeFailure).
+// The call blocks until the session ends, so the deferred Untrack is what keeps
+// the registry to sessions that actually exist.
 func (h *Inbound) newSessionConnection(ctx context.Context, conn net.Conn, source M.Socksaddr, onClose N.CloseHandlerFunc) error {
 	key := source.String()
-	// A session with a closer is cut outright rather than muted, so this only
-	// fires if closing one failed -- keeping the mute as the backstop.
-	if !h.sessions().Allowed(key) {
-		return usersession.ErrRemoved
-	}
 	h.sessions().Track(key, conn)
 	defer h.sessions().Untrack(key)
 	return h.service.NewConnection(ctx, conn, source, onClose)

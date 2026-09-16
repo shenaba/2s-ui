@@ -21,6 +21,11 @@ func (h *Inbound) UpdateUsers(users []option.VLESSUser) error {
 	}), common.Map(users, func(it option.VLESSUser) string {
 		return it.Flow
 	}))
+	// Unclosable is deliberately not checked: a mux carrier is a net.Conn and
+	// is cut outright, so a removed user never costs this inbound the rebuild a
+	// QUIC one does. The only thing that can be counted here is a packet conn
+	// addressed to the mux destination -- not a carrier, and not worth
+	// disconnecting everyone else for.
 	h.sessions().CloseUsers(usersession.KeepSet(common.Map(users, func(it option.VLESSUser) string {
 		return it.Name
 	})))

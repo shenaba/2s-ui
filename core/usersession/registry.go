@@ -8,146 +8,150 @@
 // client simply opens another stream on the session it already has. Reaching
 // the session itself is what this registry is for.
 //
-// This lives at the inbound layer rather than in ConnTracker on purpose. A
-// tracker-level gate sees a connection only after routing, so it misses the
-// ones the router answers itself (hijack-dns), and refusing there still costs
-// one real dial to the destination before the copy fails. Refusing here happens
-// before any of that. The two layers stay separate: IP limits keep their gate
-// in ConnTracker, because that policy has to outlive a core restart, while
-// everything here is per-inbound and goes away with the Box.
+// # Two kinds of session
+//
+// anytls and the sing-mux carrier arrive as a net.Conn that lives exactly as
+// long as the session does. Those are tracked by source address and closed
+// outright, and that is the whole story for anytls, vless, vmess and trojan:
+// the key is a single TCP connection's address, it cannot move, and Untrack
+// runs when the session ends.
+//
+// The QUIC protocols give this layer no handle on the session -- and, the part
+// that decides the design, no usable name for one either:
+//
+//   - sing-quic keeps its session list unexported, and the ctx it hands the
+//     handler per stream is the Service's own, shared by every session;
+//   - all three services set quic-go's DisablePathManager, which rewrites a
+//     connection's remote address the moment a decryptable packet arrives from
+//     a new one, with no path validation -- so the source address moves under
+//     one NAT rebind;
+//   - that address is an ephemeral UDP port, recycled to somebody else once the
+//     session ends, and nothing tells this layer that it has been;
+//   - and there is no moment at which a QUIC session can be declared gone.
+//     quic-go keeps one alive with a 10s PING whether or not a single byte is
+//     routed, so an idle session and a dead one look identical from here.
+//
+// So for QUIC this package does not track sessions at all. It records
+// something weaker and completely reliable: **which users have been seen on
+// this inbound**. That set is bounded by the client count rather than the
+// session count, which is what lets it carry no timeout -- and a set with no
+// timeout is the only kind that cannot be wrong about a session it cannot see.
+//
+// Earlier revisions tried to do better and could not. Muting the source address
+// is defeated by the second and third points; ageing a per-session entry out
+// after ten idle minutes is defeated by the fourth, and silently let a removed
+// user keep an idle session. Both looked like they worked because a test client
+// that reconnects every second never exercises either.
+//
+// # What a removal does
+//
+// CloseUsers cuts every session it holds a transport for, and reports the rest
+// as Unclosable. The QUIC inbounds turn that into ErrRestartRequired and the
+// caller rebuilds the inbound, which destroys every QUIC session on it, the
+// removed user's included. Everyone on that inbound reconnects once.
+//
+// Being wrong here is one-sided on purpose: a user who connected and then left
+// for good is still in the seen set, so removing them costs one restart that
+// bought nothing. The other direction -- deciding a session is gone when it is
+// not -- is what issue #175 is, so the cost is paid on that side.
+//
+// This lives at the inbound layer rather than in ConnTracker on purpose. The
+// two stay separate: IP limits keep their gate in ConnTracker, because that
+// policy has to outlive a core restart, while everything here is per-inbound
+// and goes away with the Box.
 package usersession
 
 import (
 	"io"
 	"sync"
-	"time"
 
-	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
-	N "github.com/sagernet/sing/common/network"
 )
 
-const (
-	// A source that has not opened a connection for this long is forgotten;
-	// its session is either gone or idle enough to be re-learned on use.
-	idleTimeout = 10 * time.Minute
-	// How long a removed user's session has to stay quiet before its address is
-	// let go. Measured from the last refused attempt, not from when the block
-	// was written: a client that keeps trying is a session that is still alive,
-	// and it stays muted for as long as that lasts.
-	blockTimeout = 10 * time.Minute
-	// A kicked session is muted only while it keeps trying. Once it has been
-	// quiet this long, the next attempt from the address is a new session and
-	// is let through, so a disconnect does not turn into a lockout.
-	kickQuietWindow = 30 * time.Second
-)
-
+// entry is one session this layer can actually reach: a transport it can close,
+// and the user that authenticated it.
 type entry struct {
-	user     string
-	lastSeen time.Time
-	closer   io.Closer
+	user   string
+	closer io.Closer
 }
 
-// block mutes one client address. Both kinds lift on quiet rather than on a
-// timer (see Allowed) -- a kick far sooner, because the user behind it is
-// still enabled and must not be locked out.
-type block struct {
-	lastAttempt time.Time
-	kick        bool
-}
-
-// Registry maps a client address to the user it authenticated as. One instance
-// per inbound.
+// Registry is what an inbound knows about who is connected to it. One instance
+// per inbound; it goes away with the inbound.
 //
-// The key is the full source address including the port, never a normalized
-// one: it identifies a single session, and two sessions from one subscriber
-// must not share an entry. (ConnTracker deliberately does the opposite -- it
-// masks IPv6 to a prefix -- because an IP limit counts subscribers, not
-// sessions. Keying this map that way would mute an entire /64 when one client
-// in it is removed.)
+// Neither map is consulted to decide whether a connection may pass -- nothing
+// in this package refuses anything. They decide whose transport to close, and
+// whether a removed user was connected at all.
 type Registry struct {
-	access    sync.Mutex
-	sources   map[string]*entry
-	blocked   map[string]*block
-	lastSweep time.Time
+	access sync.Mutex
+	// sources holds the sessions with a closer, keyed by the source address of
+	// the one connection that carries them. Bounded by live sessions: every
+	// entry is created by Track or BindAndTrack and removed by the Untrack its
+	// inbound defers.
+	sources map[string]*entry
+	// seen holds the users that turned up without a closable session -- the
+	// QUIC ones. Keyed by user rather than by address because no address here
+	// is stable, and bounded by the client count rather than by the session
+	// count, which is what lets it need no expiry. See the package comment.
+	seen map[string]struct{}
 }
 
 func NewRegistry() *Registry {
 	return &Registry{
-		sources:   make(map[string]*entry),
-		blocked:   make(map[string]*block),
-		lastSweep: time.Now(),
+		sources: make(map[string]*entry),
+		seen:    make(map[string]struct{}),
 	}
 }
 
-func (r *Registry) load(source string) *entry {
-	e, loaded := r.sources[source]
-	if !loaded {
-		e = &entry{}
-		r.sources[source] = e
-	}
-	e.lastSeen = time.Now()
-	return e
+// Result is what a removal or a kick managed to do.
+type Result struct {
+	// Cut counts the sessions closed outright.
+	Cut int
+	// Unclosable counts the users left connected because this layer has no
+	// handle on their session. For a QUIC inbound that is the signal to rebuild
+	// the inbound instead; see ErrRestartRequired.
+	Unclosable int
 }
 
-// Bind records which user the session at source authenticated as. Called for
-// every connection the session opens, which doubles as a liveness ping.
+// RestartRequired is what an inbound whose sessions it cannot close returns
+// from UpdateUsers: nil when the removal was carried out in full, and
+// ErrRestartRequired when a removed user is still connected by a session that
+// only rebuilding the inbound will end.
+//
+// Only the QUIC inbounds call this. anytls and the mux protocols hold the
+// transport of every session they register -- see the notes on their own
+// CloseUsers calls.
+func (r Result) RestartRequired() error {
+	if r.Unclosable > 0 {
+		return ErrRestartRequired
+	}
+	return nil
+}
+
+// Bind records that user is connected. If the connection belongs to a session
+// something already tracked (anytls registers its transport in NewConnection
+// before any stream is routed), the user is attached to that session so it can
+// be closed by name. Otherwise there is no session to attach to and the user
+// goes into the seen set -- which is the QUIC path.
 func (r *Registry) Bind(user string, source string) {
-	if source == "" {
+	if user == "" {
 		return
 	}
 	r.access.Lock()
 	defer r.access.Unlock()
-	e := r.load(source)
-	if user != "" {
+	if e, tracked := r.sources[source]; tracked {
 		e.user = user
-	}
-	r.sweepLocked(e.lastSeen)
-}
-
-// sweepLocked drops entries nothing will come back for. The QUIC inbounds only
-// ever Bind -- a QUIC session ends without a callback this package could hang
-// Untrack on -- so without this, sources would grow with every session the
-// listener has ever seen. Riding on Bind keeps it to one walk per idleTimeout
-// and needs no cron job of its own.
-func (r *Registry) sweepLocked(now time.Time) {
-	if now.Sub(r.lastSweep) < idleTimeout {
 		return
 	}
-	r.lastSweep = now
-	for source, e := range r.sources {
-		if idleLost(e, now) {
-			delete(r.sources, source)
-			delete(r.blocked, source)
-		}
-	}
-	for source, b := range r.blocked {
-		if now.Sub(b.lastAttempt) > blockTimeout {
-			delete(r.blocked, source)
-		}
-	}
-}
-
-// idleLost reports whether an entry is one nothing will come back for.
-//
-// A tracked session is never that, however long it has been quiet: lastSeen
-// only moves when the session opens another connection, so one carrying a
-// single long-lived stream -- an ssh session, a download, a long poll -- looks
-// idle here while it is perfectly alive. Dropping it would discard the closer,
-// which is the only handle on it there is, and the next removal would then find
-// nothing to cut and let the session run on. Tracked entries are cleaned up by
-// their own Untrack instead, which the inbound defers for exactly that.
-func idleLost(e *entry, now time.Time) bool {
-	return e.closer == nil && now.Sub(e.lastSeen) > idleTimeout
+	r.seen[user] = struct{}{}
 }
 
 // BindAndTrack records the user and the session transport in one go, for a
 // carrier that arrives with both already known.
 //
 // The two must land under a single lock. A CloseUsers that ran in between --
-// seeing the user but not yet the closer -- would file the session as one it
-// cannot close and mute it instead, and a mux carrier is never gated, so the
-// mute would do nothing at all while the session kept being served.
+// seeing the user but not yet the closer -- would put it in the seen set and
+// report it Unclosable, costing a restart that the closer it was about to be
+// given would have made unnecessary.
 func (r *Registry) BindAndTrack(user string, source string, closer io.Closer) {
 	if source == "" {
 		return
@@ -161,11 +165,10 @@ func (r *Registry) BindAndTrack(user string, source string, closer io.Closer) {
 	if closer != nil {
 		e.closer = closer
 	}
-	r.sweepLocked(e.lastSeen)
 }
 
-// Track stores the session transport, for protocols whose session has a closer
-// of its own. Without one the session can only be muted, not closed.
+// Track stores the session transport, for a protocol whose session has a closer
+// of its own but does not know the user yet. The Bind that follows attaches it.
 func (r *Registry) Track(source string, closer io.Closer) {
 	if source == "" {
 		return
@@ -175,6 +178,9 @@ func (r *Registry) Track(source string, closer io.Closer) {
 	r.load(source).closer = closer
 }
 
+// Untrack forgets a session that has ended. This is what keeps sources bounded,
+// and it is why a tracked session never needs to be aged out: its inbound
+// defers this call for exactly as long as the session lives.
 func (r *Registry) Untrack(source string) {
 	if source == "" {
 		return
@@ -182,92 +188,51 @@ func (r *Registry) Untrack(source string) {
 	r.access.Lock()
 	defer r.access.Unlock()
 	delete(r.sources, source)
-	delete(r.blocked, source)
 }
 
-// Allowed reports whether connections from source may still be routed. A
-// session that cannot be closed is muted here instead: nothing it opens is
-// routed any more, so the removed user's traffic stops.
-func (r *Registry) Allowed(source string) bool {
-	if source == "" {
-		return true
+func (r *Registry) load(source string) *entry {
+	e, loaded := r.sources[source]
+	if !loaded {
+		e = &entry{}
+		r.sources[source] = e
 	}
-	r.access.Lock()
-	defer r.access.Unlock()
-	b, blocked := r.blocked[source]
-	if !blocked {
-		return true
-	}
-	now := time.Now()
-	// Both windows are measured from the last attempt, never from when the
-	// block was written. A client that keeps hammering is a session that is
-	// still alive, and a session that is still alive is still authenticated:
-	// letting it back in on a timer would hand a removed user their traffic
-	// back, because the streams it opens afterwards never consult the user
-	// table again. Quiet is the only evidence that a session is really gone.
-	//
-	// A kick lifts quickly because the user is still enabled and must not be
-	// locked out; a removal holds until the session gives up for good.
-	window := blockTimeout
-	if b.kick {
-		window = kickQuietWindow
-	}
-	if now.Sub(b.lastAttempt) > window {
-		delete(r.blocked, source)
-		return true
-	}
-	b.lastAttempt = now
-	// A source being refused is anything but idle. Without this the sweep
-	// would see a stale lastSeen, drop the entry and take the block with it --
-	// lifting the mute by the other road.
-	if e, ok := r.sources[source]; ok {
-		e.lastSeen = now
-	}
-	return false
+	return e
 }
 
-// CloseUsers cuts the sessions of every user not in keep and lifts the block on
-// the sessions of users that are in keep, so re-enabling a user takes effect
-// without waiting for their session to die. Returns the number of sessions cut.
-func (r *Registry) CloseUsers(keep map[string]struct{}) int {
-	now := time.Now()
-
+// CloseUsers cuts the sessions of every user not in keep, and reports the users
+// it could not reach. keep is the user table the inbound has just installed, so
+// anything bound to a name outside it belongs to a user who is gone.
+func (r *Registry) CloseUsers(keep map[string]struct{}) Result {
 	r.access.Lock()
 	var closers []io.Closer
-	cut := 0
+	var result Result
 	for source, e := range r.sources {
-		if idleLost(e, now) {
-			delete(r.sources, source)
-			delete(r.blocked, source)
-			continue
-		}
 		if e.user == "" {
 			continue
 		}
 		if _, ok := keep[e.user]; ok {
-			// Lift a removal: the user is back on the inbound. A kick is a
-			// separate decision an operator just made about a user who was
-			// never removed, so an unrelated save must not undo it.
-			if b, muted := r.blocked[source]; muted && !b.kick {
-				delete(r.blocked, source)
-			}
 			continue
 		}
-		cut++
-		if e.closer != nil {
-			closers = append(closers, e.closer)
-			delete(r.sources, source)
-			delete(r.blocked, source)
+		if e.closer == nil {
+			result.Unclosable++
 			continue
 		}
-		r.blocked[source] = &block{lastAttempt: now}
+		result.Cut++
+		closers = append(closers, e.closer)
+		delete(r.sources, source)
 	}
-	for source, b := range r.blocked {
-		if now.Sub(b.lastAttempt) > blockTimeout {
-			delete(r.blocked, source)
+	for user := range r.seen {
+		if _, ok := keep[user]; ok {
+			continue
 		}
+		result.Unclosable++
+		// Dropped because the user is off the inbound: either the caller is
+		// about to rebuild it, which discards this registry anyway, or it is a
+		// protocol that does not rebuild, where reporting the same departed
+		// user on every later save would be noise. A user who is re-enabled and
+		// connects again is recorded again by Bind.
+		delete(r.seen, user)
 	}
-	r.lastSweep = now
 	r.access.Unlock()
 
 	// Outside the lock: closing a tracked session runs the inbound's own close
@@ -275,48 +240,45 @@ func (r *Registry) CloseUsers(keep map[string]struct{}) int {
 	for _, closer := range closers {
 		_ = closer.Close()
 	}
-	return cut
+	return result
 }
 
-// KickUserSessions disconnects a user who is still enabled. A session with a
-// closer is cut outright; one without is muted, which is the only way to stop a
-// QUIC session that the protocol gives us no handle on. The mute lifts as soon
-// as that session stops trying, so the client reconnects on its own.
-func (r *Registry) KickUserSessions(user string) int {
+// KickUserSessions disconnects a user who is still enabled -- an operator
+// action, not a revocation. Only a session with a closer can be cut; a user who
+// is merely known to be connected is reported instead, and it is the caller's
+// business whether disconnecting one user is worth restarting the inbound
+// everyone else is on.
+func (r *Registry) KickUserSessions(user string) Result {
 	if user == "" {
-		return 0
+		return Result{}
 	}
-	now := time.Now()
 
 	r.access.Lock()
 	var closers []io.Closer
-	kicked := 0
+	var result Result
 	for source, e := range r.sources {
 		if e.user != user {
 			continue
 		}
-		kicked++
-		if e.closer != nil {
-			delete(r.sources, source)
-			delete(r.blocked, source)
-			closers = append(closers, e.closer)
+		if e.closer == nil {
+			result.Unclosable++
 			continue
 		}
-		// A removal already standing is the stricter of the two and must not be
-		// downgraded: that user is gone from the inbound, while a kick assumes
-		// they are still entitled to reconnect once they stop hammering.
-		if existing, muted := r.blocked[source]; muted && !existing.kick {
-			existing.lastAttempt = now
-			continue
-		}
-		r.blocked[source] = &block{lastAttempt: now, kick: true}
+		result.Cut++
+		closers = append(closers, e.closer)
+		delete(r.sources, source)
+	}
+	// Left in the set: this user is still on the inbound and may still be
+	// connected, so a later removal has to report them again.
+	if _, ok := r.seen[user]; ok {
+		result.Unclosable++
 	}
 	r.access.Unlock()
 
 	for _, closer := range closers {
 		_ = closer.Close()
 	}
-	return kicked
+	return result
 }
 
 // KeepSet turns the user-name list an inbound just installed into the set
@@ -330,14 +292,13 @@ func KeepSet(names []string) map[string]struct{} {
 	return keep
 }
 
-// ErrRemoved is reported to the close handler of a connection that a muted
-// session tried to open.
-var ErrRemoved = E.New("user removed from inbound")
-
-// Reject drops a connection opened by a session whose user is gone.
-func Reject(conn io.Closer, onClose N.CloseHandlerFunc) {
-	common.Close(conn)
-	if onClose != nil {
-		onClose(ErrRemoved)
-	}
-}
+// ErrRestartRequired reports that a user who was just removed is still
+// connected by a session this layer cannot close, so the only way to disconnect
+// them is to tear the inbound down and build it again.
+//
+// The caller already has that path -- it is the same fallback taken by
+// protocols with no in-place user update at all -- so returning this error is
+// all an inbound has to do. It is not a failure: the user table was swapped
+// successfully, and the caller tells the two apart so that this one is not
+// logged as one.
+var ErrRestartRequired = E.New("removed user is still connected by a session that cannot be cut")

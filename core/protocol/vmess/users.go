@@ -23,6 +23,7 @@ func (h *Inbound) UpdateUsers(users []option.VMessUser) error {
 	if err != nil {
 		return err
 	}
+	// Unclosable is not checked here; see the note in vless/users.go.
 	h.sessions().CloseUsers(usersession.KeepSet(common.Map(users, func(it option.VMessUser) string {
 		return it.Name
 	})))

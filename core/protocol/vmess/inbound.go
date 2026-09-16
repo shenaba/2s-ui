@@ -21,11 +21,10 @@
 //
 //	inbound.router = withUserSessions(inbound.router)
 //
-// which is what lets an already authenticated session be cut, or refused, when
-// its user is removed from the inbound -- swapping the user table alone only
-// decides who may start a new one. That line is the whole of it here;
-// everything it reaches lives in users.go, which the copy check skips. See
-// core/usersession.
+// which is what lets an already authenticated session be reached when its user
+// is removed from the inbound -- swapping the user table alone only decides who
+// may start a new one. That line is the whole of it here; everything it reaches
+// lives in users.go, which the copy check skips. See core/usersession.
 package vmess
 
 import (

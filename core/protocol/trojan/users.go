@@ -22,6 +22,7 @@ func (h *Inbound) UpdateUsers(users []option.TrojanUser) error {
 	if err != nil {
 		return err
 	}
+	// Unclosable is not checked here; see the note in vless/users.go.
 	h.sessions().CloseUsers(usersession.KeepSet(common.Map(users, func(it option.TrojanUser) string {
 		return it.Name
 	})))
@@ -30,11 +31,9 @@ func (h *Inbound) UpdateUsers(users []option.TrojanUser) error {
 
 // withUserSessions installs the session registry in front of the router. Only
 // the multiplex carrier is tracked: every other connection authenticates on its
-// own and is already covered by ConnTracker.
-//
-// Deliberately not a gate: the fallback path routes unauthenticated visitors
-// through this same router, and refusing there would cut off the fallback for
-// whoever happens to share a muted source.
+// own and is already covered by ConnTracker. The fallback path routes
+// unauthenticated visitors through this same router, which is one more reason
+// nothing here may refuse a connection.
 func withUserSessions(router adapter.ConnectionRouterEx) adapter.ConnectionRouterEx {
 	return usersession.WrapRouterEx(router, usersession.TrackMuxCarrier)
 }

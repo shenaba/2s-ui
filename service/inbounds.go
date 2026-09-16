@@ -2,11 +2,13 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 
+	"github.com/shenaba/2s-ui/core/usersession"
 	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/database/model"
 	"github.com/shenaba/2s-ui/logger"
@@ -463,13 +465,22 @@ func (s *InboundService) UpdateInboundsUsers(tx *gorm.DB, ids []uint) error {
 			return err
 		}
 
-		// An in-place update that errors leaves the inbound running with its old
+		// Two different things arrive here as an error, and the restart below
+		// answers both. A real failure leaves the inbound running with its old
 		// user table, so a removed user would stay connected and keep
-		// authenticating. Fall through to the restart rather than returning:
-		// dropping every connection on this inbound is the safe failure.
+		// authenticating -- dropping every connection on the inbound is the
+		// safe failure. ErrRestartRequired is the opposite: the table was
+		// swapped fine, and the inbound is asking to be rebuilt because a user
+		// we just removed holds a session it cannot close (a QUIC one; see
+		// core/usersession). Only the first is something going wrong, so only
+		// the first is logged as such.
 		handled, err := corePtr.UpdateInboundUsers(inboundConfig)
 		if err != nil {
-			logger.Warning("in-place user update failed for inbound ", inbound.Tag, ", restarting it: ", err)
+			if errors.Is(err, usersession.ErrRestartRequired) {
+				logger.Info("restarting inbound ", inbound.Tag, ": ", err)
+			} else {
+				logger.Warning("in-place user update failed for inbound ", inbound.Tag, ", restarting it: ", err)
+			}
 			handled = false
 		}
 		if handled {

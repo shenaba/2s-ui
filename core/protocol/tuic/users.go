@@ -10,10 +10,16 @@ import (
 	"github.com/gofrs/uuid/v5"
 )
 
-// UpdateUsers swaps the user table of a running inbound and shuts out everyone
-// who just left it. Both halves are needed: the table alone only decides who
-// may open a new session, while a client that authenticated before the change
-// keeps opening streams on the one it already has.
+// UpdateUsers swaps the user table of a running inbound and disconnects
+// everyone who just left it. Both halves are needed: the table alone only
+// decides who may open a new session, while a client that authenticated before
+// the change keeps opening streams on the one it already has.
+//
+// The second half is not something this layer can do to a QUIC session, so when
+// a removed user is still connected it reports ErrRestartRequired and the
+// caller rebuilds the inbound instead. That disconnects everyone on it once,
+// which is why it is reported rather than done unconditionally: an update that
+// removes nobody, or removes nobody who is connected, still costs nothing.
 func (h *Inbound) UpdateUsers(users []option.TUICUser) error {
 	userList := make([]string, 0, len(users))
 	userUUIDList := make([][16]byte, 0, len(users))
@@ -31,17 +37,17 @@ func (h *Inbound) UpdateUsers(users []option.TUICUser) error {
 		userPasswordList = append(userPasswordList, user.Password)
 	}
 	h.server.UpdateUsers(userList, userUUIDList, userPasswordList)
-	h.sessions().CloseUsers(usersession.KeepSet(userList))
-	return nil
+	return h.sessions().CloseUsers(usersession.KeepSet(userList)).RestartRequired()
 }
 
 // withUserSessions installs the session registry in front of the router. TUIC
 // authenticates once per QUIC session and every stream after that rides it, so
-// a removed user has to be refused here -- refused rather than cut, because the
-// QUIC session is not something this layer holds a handle on. See
-// core/usersession for why the hook sits on the router.
+// the registry is here to answer one question at removal time: is the user
+// being removed actually connected? It cannot do more than that -- sing-quic
+// hands out neither a handle on the session nor a stable name for it. See
+// core/usersession.
 func withUserSessions(router adapter.ConnectionRouterEx) adapter.ConnectionRouterEx {
-	return usersession.WrapRouterEx(router, usersession.GateAndBind)
+	return usersession.WrapRouterEx(router, usersession.BindOnly)
 }
 
 // sessions reaches the registry withUserSessions installed. The assertion is
