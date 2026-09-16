@@ -2,12 +2,18 @@ package service
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/database/model"
+	"github.com/shenaba/2s-ui/logger"
 	"github.com/shenaba/2s-ui/util"
+
+	"github.com/op/go-logging"
 )
 
 func TestIsNodeOwnedRemark(t *testing.T) {
@@ -268,4 +274,150 @@ func TestClientDiffers(t *testing.T) {
 			t.Error("node without a limit_ip column reported as differing")
 		}
 	})
+}
+
+// Adoption stores a snapshot of the node's inbound and, until issue #196,
+// nothing ever refreshed it: an edit made on the node itself -- the listen port,
+// most visibly -- reached neither this panel's inbounds list nor the "[node] "
+// links it regenerates into the subscription, so the master went on handing out
+// a dead port. What matters about refreshReplicas is that it rewrites the row
+// from the node, keeps the columns adoption deliberately owns, leaves a replica
+// the node no longer lists alone, and writes nothing when nothing moved.
+func TestRefreshReplicasPullsNodeSideEdits(t *testing.T) {
+	logger.InitLogger(logging.CRITICAL)
+
+	// Same global-handle dance as TestExpectedClientsCarriesLimitIp above, and
+	// for the same reason: refreshReplicas reaches for database.GetDB() itself.
+	dir := t.TempDir()
+	if err := database.InitDB(filepath.Join(dir, "replicas.db")); err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	db := database.GetDB()
+	t.Cleanup(func() {
+		if err := database.CloseDBForTest(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	})
+
+	const nodeId = uint(3)
+	nid := nodeId
+	// The snapshot as adoption left it. Both halves carry the old port: Options
+	// is what the inbounds list reads, OutJson is what link generation reads.
+	adopted := model.Inbound{
+		Type: "vless", Tag: "vless-node", NodeId: &nid,
+		Options: json.RawMessage(`{"listen_port":443}`),
+		OutJson: json.RawMessage(`{"server":"node.example","server_port":443}`),
+		Addrs:   json.RawMessage(`[]`),
+	}
+	if err := db.Create(&adopted).Error; err != nil {
+		t.Fatalf("seed replica: %v", err)
+	}
+	// A replica the node no longer lists — renamed there, or deleted. Clients
+	// point their inbounds array at this row, so it must survive untouched.
+	orphan := model.Inbound{
+		Type: "trojan", Tag: "gone-from-node", NodeId: &nid,
+		Options: json.RawMessage(`{"listen_port":8080}`),
+	}
+	if err := db.Create(&orphan).Error; err != nil {
+		t.Fatalf("seed orphan replica: %v", err)
+	}
+
+	var queried []string
+	node := &model.Node{Id: nodeId, Name: "tokyo", Enable: true}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/app/apiv2/inbounds" {
+			t.Errorf("unexpected node request: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		queried = append(queried, r.URL.Query().Get("id"))
+		// The node's panel shape (MarshalFull), with the port now moved and a
+		// tls_id of its own that adoption drops on this side.
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"obj":{"inbounds":[
+			{"id":9,"type":"vless","tag":"vless-node","tls_id":4,"addrs":[],
+			 "out_json":{"server":"node.example","server_port":8443},
+			 "listen":"::","listen_port":8443}]}}`))
+	}))
+	defer srv.Close()
+	node.BaseUrl = srv.URL
+
+	var svc NodeSyncService
+	// "gone-from-node" is absent from the map on purpose — that is what a rename
+	// or delete on the node side looks like from here.
+	tagToId := map[string]uint{"vless-node": 9}
+	svc.refreshReplicas(node, srv.Client(), tagToId)
+
+	if len(queried) != 1 || queried[0] != "9" {
+		t.Fatalf("node was asked for id=%v, want exactly the one adopted tag", queried)
+	}
+
+	var got model.Inbound
+	if err := db.Model(model.Inbound{}).Where("id = ?", adopted.Id).Find(&got).Error; err != nil {
+		t.Fatalf("reload replica: %v", err)
+	}
+	var opts map[string]interface{}
+	if err := json.Unmarshal(got.Options, &opts); err != nil {
+		t.Fatalf("unmarshal refreshed options: %v", err)
+	}
+	if port, _ := util.AsInt64(opts["listen_port"]); port != 8443 {
+		t.Errorf("options listen_port = %v, want the node's 8443", opts["listen_port"])
+	}
+	// Panel-only keys must stay out of Options — the same contract adoption has.
+	for _, k := range []string{"id", "tls_id", "out_json", "addrs", "type", "tag"} {
+		if _, leaked := opts[k]; leaked {
+			t.Errorf("refreshed options leaked the panel-only key %q", k)
+		}
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(got.OutJson, &out); err != nil {
+		t.Fatalf("unmarshal refreshed out_json: %v", err)
+	}
+	if port, _ := util.AsInt64(out["server_port"]); port != 8443 {
+		t.Errorf("out_json server_port = %v, want the node's 8443", out["server_port"])
+	}
+	// The columns this panel owns, not the node: TLS terminates on the node so
+	// adoption drops its tls_id, and node_id is what marks the row a replica.
+	if got.TlsId != 0 {
+		t.Errorf("tls_id = %d, want the node's own left behind", got.TlsId)
+	}
+	if got.NodeId == nil || *got.NodeId != nodeId {
+		t.Errorf("node_id = %v, want it preserved as %d", got.NodeId, nodeId)
+	}
+
+	// The half users actually feel: the subscription link now names the new port.
+	links := genNodeReplicaLinks(&got, &model.Client{
+		Name: "u1", Config: json.RawMessage(`{"vless":{"uuid":"uuid-1"}}`),
+	})
+	if len(links) != 1 || !strings.Contains(links[0], ":8443") {
+		t.Errorf("regenerated links = %v, want one naming port 8443", links)
+	}
+
+	var stillThere model.Inbound
+	if err := db.Model(model.Inbound{}).Where("id = ?", orphan.Id).Find(&stillThere).Error; err != nil {
+		t.Fatalf("reload orphan replica: %v", err)
+	}
+	if stillThere.Tag != "gone-from-node" || !jsonEqual(stillThere.Options, json.RawMessage(`{"listen_port":8080}`)) {
+		t.Errorf("replica absent from the node was modified: %+v", stillThere)
+	}
+
+	// One audit row for the one row that moved.
+	var changes int64
+	if err := db.Model(model.Changes{}).Count(&changes).Error; err != nil {
+		t.Fatalf("count changes: %v", err)
+	}
+	if changes != 1 {
+		t.Fatalf("changes rows = %d after the first refresh, want 1", changes)
+	}
+
+	// Idempotence is load-bearing, not tidiness: this runs on the 5s heartbeat
+	// and the hourly sweep, and every write costs an unpruned changes row plus a
+	// LastUpdate bump that repaints every open panel.
+	svc.refreshReplicas(node, srv.Client(), tagToId)
+	if err := db.Model(model.Changes{}).Count(&changes).Error; err != nil {
+		t.Fatalf("count changes: %v", err)
+	}
+	if changes != 1 {
+		t.Errorf("changes rows = %d after an unchanged refresh, want the first 1", changes)
+	}
 }

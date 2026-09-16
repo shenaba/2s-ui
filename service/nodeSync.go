@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -430,6 +431,11 @@ func (s *NodeSyncService) runReconcile(nodeId uint, startGen uint64) error {
 		return err
 	}
 
+	// Pull down what the node now says its adopted inbounds look like, before
+	// anything reads the replica rows: expectedClients maps through their tags
+	// and refreshNodeLinks rebuilds the subscription links from their out_json.
+	s.refreshReplicas(node, client, tagToId)
+
 	expected, err := s.expectedClients(nodeId, tagToId)
 	if err != nil {
 		return err
@@ -735,6 +741,109 @@ func genNodeReplicaLinks(replica *model.Inbound, c *model.Client) (links []strin
 	synthetic.Addrs, _ = json.Marshal(addrs)
 
 	return util.LinkGenerator(c.Config, &synthetic, server, c.Remark)
+}
+
+// refreshReplicas re-pulls the node's own definition of every inbound this
+// panel has adopted and rewrites the replica row when it moved. Adoption stores
+// a snapshot (buildReplicaInbound) and nothing used to refresh it, so a port,
+// TLS or transport change made on the node reached neither the inbounds list
+// nor -- the half users actually feel -- the "[node] " links refreshNodeLinks
+// regenerates from out_json (issue #196). It therefore has to run BEFORE that
+// refresh, or the links would be rebuilt from the snapshot it just replaced.
+//
+// Keyed by tag, the identity the rest of reconcile already uses. A replica whose
+// tag is absent from the node is left alone rather than deleted: that row is what
+// every client's inbounds array points at, and dropping it would unassign them
+// all -- from a node that may simply have renamed the tag.
+//
+// Failures only warn. The stale snapshot is what this panel served until now, so
+// keeping it beats refusing to push clients over a node that answered oddly.
+func (s *NodeSyncService) refreshReplicas(node *model.Node, client *http.Client, tagToId map[string]uint) {
+	db := database.GetDB()
+
+	var replicas []model.Inbound
+	if err := db.Model(model.Inbound{}).Where("node_id = ?", node.Id).Find(&replicas).Error; err != nil {
+		logger.Warning("reconcile: load replicas for refresh: ", err)
+		return
+	}
+	byTag := make(map[string]*model.Inbound, len(replicas))
+	ids := make([]string, 0, len(replicas))
+	for i := range replicas {
+		r := &replicas[i]
+		remoteId, ok := tagToId[r.Tag]
+		if !ok {
+			continue
+		}
+		byTag[r.Tag] = r
+		ids = append(ids, strconv.FormatUint(uint64(remoteId), 10))
+	}
+	if len(ids) == 0 {
+		return
+	}
+
+	// Same two stock apiv2 endpoints AdoptInbounds uses, for the same reason: the
+	// inbounds LIST projection drops out_json/addrs, so the full panel shape has
+	// to be re-fetched by node-local id.
+	obj, err := s.nodeGet(node, client, "inbounds", url.Values{"id": {strings.Join(ids, ",")}})
+	if err != nil {
+		logger.Warning("reconcile: fetch inbounds from node ", node.Name, " for refresh: ", err)
+		return
+	}
+	var payload struct {
+		Inbounds []json.RawMessage `json:"inbounds"`
+	}
+	if err := json.Unmarshal(obj, &payload); err != nil {
+		logger.Warning("reconcile: unexpected inbounds payload from node ", node.Name)
+		return
+	}
+
+	touched := false
+	for _, raw := range payload.Inbounds {
+		fresh, err := buildReplicaInbound(raw, node.Id)
+		if err != nil {
+			logger.Warning("reconcile: parse inbound from node ", node.Name, ": ", err)
+			continue
+		}
+		cur, ok := byTag[fresh.Tag]
+		if !ok {
+			continue
+		}
+		// Byte equality is sound here, not a shortcut: both sides are the output
+		// of buildReplicaInbound's MarshalIndent over a decoded map, and Go sorts
+		// map keys, so identical node state re-encodes to identical bytes. It also
+		// gets nil == nil right, which jsonEqual (Unmarshal on empty input) does not.
+		if fresh.Type == cur.Type &&
+			bytes.Equal(fresh.Options, cur.Options) &&
+			bytes.Equal(fresh.OutJson, cur.OutJson) &&
+			bytes.Equal(fresh.Addrs, cur.Addrs) {
+			continue
+		}
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			// Column map, not Save: tls_id and node_id are this panel's to keep
+			// (adoption drops the node's tls_id on purpose) and must not be
+			// rewritten from the node's shape.
+			if err := tx.Model(model.Inbound{}).Where("id = ?", cur.Id).Updates(map[string]interface{}{
+				"type":     fresh.Type,
+				"options":  fresh.Options,
+				"out_json": fresh.OutJson,
+				"addrs":    fresh.Addrs,
+			}).Error; err != nil {
+				return err
+			}
+			return tx.Create(&model.Changes{
+				DateTime: time.Now().Unix(), Actor: "NodeSync", Key: "inbounds", Action: "edit",
+				Obj: json.RawMessage(mustJSON(map[string]interface{}{"tag": fresh.Tag, "node": node.Name})),
+			}).Error
+		}); err != nil {
+			logger.Warning("reconcile: refresh replica ", fresh.Tag, ": ", err)
+			continue
+		}
+		touched = true
+	}
+
+	if touched {
+		SetLastUpdate(time.Now().Unix())
+	}
 }
 
 // refreshNodeLinks re-derives the "[node] " external links for every master
