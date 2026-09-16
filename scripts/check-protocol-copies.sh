@@ -32,28 +32,39 @@ echo "comparing core/protocol/ against sing-box $VERSION"
 LOCAL_ONLY="users.go"
 
 # Lines each copy is expected to differ by, beyond the shared header comment,
-# keyed by "<protocol>/<file>".
+# keyed by "<protocol>/<file>". These are not a tolerance: each is the exact
+# size of changes we made on purpose, so a bump that alters the file anywhere
+# else still shows up. Two changes make them up.
 #
-# The six user-carrying protocols key their service by user name rather than by
-# list position (Service[string], not Service[int]) -- see the header of any of
-# those files. That patch is what these counts are: they are not a tolerance,
-# they are the exact size of a change we made on purpose, so a bump that alters
-# the file elsewhere still shows up. anytls has no user table and stays verbatim.
+# 1. The six user-carrying protocols key their service by user name rather than
+#    by list position (Service[string], not Service[int]) -- see the header of
+#    any of those files. vmess also carries 2 lines of import alias, since its
+#    own package is `vmess`. anytls has no user table and is untouched by this.
 #
-# vmess also carries 2 lines of import alias, since its own package is `vmess`.
+# 2. Every copy installs the user-session registry by wrapping its router, which
+#    is one added line, identical in all seven:
 #
-# Re-copying after a sing-box bump will change these. Re-apply the patch, then
-# put the new counts here -- and read the diff first rather than just pasting
-# the number the script printed, which is how a real upstream change gets
-# rubber-stamped into the expected total.
+#      inbound.router = withUserSessions(inbound.router)
+#
+#    Everything that line reaches lives in users.go, which is exempt below. The
+#    hook is a wrapper rather than a field plus a block in each handler exactly
+#    so that these counts stay this small -- see core/usersession. anytls costs
+#    3 instead of 1: its session is held in NewConnection, which the router
+#    never sees, so that one call is redirected through users.go as well.
+#
+# Re-copying after a sing-box bump will change these. Re-apply both changes,
+# then put the new counts here -- and read the diff first rather than just
+# pasting the number the script printed, which is how a real upstream change
+# gets rubber-stamped into the expected total.
 expect_diff() {
   case "$1" in
-    hysteria/inbound.go) echo 28 ;;
-    hysteria2/inbound.go) echo 28 ;;
-    trojan/inbound.go) echo 25 ;;
-    tuic/inbound.go) echo 26 ;;
-    vless/inbound.go) echo 29 ;;
-    vmess/inbound.go) echo 27 ;;
+    anytls/inbound.go) echo 3 ;;
+    hysteria/inbound.go) echo 29 ;;
+    hysteria2/inbound.go) echo 29 ;;
+    trojan/inbound.go) echo 26 ;;
+    tuic/inbound.go) echo 27 ;;
+    vless/inbound.go) echo 30 ;;
+    vmess/inbound.go) echo 28 ;;
     *) echo 0 ;;
   esac
 }

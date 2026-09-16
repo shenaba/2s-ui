@@ -5,7 +5,7 @@
 // tearing the listener down (see core/inbound_users.go).
 //
 // UPGRADING sing-box: re-copy this file from the new tag and re-apply the
-// change below. Nothing here will fail to compile if you forget, it will just
+// changes below. Nothing here will fail to compile if you forget, it will just
 // silently keep running the old implementation.
 //
 // Local change vs sing-box: the service is keyed by user name
@@ -14,6 +14,16 @@
 // UpdateUsers does rewrite it, under live sessions, and a position is not.
 // Deleting a user shifted every later one, which mis-attributed traffic and
 // could index past the end of the name slice outright (upstream #1231).
+//
+// Second local change: one line installs the user-session registry
+//
+//	inbound.router = withUserSessions(inbound.router)
+//
+// which is what lets an already authenticated session be cut, or refused, when
+// its user is removed from the inbound -- swapping the user table alone only
+// decides who may start a new one. That line is the whole of it here;
+// everything it reaches lives in users.go, which the copy check skips. See
+// core/usersession.
 package trojan
 
 import (
@@ -118,6 +128,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if err != nil {
 		return nil, err
 	}
+	inbound.router = withUserSessions(inbound.router)
 	inbound.service = service
 	inbound.listener = listener.New(listener.Options{
 		Context:           ctx,

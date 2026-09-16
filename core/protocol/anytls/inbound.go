@@ -5,10 +5,15 @@
 // tearing the listener down (see core/inbound_users.go).
 //
 // UPGRADING sing-box: re-copy this file from the new tag and re-apply the
-// change below. Nothing here will fail to compile if you forget, it will just
+// changes below. Nothing here will fail to compile if you forget, it will just
 // silently keep running the old implementation.
 //
-// Local change vs sing-box: none, other than the package clause.
+// Local change vs sing-box: two lines, both for the user-session registry.
+// NewInbound wraps the router with it, and NewConnection -- which owns an
+// anytls session for as long as that session lives -- is redirected through
+// newSessionConnection in users.go, so the session can be registered there and
+// closed later. Without it, removing a user only stops new sessions while the
+// one the client already holds keeps being served. See core/usersession.
 package anytls
 
 import (
@@ -54,6 +59,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		router:  uot.NewRouter(router, logger),
 		logger:  logger,
 	}
+	inbound.router = withUserSessions(inbound.router)
 
 	if options.TLS != nil && options.TLS.Enabled {
 		tlsConfig, err := tls.NewServer(ctx, logger, common.PtrValueOrDefault(options.TLS))
@@ -117,7 +123,7 @@ func (h *Inbound) NewConnection(ctx context.Context, conn net.Conn, metadata ada
 		}
 		conn = tlsConn
 	}
-	err := h.service.NewConnection(adapter.WithContext(ctx, &metadata), conn, metadata.Source, onClose)
+	err := h.newSessionConnection(adapter.WithContext(ctx, &metadata), conn, metadata.Source, onClose)
 	if err != nil {
 		N.CloseOnHandshakeFailure(conn, onClose, err)
 		h.logger.ErrorContext(ctx, E.Cause(err, "process connection from ", metadata.Source))

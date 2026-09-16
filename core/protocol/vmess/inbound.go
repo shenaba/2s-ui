@@ -5,7 +5,7 @@
 // tearing the listener down (see core/inbound_users.go).
 //
 // UPGRADING sing-box: re-copy this file from the new tag and re-apply the
-// change below. Nothing here will fail to compile if you forget, it will just
+// changes below. Nothing here will fail to compile if you forget, it will just
 // silently keep running the old implementation.
 //
 // Local change vs sing-box: the service is keyed by user name
@@ -16,6 +16,16 @@
 // could index past the end of the name slice outright (upstream #1231).
 // The sing-vmess import also needs an explicit `vmess` alias, since this
 // file's own package is called vmess too.
+//
+// Second local change: one line installs the user-session registry
+//
+//	inbound.router = withUserSessions(inbound.router)
+//
+// which is what lets an already authenticated session be cut, or refused, when
+// its user is removed from the inbound -- swapping the user table alone only
+// decides who may start a new one. That line is the whole of it here;
+// everything it reaches lives in users.go, which the copy check skips. See
+// core/usersession.
 package vmess
 
 import (
@@ -74,6 +84,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if err != nil {
 		return nil, err
 	}
+	inbound.router = withUserSessions(inbound.router)
 	var serviceOptions []vmess.ServiceOption
 	if timeFunc := ntp.TimeFuncFromContext(ctx); timeFunc != nil {
 		serviceOptions = append(serviceOptions, vmess.ServiceWithTimeFunc(timeFunc))

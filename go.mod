@@ -17,6 +17,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sagernet/sing v0.9.4
 	github.com/sagernet/sing-box v1.14.1
+	github.com/sagernet/sing-mux v0.3.6
 	github.com/sagernet/sing-quic v0.7.0
 	github.com/sagernet/sing-tun v0.9.3
 	github.com/sagernet/sing-vmess v0.2.8
@@ -169,7 +170,6 @@ require (
 	github.com/sagernet/nftables v0.3.0-mod.4 // indirect
 	github.com/sagernet/quic-go v0.61.0-sing-box-mod.7 // indirect
 	github.com/sagernet/sing-cloudflared v0.1.3-0.20260706062323-d9787e794aa3 // indirect
-	github.com/sagernet/sing-mux v0.3.6 // indirect
 	github.com/sagernet/sing-openconnect v0.0.0-20260810065514-53aa8058f8df // indirect
 	github.com/sagernet/sing-openvpn v0.0.0-20260729104525-103eb5fe5eb6 // indirect
 	github.com/sagernet/sing-shadowsocks v0.2.8 // indirect
