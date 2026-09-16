@@ -346,7 +346,13 @@ func TestRefreshReplicasPullsNodeSideEdits(t *testing.T) {
 	// "gone-from-node" is absent from the map on purpose — that is what a rename
 	// or delete on the node side looks like from here.
 	tagToId := map[string]uint{"vless-node": 9}
-	svc.refreshReplicas(node, srv.Client(), tagToId)
+	// The return value is what tells runReconcile to regenerate the links right
+	// away instead of waiting for the refreshNodeLinks past the client push,
+	// which every push error returns before reaching. Getting it wrong strands
+	// the panel showing the new port while the subscription serves the old one.
+	if !svc.refreshReplicas(node, srv.Client(), tagToId) {
+		t.Fatal("refreshReplicas reported no change after the node moved the port")
+	}
 
 	if len(queried) != 1 || queried[0] != "9" {
 		t.Fatalf("node was asked for id=%v, want exactly the one adopted tag", queried)
@@ -413,7 +419,9 @@ func TestRefreshReplicasPullsNodeSideEdits(t *testing.T) {
 	// Idempotence is load-bearing, not tidiness: this runs on the 5s heartbeat
 	// and the hourly sweep, and every write costs an unpruned changes row plus a
 	// LastUpdate bump that repaints every open panel.
-	svc.refreshReplicas(node, srv.Client(), tagToId)
+	if svc.refreshReplicas(node, srv.Client(), tagToId) {
+		t.Error("refreshReplicas reported a change on an unchanged round")
+	}
 	if err := db.Model(model.Changes{}).Count(&changes).Error; err != nil {
 		t.Fatalf("count changes: %v", err)
 	}

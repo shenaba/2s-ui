@@ -432,9 +432,18 @@ func (s *NodeSyncService) runReconcile(nodeId uint, startGen uint64) error {
 	}
 
 	// Pull down what the node now says its adopted inbounds look like, before
-	// anything reads the replica rows: expectedClients maps through their tags
-	// and refreshNodeLinks rebuilds the subscription links from their out_json.
-	s.refreshReplicas(node, client, tagToId)
+	// refreshNodeLinks rebuilds the subscription links from their out_json.
+	//
+	// A replica that moved reaches the links here rather than waiting for the
+	// refreshNodeLinks at the end, because every push below returns on error:
+	// a node that keeps rejecting a save (one duplicate client name fails
+	// trojan's whole UpdateUsers) would otherwise leave the inbounds list
+	// showing the new port while the subscription served the old one, for good.
+	// On the way out that second call finds the links already right and writes
+	// nothing, so the cost is one clients scan on the rare round that moved.
+	if s.refreshReplicas(node, client, tagToId) {
+		s.refreshNodeLinks(node)
+	}
 
 	expected, err := s.expectedClients(nodeId, tagToId)
 	if err != nil {
@@ -750,6 +759,8 @@ func genNodeReplicaLinks(replica *model.Inbound, c *model.Client) (links []strin
 // nor -- the half users actually feel -- the "[node] " links refreshNodeLinks
 // regenerates from out_json (issue #196). It therefore has to run BEFORE that
 // refresh, or the links would be rebuilt from the snapshot it just replaced.
+// It reports whether it wrote anything, so the caller can regenerate the links
+// without waiting for a client push that may never succeed.
 //
 // Keyed by tag, the identity the rest of reconcile already uses. A replica whose
 // tag is absent from the node is left alone rather than deleted: that row is what
@@ -758,13 +769,13 @@ func genNodeReplicaLinks(replica *model.Inbound, c *model.Client) (links []strin
 //
 // Failures only warn. The stale snapshot is what this panel served until now, so
 // keeping it beats refusing to push clients over a node that answered oddly.
-func (s *NodeSyncService) refreshReplicas(node *model.Node, client *http.Client, tagToId map[string]uint) {
+func (s *NodeSyncService) refreshReplicas(node *model.Node, client *http.Client, tagToId map[string]uint) bool {
 	db := database.GetDB()
 
 	var replicas []model.Inbound
 	if err := db.Model(model.Inbound{}).Where("node_id = ?", node.Id).Find(&replicas).Error; err != nil {
 		logger.Warning("reconcile: load replicas for refresh: ", err)
-		return
+		return false
 	}
 	byTag := make(map[string]*model.Inbound, len(replicas))
 	ids := make([]string, 0, len(replicas))
@@ -778,7 +789,7 @@ func (s *NodeSyncService) refreshReplicas(node *model.Node, client *http.Client,
 		ids = append(ids, strconv.FormatUint(uint64(remoteId), 10))
 	}
 	if len(ids) == 0 {
-		return
+		return false
 	}
 
 	// Same two stock apiv2 endpoints AdoptInbounds uses, for the same reason: the
@@ -787,14 +798,14 @@ func (s *NodeSyncService) refreshReplicas(node *model.Node, client *http.Client,
 	obj, err := s.nodeGet(node, client, "inbounds", url.Values{"id": {strings.Join(ids, ",")}})
 	if err != nil {
 		logger.Warning("reconcile: fetch inbounds from node ", node.Name, " for refresh: ", err)
-		return
+		return false
 	}
 	var payload struct {
 		Inbounds []json.RawMessage `json:"inbounds"`
 	}
 	if err := json.Unmarshal(obj, &payload); err != nil {
 		logger.Warning("reconcile: unexpected inbounds payload from node ", node.Name)
-		return
+		return false
 	}
 
 	touched := false
@@ -844,6 +855,7 @@ func (s *NodeSyncService) refreshReplicas(node *model.Node, client *http.Client,
 	if touched {
 		SetLastUpdate(time.Now().Unix())
 	}
+	return touched
 }
 
 // refreshNodeLinks re-derives the "[node] " external links for every master
