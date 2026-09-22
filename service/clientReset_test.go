@@ -62,7 +62,7 @@ func TestResetClientsIgnoresAZeroPeriod(t *testing.T) {
 
 	db := database.GetDB()
 	tx := db.Begin()
-	if _, _, _, err := svc.ResetClients(tx, now); err != nil {
+	if _, _, _, err := svc.ResetClients(tx, now, time.UTC); err != nil {
 		tx.Rollback()
 		t.Fatalf("ResetClients: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestResetClientsDoesNotExpireAZeroPeriodDelayStart(t *testing.T) {
 
 	db := database.GetDB()
 	tx := db.Begin()
-	if _, _, _, err := svc.ResetClients(tx, now); err != nil {
+	if _, _, _, err := svc.ResetClients(tx, now, time.UTC); err != nil {
 		tx.Rollback()
 		t.Fatalf("ResetClients: %v", err)
 	}

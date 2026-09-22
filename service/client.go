@@ -151,6 +151,9 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 				return nil, err
 			}
 		}
+		if err = s.alignNextReset(tx, &client, act == "new", time.Now().Unix(), panelLocation()); err != nil {
+			return nil, err
+		}
 		err = tx.Save(&client).Error
 		if err != nil {
 			return nil, err
@@ -188,11 +191,16 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 		if len(taken) > 0 {
 			return nil, common.NewErrorf("client name %q already exists", taken[0])
 		}
+		loc := panelLocation()
 		for _, client := range clients {
 			if err = setConfigIdentity(client); err != nil {
 				return nil, err
 			}
 			client.CreatedAt = now
+			// isNew, so this reads no rows -- safe to call per client.
+			if err = s.alignNextReset(tx, client, true, now, loc); err != nil {
+				return nil, err
+			}
 			var ids []uint
 			if err = json.Unmarshal(client.Inbounds, &ids); err != nil {
 				return nil, err
@@ -286,6 +294,62 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 			return nil, err
 		}
 		savedIds = clientIds(clients)
+	case "resetpolicy":
+		// The reset schedule for a selection of clients, in one statement.
+		//
+		// Deliberately not folded into editbulk: that path submits the client
+		// list projection, which cannot carry these columns, so
+		// findInboundsChanges restores all of them from the stored row -- the
+		// fields this action exists to change are exactly the ones editbulk
+		// cannot. It also writes one row at a time and regenerates links, which
+		// a schedule change has no reason to touch.
+		var policy struct {
+			Ids             []uint `json:"ids"`
+			AutoReset       bool   `json:"autoReset"`
+			ResetDays       int    `json:"resetDays"`
+			ResetDayOfMonth int    `json:"resetDayOfMonth"`
+		}
+		if err = json.Unmarshal(data, &policy); err != nil {
+			return nil, err
+		}
+		if len(policy.Ids) == 0 {
+			err = common.NewError("no clients selected")
+			return nil, err
+		}
+		if policy.ResetDayOfMonth < 0 || policy.ResetDayOfMonth > 31 {
+			err = common.NewErrorf("reset day of month out of range: %d", policy.ResetDayOfMonth)
+			return nil, err
+		}
+		if policy.ResetDays < 0 {
+			err = common.NewErrorf("reset days cannot be negative: %d", policy.ResetDays)
+			return nil, err
+		}
+		// One boundary for the whole selection: same schedule, same instant.
+		now := time.Now().Unix()
+		next := int64(0)
+		if policy.AutoReset && (policy.ResetDays > 0 || policy.ResetDayOfMonth > 0) {
+			next = nextResetAt(&model.Client{
+				ResetDays:       policy.ResetDays,
+				ResetDayOfMonth: policy.ResetDayOfMonth,
+			}, now, panelLocation())
+		}
+		err = tx.Model(model.Client{}).Where("id IN ?", policy.Ids).
+			UpdateColumns(map[string]interface{}{
+				"auto_reset":         policy.AutoReset,
+				"reset_days":         policy.ResetDays,
+				"reset_day_of_month": policy.ResetDayOfMonth,
+				// A delayed start has no boundary until its first bytes arrive,
+				// and ResetClients only scans rows with delay_start = false --
+				// so writing one here would put a date in the drawer that
+				// nothing ever acts on.
+				"next_reset": gorm.Expr("CASE WHEN delay_start THEN 0 ELSE ? END", next),
+			}).Error
+		if err != nil {
+			return nil, err
+		}
+		// No InboundIds: a schedule change moves no user in or out of an
+		// inbound's table, so there is nothing for the core to reload.
+		savedIds = policy.Ids
 	case "delbulk":
 		var ids []uint
 		err = json.Unmarshal(data, &ids)
@@ -793,6 +857,10 @@ func (s *ClientService) DepleteClients() ([]uint, []string, error) {
 	dt := time.Now().Unix()
 	db := database.GetDB()
 
+	// Read before the transaction opens: a monthly reset boundary is a local
+	// midnight, so ResetClients needs the panel's timezone.
+	loc := panelLocation()
+
 	// This job runs every minute whether or not there is anything to deplete or
 	// reset, so notifying unconditionally is not free: the hub answers with a
 	// full config push and the SPA swaps its whole config object for the new
@@ -831,7 +899,7 @@ func (s *ClientService) DepleteClients() ([]uint, []string, error) {
 	}()
 
 	// Reset clients
-	inboundIds, enableChanged, marked, err = s.ResetClients(tx, dt)
+	inboundIds, enableChanged, marked, err = s.ResetClients(tx, dt, loc)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1032,24 +1100,142 @@ func changeObjName(name string) json.RawMessage {
 	return json.RawMessage(encoded)
 }
 
+// daysInMonth returns the length of the given month. Day zero of the next month
+// is the last day of this one, and Date normalises a 13th month into January of
+// the next year, so December needs no special case.
+func daysInMonth(year int, month time.Month) int {
+	return time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
+}
+
+// nextMonthlyReset returns the first local midnight on day-of-month `dom` that
+// falls strictly after `from`, clamped to the last day of months too short to
+// hold it.
+//
+// The clamp is applied fresh each time, against `dom` rather than against the
+// previous result: clamping 31 to February's 28th and then anchoring on that
+// would make every later boundary the 28th. Recomputed this way, a client on the
+// 31st resets on Feb 28 and then again on Mar 31.
+func nextMonthlyReset(from time.Time, dom int) time.Time {
+	year, month := from.Year(), from.Month()
+	// Twelve would do; the extra turn is for a `dom` beyond every month's
+	// length, which cannot happen through the API but would loop forever.
+	for i := 0; i < 13; i++ {
+		day := dom
+		if last := daysInMonth(year, month); day > last {
+			day = last
+		}
+		t := time.Date(year, month, day, 0, 0, 0, 0, from.Location())
+		if t.After(from) {
+			return t
+		}
+		month++
+		if month > time.December {
+			month = time.January
+			year++
+		}
+	}
+	return from
+}
+
+// nextResetAt is when the client's counters are due to be cleared next, in
+// whichever of the two modes it is configured for.
+func nextResetAt(c *model.Client, dt int64, loc *time.Location) int64 {
+	if c.ResetDayOfMonth > 0 {
+		return nextMonthlyReset(time.Unix(dt, 0).In(loc), c.ResetDayOfMonth).Unix()
+	}
+	return dt + (int64(c.ResetDays) * 86400)
+}
+
+// panelLocation is the configured timezone, or the machine's own if the setting
+// cannot be read. Only the monthly mode consults it, and a timezone lookup is
+// not a reason to fail the write it is part of.
+//
+// The nil check is not defensive padding: the setting is read through the global
+// handle, which unit tests driving this service with their own gorm.DB never
+// set, and gorm dereferences a nil *DB rather than returning an error -- so
+// without it a save in such a test panics instead of failing.
+func panelLocation() *time.Location {
+	if database.GetDB() == nil {
+		return time.Local
+	}
+	var settingService SettingService
+	loc, err := settingService.GetTimeLocation()
+	if err != nil {
+		logger.Warning("get time location failed, falling back to local: ", err)
+		return time.Local
+	}
+	return loc
+}
+
+// alignNextReset recomputes the next boundary when the schedule that produces
+// it has changed, so a new day of the month takes effect now rather than one
+// period late.
+//
+// It deliberately does not fire on a changed ResetDays. The panel shifts
+// NextReset by the difference itself, which is how an operator moves a single
+// period without restarting it, and recomputing here would overrule that
+// silently. A changed day of the month has no such shift to preserve -- the
+// calendar it lands on is the whole point -- and switching auto-reset on has
+// nothing to preserve at all.
+//
+// Zeroing rather than leaving the old boundary when auto-reset is off is not
+// cosmetic: ResetClients scans for `next_reset < now`, so a stale PAST boundary
+// would clear a client's counters on the first tick after it is switched back
+// on, months later.
+func (s *ClientService) alignNextReset(tx *gorm.DB, client *model.Client, isNew bool, dt int64, loc *time.Location) error {
+	if !client.AutoReset || client.DelayStart {
+		// A delayed start has no boundary yet by design: ResetClients sets the
+		// first one when the client's first bytes arrive.
+		client.NextReset = 0
+		return nil
+	}
+	if client.ResetDays <= 0 && client.ResetDayOfMonth <= 0 {
+		// Misconfigured either way, and ResetClients skips such a row on
+		// purpose. Leave whatever came in rather than inventing a boundary.
+		return nil
+	}
+	if isNew {
+		client.NextReset = nextResetAt(client, dt, loc)
+		return nil
+	}
+	var old model.Client
+	if err := tx.Model(model.Client{}).Select("auto_reset", "reset_day_of_month").
+		Where("id = ?", client.Id).First(&old).Error; err != nil {
+		return err
+	}
+	if !old.AutoReset || old.ResetDayOfMonth != client.ResetDayOfMonth {
+		client.NextReset = nextResetAt(client, dt, loc)
+	}
+	return nil
+}
+
 // ResetClients applies the per-client periodic reset. It returns the affected
 // local inbound ids (to hot-restart) and the names it re-enabled, which the
 // caller has to fan out to nodes for the same reason DepleteJob fans out a
 // disable: the node keeps rejecting a paid-up user until it hears otherwise.
-func (s *ClientService) ResetClients(tx *gorm.DB, dt int64) ([]uint, []string, bool, error) {
+//
+// loc is the panel's configured timezone, which only the monthly mode reads: a
+// day-of-month boundary is a local midnight, while a plain N-day period is
+// arithmetic on an absolute timestamp and has no calendar to align to.
+func (s *ClientService) ResetClients(tx *gorm.DB, dt int64, loc *time.Location) ([]uint, []string, bool, error) {
 	var err error
 	var resetClients, allClients []*model.Client
 	var changes []model.Changes
 	var inboundIds []uint
 	var reenabled []string
-	// reset_days is a period, and zero is not one. Every block below computes a
-	// date as dt + reset_days*86400, so at zero the first sets Expiry to right
-	// now (a client dead the instant it sends a byte), and the third sets
-	// NextReset to dt -- which matches again on the very next tick, resetting
-	// the counters every minute so the volume quota is never reached. A row like
-	// that is misconfigured either way; leaving it untouched keeps it visible
-	// rather than quietly breaking it. The panel forms cannot produce one (the
-	// toggle writes 1 and the input has min=1), but apiv2 and older rows can.
+	// A period has to be one of the two: reset_days above zero, or a day of the
+	// month to land on. With neither, the date each block computes collapses to
+	// dt itself -- the first would set Expiry to right now (a client dead the
+	// instant it sends a byte) and the third would set NextReset to dt, which
+	// matches again on the very next tick, clearing the counters every minute so
+	// the volume quota is never reached. A row like that is misconfigured either
+	// way; leaving it untouched keeps it visible rather than quietly breaking it.
+	// The panel forms cannot produce one (the toggle writes 1 and the input has
+	// min=1), but apiv2 and older rows can.
+	//
+	// The first block is the odd one out: it writes Expiry, which is how long
+	// the plan runs from first use, not when the counters clear -- so a day of
+	// the month means nothing to it and reset_days stays its only period.
 	// Set delay start without periodic reset
 	err = tx.Model(model.Client{}).
 		Where("enable = true AND delay_start = true AND auto_reset = false AND reset_days > 0 AND (Up + Down) > 0").Find(&resetClients).Error
@@ -1071,12 +1257,12 @@ func (s *ClientService) ResetClients(tx *gorm.DB, dt int64) ([]uint, []string, b
 
 	// Set delay start with periodic reset
 	err = tx.Model(model.Client{}).
-		Where("enable = true AND delay_start = true AND auto_reset = true AND reset_days > 0 AND (Up + Down) > 0").Find(&resetClients).Error
+		Where("enable = true AND delay_start = true AND auto_reset = true AND (reset_days > 0 OR reset_day_of_month > 0) AND (Up + Down) > 0").Find(&resetClients).Error
 	if err != nil {
 		return nil, nil, false, err
 	}
 	for _, client := range resetClients {
-		client.NextReset = dt + (int64(client.ResetDays) * 86400)
+		client.NextReset = nextResetAt(client, dt, loc)
 		client.DelayStart = false
 		changes = append(changes, model.Changes{
 			DateTime: dt,
@@ -1090,12 +1276,12 @@ func (s *ClientService) ResetClients(tx *gorm.DB, dt int64) ([]uint, []string, b
 
 	// Set periodic reset
 	err = tx.Model(model.Client{}).
-		Where("delay_start = false AND auto_reset = true AND reset_days > 0 AND next_reset < ?", dt).Find(&resetClients).Error
+		Where("delay_start = false AND auto_reset = true AND (reset_days > 0 OR reset_day_of_month > 0) AND next_reset < ?", dt).Find(&resetClients).Error
 	if err != nil {
 		return nil, nil, false, err
 	}
 	for _, client := range resetClients {
-		client.NextReset = dt + (int64(client.ResetDays) * 86400)
+		client.NextReset = nextResetAt(client, dt, loc)
 		client.TotalUp += client.Up
 		client.TotalDown += client.Down
 		client.Up = 0
@@ -1216,6 +1402,7 @@ func (s *ClientService) findInboundsChanges(tx *gorm.DB, client *model.Client, f
 		client.Config = oldClient.Config
 		client.AutoReset = oldClient.AutoReset
 		client.ResetDays = oldClient.ResetDays
+		client.ResetDayOfMonth = oldClient.ResetDayOfMonth
 		client.NextReset = oldClient.NextReset
 		client.DelayStart = oldClient.DelayStart
 	}

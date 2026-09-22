@@ -115,26 +115,62 @@
           <SwitchLabel v-model="autoReset" :label="$t('client.autoReset')" />
         </div>
 
+        <!-- 自动重置开着时这里是重置周期;只开延迟启动时同一个数字是套餐时长,
+             写的是到期日而不是重置边界,所以标签不同 -->
+        <div v-if="client.autoReset" class="grid2" style="margin-bottom: 15px;">
+          <Field :label="$t('client.resetCycle')" :mb="0">
+            <Select v-model="resetMode">
+              <option value="monthly">{{ $t('client.resetCycleMonthly') }}</option>
+              <option value="days">{{ $t('client.resetCycleDays') }}</option>
+            </Select>
+          </Field>
+          <Field
+            :label="resetMode === 'monthly' ? $t('client.resetDayOfMonth') : $t('client.resetDays')"
+            :hint="resetMode === 'monthly' ? $t('client.resetDayOfMonthHint') : ''"
+            :mb="0"
+          >
+            <div style="display: flex; gap: 8px;">
+              <input
+                v-if="resetMode === 'monthly'"
+                class="input mono"
+                type="number"
+                min="1"
+                max="31"
+                v-model.number="resetDayOfMonth"
+              />
+              <input v-else class="input mono" type="number" min="1" v-model.number="resetDays" />
+              <div class="input suffix-box">{{ resetMode === 'monthly' ? $t('date.dayOfMonth') : $t('date.d') }}</div>
+            </div>
+          </Field>
+        </div>
+        <div v-else-if="client.delayStart" class="grid2" style="margin-bottom: 15px;">
+          <Field :label="$t('client.validDays')" :hint="$t('client.validDaysHint')" :mb="0">
+            <div style="display: flex; gap: 8px;">
+              <input class="input mono" type="number" min="1" v-model.number="resetDays" />
+              <div class="input suffix-box">{{ $t('date.d') }}</div>
+            </div>
+          </Field>
+        </div>
+
         <div class="grid2" style="margin-bottom: 15px;">
           <Field :label="$t('ui.ipLimit')" :hint="$t('ui.unlimitedHint')" :mb="0">
             <input class="input mono" type="number" min="0" v-model.number="limitIp" />
           </Field>
-          <Field v-if="client.autoReset || client.delayStart" :label="$t('client.resetDays')" :mb="0">
-            <input class="input mono" type="number" min="1" v-model.number="resetDays" />
+          <Field
+            v-if="!isNew && client.autoReset && !client.delayStart"
+            :label="$t('client.nextReset')"
+            :hint="$t('client.nextResetHint')"
+            :mb="0"
+          >
+            <DateTimeInput v-model="nextReset" />
           </Field>
         </div>
 
         <template v-if="!isNew && client.autoReset">
           <hr class="form-divider" />
-          <div class="grid2">
-            <div>
-              <div style="font-size: 11px; color: var(--text-3); font-weight: 600; margin-bottom: 3px;">{{ $t('client.nextReset') }}</div>
-              <div class="mono" dir="ltr" style="font-size: 13px; font-weight: 600;">{{ nextResetFormatted }}</div>
-            </div>
-            <div>
-              <div style="font-size: 11px; color: var(--text-3); font-weight: 600; margin-bottom: 3px;">{{ $t('main.stats.totalUsage') }}</div>
-              <div class="mono" dir="ltr" style="font-size: 13px; font-weight: 600;">↑ {{ totalUp }} / ↓ {{ totalDown }}</div>
-            </div>
+          <div>
+            <div style="font-size: 11px; color: var(--text-3); font-weight: 600; margin-bottom: 3px;">{{ $t('main.stats.totalUsage') }}</div>
+            <div class="mono" dir="ltr" style="font-size: 13px; font-weight: 600;">↑ {{ totalUp }} / ↓ {{ totalDown }}</div>
           </div>
         </template>
       </div>
@@ -263,7 +299,6 @@ import { useI18n } from 'vue-i18n'
 import Data from '@/store/modules/data'
 import { Client, Link, createClient, randomConfigs, shuffleConfigs, updateConfigs } from '@/types/clients'
 import { HumanReadable } from '@/plugins/utils'
-import { intlLocale } from '@/locales'
 import Drawer from '@/components/ui/Drawer.vue'
 import Tabs from '@/components/ui/Tabs.vue'
 import Field from '@/components/ui/Field.vue'
@@ -276,6 +311,7 @@ import SwitchLabel from '@/components/ui/SwitchLabel.vue'
 import SectionLabel from '@/components/ui/SectionLabel.vue'
 import KeyInput from '@/components/ui/KeyInput.vue'
 import DateTimeInput from '@/components/ui/DateTimeInput.vue'
+import Select from '@/components/ui/Select.vue'
 import BarMini from '@/components/charts/BarMini.vue'
 import IconBtn from '@/components/ui/IconBtn.vue'
 import { copyToClipboard } from '@/plugins/clipboard'
@@ -402,7 +438,8 @@ const delayStart = computed({
   get: () => client.value.delayStart ?? false,
   set: (v: boolean) => {
     client.value.delayStart = v
-    client.value.resetDays = v ? 1 : 0
+    // 月结模式不用 resetDays,清成 0 会被后端当成"没有周期"而跳过
+    if (!client.value.resetDayOfMonth) client.value.resetDays = v ? 1 : 0
     if (v && !autoReset.value) client.value.expiry = 0
   },
 })
@@ -410,8 +447,35 @@ const autoReset = computed({
   get: () => client.value.autoReset ?? false,
   set: (v: boolean) => {
     client.value.autoReset = v
-    client.value.resetDays = v ? 1 : 0
-    if (!v) client.value.nextReset = 0
+    if (!v) {
+      client.value.resetDays = 0
+      client.value.resetDayOfMonth = 0
+      client.value.nextReset = 0
+    } else if (!client.value.resetDays && !client.value.resetDayOfMonth) {
+      client.value.resetDays = 1
+    }
+  },
+})
+const resetMode = computed<'days' | 'monthly'>({
+  get: () => ((client.value.resetDayOfMonth ?? 0) > 0 ? 'monthly' : 'days'),
+  set: (m) => {
+    if (m === 'monthly') {
+      // 默认今天:按购买日结算是最常见的用法,"从今天起每月同一天"
+      client.value.resetDayOfMonth = client.value.resetDayOfMonth || new Date().getDate()
+      client.value.resetDays = 0
+    } else {
+      client.value.resetDayOfMonth = 0
+      client.value.resetDays = client.value.resetDays || 30
+    }
+  },
+})
+const resetDayOfMonth = computed({
+  get: () => client.value.resetDayOfMonth ?? 1,
+  set: (v: number | string | null) => {
+    let n = Math.floor(Number(v))
+    if (!n || n < 1) n = 1
+    if (n > 31) n = 31
+    client.value.resetDayOfMonth = n
   },
 })
 const resetDays = computed({
@@ -419,10 +483,18 @@ const resetDays = computed({
   set: (v: number | string | null) => {
     let n = typeof v === 'number' ? v : Number(v)
     if (!n) n = 1
-    if (client.value.nextReset && client.value.nextReset > 0) {
+    // 只有按天数时才补偿:这是"挪动当前这一期"的手段,而月结的边界由后端
+    // 按日历重算,挪它下一轮就被盖掉
+    if (!client.value.resetDayOfMonth && client.value.nextReset && client.value.nextReset > 0) {
       client.value.nextReset += (n - (client.value.resetDays ?? 0)) * 24 * 60 * 60
     }
     client.value.resetDays = n
+  },
+})
+const nextReset = computed({
+  get: () => client.value.nextReset ?? 0,
+  set: (v: number) => {
+    client.value.nextReset = v
   },
 })
 
@@ -430,11 +502,6 @@ const up = computed(() => HumanReadable.sizeFormat(client.value.up))
 const down = computed(() => HumanReadable.sizeFormat(client.value.down))
 const totalUp = computed(() => HumanReadable.sizeFormat((client.value.totalUp ?? 0) + client.value.up))
 const totalDown = computed(() => HumanReadable.sizeFormat((client.value.totalDown ?? 0) + client.value.down))
-const nextResetFormatted = computed(() => {
-  const ts = client.value.nextReset ?? 0
-  if (ts == 0) return '-'
-  return new Date(ts * 1000).toLocaleString(intlLocale())
-})
 const percent = computed(() =>
   client.value.volume > 0 ? Math.round(((client.value.up + client.value.down) * 100) / client.value.volume) : 0,
 )

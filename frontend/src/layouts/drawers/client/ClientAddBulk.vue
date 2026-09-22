@@ -69,8 +69,37 @@
       <DateTimeInput v-model="bulkData.expiry" />
     </Field>
 
-    <Field v-if="bulkData.autoReset || bulkData.delayStart" :label="$t('client.resetDays')">
-      <input class="input mono" type="number" min="1" v-model.number="bulkData.resetDays" />
+    <div v-if="bulkData.autoReset" class="grid2" style="margin-bottom: 15px;">
+      <Field :label="$t('client.resetCycle')" :mb="0">
+        <Select v-model="resetMode">
+          <option value="monthly">{{ $t('client.resetCycleMonthly') }}</option>
+          <option value="days">{{ $t('client.resetCycleDays') }}</option>
+        </Select>
+      </Field>
+      <Field
+        :label="resetMode === 'monthly' ? $t('client.resetDayOfMonth') : $t('client.resetDays')"
+        :hint="resetMode === 'monthly' ? $t('client.resetDayOfMonthHint') : ''"
+        :mb="0"
+      >
+        <div style="display: flex; gap: 8px;">
+          <input
+            v-if="resetMode === 'monthly'"
+            class="input mono"
+            type="number"
+            min="1"
+            max="31"
+            v-model.number="bulkData.resetDayOfMonth"
+          />
+          <input v-else class="input mono" type="number" min="1" v-model.number="bulkData.resetDays" />
+          <div class="input suffix-box">{{ resetMode === 'monthly' ? $t('date.dayOfMonth') : $t('date.d') }}</div>
+        </div>
+      </Field>
+    </div>
+    <Field v-else-if="bulkData.delayStart" :label="$t('client.validDays')" :hint="$t('client.validDaysHint')">
+      <div style="display: flex; gap: 8px;">
+        <input class="input mono" type="number" min="1" v-model.number="bulkData.resetDays" />
+        <div class="input suffix-box">{{ $t('date.d') }}</div>
+      </div>
     </Field>
 
     <Field :label="$t('client.inboundTags')">
@@ -112,6 +141,7 @@ import Chip from '@/components/ui/Chip.vue'
 import Check from '@/components/ui/Check.vue'
 import SwitchLabel from '@/components/ui/SwitchLabel.vue'
 import DateTimeInput from '@/components/ui/DateTimeInput.vue'
+import Select from '@/components/ui/Select.vue'
 
 const props = defineProps<{
   visible: boolean
@@ -138,8 +168,23 @@ const bulkData = ref({
   delayStart: false,
   autoReset: false,
   resetDays: 0,
+  resetDayOfMonth: 0,
 })
 const textInput = ref({ name: '', desc: '' })
+
+// 和抽屉里同一套:两种周期共用一个数字输入,谁有值谁决定模式
+const resetMode = computed<'days' | 'monthly'>({
+  get: () => (bulkData.value.resetDayOfMonth > 0 ? 'monthly' : 'days'),
+  set: (m) => {
+    if (m === 'monthly') {
+      bulkData.value.resetDayOfMonth = bulkData.value.resetDayOfMonth || new Date().getDate()
+      bulkData.value.resetDays = 0
+    } else {
+      bulkData.value.resetDayOfMonth = 0
+      bulkData.value.resetDays = bulkData.value.resetDays || 30
+    }
+  },
+})
 
 const patterns = computed(() => ({
   random: { title: t('bulk.random'), value: 'random' },
@@ -188,6 +233,7 @@ const resetData = () => {
     delayStart: false,
     autoReset: false,
     resetDays: 0,
+    resetDayOfMonth: 0,
   }
   textInput.value = { name: '', desc: '' }
 }
@@ -240,6 +286,7 @@ const saveChanges = async () => {
       delayStart: bulkData.value.delayStart,
       autoReset: bulkData.value.autoReset,
       resetDays: bulkData.value.resetDays,
+      resetDayOfMonth: bulkData.value.resetDayOfMonth,
     }))
   }
   // Check duplicate names
