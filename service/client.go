@@ -100,6 +100,9 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 		if err = normalizeClientName(&client); err != nil {
 			return nil, err
 		}
+		if err = validateResetSchedule(&client); err != nil {
+			return nil, err
+		}
 		if act == "new" {
 			defaultClientJSONFields(&client)
 		}
@@ -174,6 +177,9 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 		seen := make(map[string]bool, len(clients))
 		for _, client := range clients {
 			if err = normalizeClientName(client); err != nil {
+				return nil, err
+			}
+			if err = validateResetSchedule(client); err != nil {
 				return nil, err
 			}
 			defaultClientJSONFields(client)
@@ -322,6 +328,18 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 		}
 		if policy.ResetDays < 0 {
 			err = common.NewErrorf("reset days cannot be negative: %d", policy.ResetDays)
+			return nil, err
+		}
+		// Refused rather than stored, unlike a single client save.
+		//
+		// ResetClients deliberately leaves a periodless row alone so a
+		// misconfiguration stays visible instead of being quietly repaired, and
+		// the per-client save keeps writing whatever it is handed for the same
+		// reason. This action has no such history to honour: its only purpose is
+		// to set a schedule, and storing one that ResetClients will skip means
+		// answering a bulk request with a success toast and changing nothing.
+		if policy.AutoReset && policy.ResetDays == 0 && policy.ResetDayOfMonth == 0 {
+			err = common.NewError("auto reset needs a period: set reset days or a day of the month")
 			return nil, err
 		}
 		// One boundary for the whole selection: same schedule, same instant.
@@ -1144,6 +1162,24 @@ func nextResetAt(c *model.Client, dt int64, loc *time.Location) int64 {
 		return nextMonthlyReset(time.Unix(dt, 0).In(loc), c.ResetDayOfMonth).Unix()
 	}
 	return dt + (int64(c.ResetDays) * 86400)
+}
+
+// validateResetSchedule rejects a day of the month the panel cannot represent.
+//
+// Out of range is not dangerous in itself -- nextMonthlyReset clamps per month,
+// so 200 silently means "month end" and nothing loops -- but the drawer's input
+// carries max=31 and would show the stored number unchanged, so the panel and
+// the row disagree about what was configured. The bulk action refuses the same
+// range; without this the two write paths disagreed about a legal day.
+//
+// Deliberately narrower than the bulk action's checks: a period of zero with
+// auto reset on stays writable here, because ResetClients leaves such a row
+// alone on purpose and older rows already carry that combination.
+func validateResetSchedule(c *model.Client) error {
+	if c.ResetDayOfMonth < 0 || c.ResetDayOfMonth > 31 {
+		return common.NewErrorf("reset day of month out of range: %d", c.ResetDayOfMonth)
+	}
+	return nil
 }
 
 // panelLocation is the configured timezone, or the machine's own if the setting

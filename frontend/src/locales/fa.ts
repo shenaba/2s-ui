@@ -133,6 +133,7 @@ export default {
     addbulk: "ایجاد انبوه",
     editbulk: "ویرایش انبوه",
     delbulk: "حذف انبوه",
+    resetpolicy: "زمان‌بندی بازنشانی",
     new: "جدید",
     edit: "ویرایش",
     del: "حذف",

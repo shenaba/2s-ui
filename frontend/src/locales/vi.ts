@@ -133,6 +133,7 @@ export default {
     addbulk: "Thêm Hàng loạt",
     editbulk: "Chỉnh sửa hàng loạt",
     delbulk: "Xóa hàng loạt",
+    resetpolicy: "Lịch đặt lại",
     new: "Mới",
     edit: "Chỉnh sửa",
     del: "Xóa",

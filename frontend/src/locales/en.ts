@@ -135,6 +135,7 @@ export default {
     addbulk: "Add Bulk",
     editbulk: "Edit Bulk",
     delbulk: "Delete Bulk",
+    resetpolicy: "Reset Schedule",
     new: "New",
     edit: "Edit",
     del: "Delete",

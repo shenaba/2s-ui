@@ -133,6 +133,7 @@ export default {
     addbulk: "批量添加",
     editbulk: "批量编辑",
     delbulk: "批量删除",
+    resetpolicy: "重置策略",
     new: "新建",
     edit: "编辑",
     del: "删除",

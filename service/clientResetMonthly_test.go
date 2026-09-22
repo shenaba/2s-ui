@@ -220,6 +220,45 @@ func TestAlignNextReset(t *testing.T) {
 	})
 }
 
+// The per-client save range-checks the day too, or an apiv2 caller could store
+// one the drawer cannot represent -- its input carries max=31 while the field
+// would display whatever was written.
+func TestSaveRejectsOutOfRangeResetDay(t *testing.T) {
+	svc := newResetDB(t)
+	db := database.GetDB()
+
+	for _, c := range []struct {
+		name string
+		dom  int
+		want bool // want an error
+	}{
+		{"200", 200, true},
+		{"negative", -1, true},
+		{"31 is fine", 31, false},
+		{"0 means the N-day mode", 0, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			payload, err := json.Marshal(map[string]interface{}{
+				"name": "probe-" + c.name, "enable": true, "config": map[string]interface{}{},
+				"inbounds": []uint{}, "links": []interface{}{},
+				"autoReset": true, "resetDays": 30, "resetDayOfMonth": c.dom,
+			})
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			tx := db.Begin()
+			_, err = svc.Save(tx, "new", payload, "")
+			tx.Rollback()
+			if c.want && err == nil {
+				t.Errorf("dom=%d: want an error, got none", c.dom)
+			}
+			if !c.want && err != nil {
+				t.Errorf("dom=%d: unexpected error: %v", c.dom, err)
+			}
+		})
+	}
+}
+
 // The bulk schedule change exists because editbulk structurally cannot make it:
 // findInboundsChanges restores every reset column from the stored row.
 func TestSaveResetPolicy(t *testing.T) {
@@ -306,6 +345,11 @@ func TestSaveResetPolicyRejectsBadInput(t *testing.T) {
 		{"day above 31", map[string]interface{}{"ids": []uint{1}, "resetDayOfMonth": 32}},
 		{"negative day", map[string]interface{}{"ids": []uint{1}, "resetDayOfMonth": -1}},
 		{"negative period", map[string]interface{}{"ids": []uint{1}, "resetDays": -5}},
+		// Clearing the number input sends 0 with auto reset still on. Stored,
+		// ResetClients would skip the row -- a bulk request answered with a
+		// success toast that changed nothing.
+		{"auto reset with no period at all", map[string]interface{}{
+			"ids": []uint{1}, "autoReset": true, "resetDays": 0, "resetDayOfMonth": 0}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			payload, err := json.Marshal(c.payload)

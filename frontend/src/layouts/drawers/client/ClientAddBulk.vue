@@ -58,8 +58,8 @@
     </Field>
 
     <div class="grid2" style="margin-bottom: 15px;">
-      <SwitchLabel v-model="bulkData.delayStart" :label="$t('client.delayStart')" />
-      <SwitchLabel v-model="bulkData.autoReset" :label="$t('client.autoReset')" />
+      <SwitchLabel v-model="delayStart" :label="$t('client.delayStart')" />
+      <SwitchLabel v-model="autoReset" :label="$t('client.autoReset')" />
     </div>
 
     <Field
@@ -171,6 +171,33 @@ const bulkData = ref({
   resetDayOfMonth: 0,
 })
 const textInput = ref({ name: '', desc: '' })
+
+// 开关走 computed 而不是裸 v-model:直接绑定时打开自动重置会留下两个周期字段
+// 都是 0 的一行,后端把它当"没有周期"跳过,于是这批客户静默地永远不重置。
+// 关闭时反过来要清干净,否则残留的重置日会被一起写进库
+const autoReset = computed({
+  get: () => bulkData.value.autoReset,
+  set: (v: boolean) => {
+    bulkData.value.autoReset = v
+    if (!v) {
+      bulkData.value.resetDays = 0
+      bulkData.value.resetDayOfMonth = 0
+    } else if (!bulkData.value.resetDays && !bulkData.value.resetDayOfMonth) {
+      bulkData.value.resetDays = 30
+    }
+  },
+})
+// 延迟启动那一支写的是 Expiry,同样要求 reset_days > 0,零值一样会被跳过 —— 
+// 区别是它让客户永远停在 delay_start 状态、到期日永不设置
+const delayStart = computed({
+  get: () => bulkData.value.delayStart,
+  set: (v: boolean) => {
+    bulkData.value.delayStart = v
+    if (v && !bulkData.value.resetDays && !bulkData.value.resetDayOfMonth) {
+      bulkData.value.resetDays = 30
+    }
+  },
+})
 
 // 和抽屉里同一套:两种周期共用一个数字输入,谁有值谁决定模式
 const resetMode = computed<'days' | 'monthly'>({
