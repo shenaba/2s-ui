@@ -297,7 +297,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Data from '@/store/modules/data'
-import { Client, Link, createClient, randomConfigs, shuffleConfigs, updateConfigs } from '@/types/clients'
+import { Client, Link, coerceResetDayOfMonth, coerceResetDays, createClient, randomConfigs, shuffleConfigs, updateConfigs } from '@/types/clients'
 import { HumanReadable } from '@/plugins/utils'
 import Drawer from '@/components/ui/Drawer.vue'
 import Tabs from '@/components/ui/Tabs.vue'
@@ -488,17 +488,13 @@ const resetMode = computed<'days' | 'monthly'>({
 const resetDayOfMonth = computed({
   get: () => client.value.resetDayOfMonth ?? 1,
   set: (v: number | string | null) => {
-    let n = Math.floor(Number(v))
-    if (!n || n < 1) n = 1
-    if (n > 31) n = 31
-    client.value.resetDayOfMonth = n
+    client.value.resetDayOfMonth = coerceResetDayOfMonth(v)
   },
 })
 const resetDays = computed({
   get: () => client.value.resetDays ?? 1,
   set: (v: number | string | null) => {
-    let n = typeof v === 'number' ? v : Number(v)
-    if (!n) n = 1
+    const n = coerceResetDays(v)
     // 只有按天数时才补偿:这是"挪动当前这一期"的手段,而月结的边界由后端
     // 按日历重算,挪它下一轮就被盖掉
     if (!client.value.resetDayOfMonth && client.value.nextReset && client.value.nextReset > 0) {

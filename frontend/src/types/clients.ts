@@ -187,6 +187,21 @@ export function randomConfigs(user: string): Config {
   }
 }
 
+// v-model.number 在 parseFloat 失败时原样返回输入的字符串,所以把一个数字输入框
+// 清空得到的是 "" 而不是 0。这些值会直接进 JSON 提交给 Go 端的 int 字段,空字符串
+// 让整个请求以一条 "cannot unmarshal string into Go struct field" 失败——批量创建
+// 会整批中止。每个绑定点都要经过这里收敛。
+export function coerceResetDays(v: unknown): number {
+  const n = Math.floor(Number(v))
+  return Number.isFinite(n) && n > 0 ? n : 1
+}
+
+export function coerceResetDayOfMonth(v: unknown): number {
+  const n = Math.floor(Number(v))
+  if (!Number.isFinite(n) || n < 1) return 1
+  return n > 31 ? 31 : n
+}
+
 export function createClient<T extends Client>(json?: Partial<T>): Client {
   defaultClient.name = RandomUtil.randomSeq(8)
   const defaultObject: Client = { ...defaultClient, ...(json || {}) }

@@ -360,16 +360,26 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 			// nothing ever acts on.
 			"next_reset": gorm.Expr("CASE WHEN delay_start THEN 0 ELSE ? END", next),
 		}
-		// reset_days is only this action's to set while auto reset is on. On a
-		// delay-start row the same column is the plan length -- ResetClients'
-		// first branch reads it to compute Expiry -- and that branch needs it
-		// above zero. Writing the incoming 0 over it (which is what switching
-		// auto reset off sends) would leave every delayed client in the
-		// selection matching no branch at all: delay_start never cleared,
-		// Expiry never set, so the client never expires. reset_day_of_month
-		// above is safe to clear either way, since that branch does not read it.
+		// reset_days means two different things depending on the row, so the
+		// line is drawn by which row it is, not by what this request is doing.
+		//
+		// On a delay-start row it is the plan length: ResetClients' first branch
+		// computes Expiry from it and needs it above zero. Everywhere else it is
+		// the reset period, which is what this action sets. Writing the incoming
+		// value over a delay-start row leaves it at zero in both directions a
+		// caller can reach -- switching auto reset off sends 0, and so does
+		// picking a day of the month -- and such a row then matches no branch at
+		// all: delay_start never cleared, Expiry never written, the client never
+		// expires. Guarding only the first of those two was not enough, since
+		// setting a monthly day and later switching auto reset off reaches the
+		// same state in two steps.
+		//
+		// The cost is that a delay-start client's period cannot be changed from
+		// here; that edit goes through the client drawer, which knows which of
+		// the two meanings it is showing. reset_day_of_month needs no such care:
+		// the delay-start branch does not read it.
 		if policy.AutoReset {
-			cols["reset_days"] = policy.ResetDays
+			cols["reset_days"] = gorm.Expr("CASE WHEN delay_start THEN reset_days ELSE ? END", policy.ResetDays)
 		}
 		res := tx.Model(model.Client{}).Where("id IN ?", policy.Ids).UpdateColumns(cols)
 		if res.Error != nil {

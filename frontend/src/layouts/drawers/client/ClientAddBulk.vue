@@ -88,16 +88,16 @@
             type="number"
             min="1"
             max="31"
-            v-model.number="bulkData.resetDayOfMonth"
+            v-model.number="resetDayOfMonth"
           />
-          <input v-else class="input mono" type="number" min="1" v-model.number="bulkData.resetDays" />
+          <input v-else class="input mono" type="number" min="1" v-model.number="resetDays" />
           <div class="input suffix-box">{{ resetMode === 'monthly' ? $t('date.dayOfMonth') : $t('date.d') }}</div>
         </div>
       </Field>
     </div>
     <Field v-else-if="bulkData.delayStart" :label="$t('client.validDays')" :hint="$t('client.validDaysHint')">
       <div style="display: flex; gap: 8px;">
-        <input class="input mono" type="number" min="1" v-model.number="bulkData.resetDays" />
+        <input class="input mono" type="number" min="1" v-model.number="resetDays" />
         <div class="input suffix-box">{{ $t('date.d') }}</div>
       </div>
     </Field>
@@ -132,7 +132,7 @@ import { useI18n } from 'vue-i18n'
 import { push } from 'notivue'
 import Data from '@/store/modules/data'
 import RandomUtil from '@/plugins/randomUtil'
-import { Client, createClient, randomConfigs } from '@/types/clients'
+import { Client, coerceResetDayOfMonth, coerceResetDays, createClient, randomConfigs } from '@/types/clients'
 import MDrawer from '@/components/ui/MDrawer.vue'
 import Field from '@/components/ui/Field.vue'
 import Btn from '@/components/ui/Btn.vue'
@@ -205,6 +205,18 @@ const delayStart = computed({
     bulkData.value.delayStart = v
     syncResetPeriod()
   },
+})
+
+// 数字输入不能直接绑到 bulkData 上:v-model.number 在 parseFloat 失败时原样
+// 返回字符串,清空输入框得到的是 "" 而不是 0,提交后 Go 端的 int 字段解析失败,
+// 整批创建带着一条 json 错误中止
+const resetDays = computed({
+  get: () => bulkData.value.resetDays,
+  set: (v: number | string | null) => { bulkData.value.resetDays = coerceResetDays(v) },
+})
+const resetDayOfMonth = computed({
+  get: () => bulkData.value.resetDayOfMonth,
+  set: (v: number | string | null) => { bulkData.value.resetDayOfMonth = coerceResetDayOfMonth(v) },
 })
 
 // 和抽屉里同一套:两种周期共用一个数字输入,谁有值谁决定模式

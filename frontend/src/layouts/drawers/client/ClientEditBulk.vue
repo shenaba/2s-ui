@@ -58,9 +58,9 @@
               type="number"
               min="1"
               max="31"
-              v-model.number="editData.resetDayOfMonth"
+              v-model.number="resetDayOfMonth"
             />
-            <input v-else class="input mono" type="number" min="1" v-model.number="editData.resetDays" />
+            <input v-else class="input mono" type="number" min="1" v-model.number="resetDays" />
             <div class="input suffix-box">{{ resetMode === 'monthly' ? $t('date.dayOfMonth') : $t('date.d') }}</div>
           </div>
         </Field>
@@ -130,7 +130,7 @@ import Select from '@/components/ui/Select.vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Data from '@/store/modules/data'
-import { Client } from '@/types/clients'
+import { Client, coerceResetDayOfMonth, coerceResetDays } from '@/types/clients'
 import MDrawer from '@/components/ui/MDrawer.vue'
 import Field from '@/components/ui/Field.vue'
 import Check from '@/components/ui/Check.vue'
@@ -198,6 +198,16 @@ const inboundItems = computed(() => props.inboundTags.map((it) => {
     online: Data().onlines?.inbound ? Data().onlines.inbound.includes(it.title) : false,
   }
 }))
+
+// 同 ClientAddBulk:清空输入框会留下 "" 而不是 0,直接提交会让后端解析失败
+const resetDays = computed({
+  get: () => editData.value.resetDays,
+  set: (v: number | string | null) => { editData.value.resetDays = coerceResetDays(v) },
+})
+const resetDayOfMonth = computed({
+  get: () => editData.value.resetDayOfMonth,
+  set: (v: number | string | null) => { editData.value.resetDayOfMonth = coerceResetDayOfMonth(v) },
+})
 
 const resetMode = computed<'days' | 'monthly'>({
   get: () => (editData.value.resetDayOfMonth > 0 ? 'monthly' : 'days'),
