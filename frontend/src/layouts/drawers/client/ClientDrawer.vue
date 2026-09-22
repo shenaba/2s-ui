@@ -434,12 +434,32 @@ const limitIp = computed({
     client.value.limitIp = n > 0 ? n : 0
   },
 })
+// 两个开关共用这两个周期字段,所以周期归谁清、谁补只能有一处判断。
+//
+// 延迟启动那一支写的是 Expiry,后端要求 reset_days > 0 才认;自动重置那一支
+// 要 reset_days 或 reset_day_of_month 至少有一个非零。任何一个开关还开着就
+// 必须留下一个非零周期,否则那一行在 ResetClients 里匹配不上任何分支——延迟
+// 启动的客户会永远停在 delay_start、到期日永不写入,也就是永不过期。
+const syncResetPeriod = () => {
+  const c = client.value
+  if (!c.autoReset && !c.delayStart) {
+    c.resetDays = 0
+    c.resetDayOfMonth = 0
+    return
+  }
+  // 只开延迟启动时后端走的是写 Expiry 那一支,它只读 reset_days —— 重置日
+  // 对它没有意义,所以这里不能拿 dom 当"已经有周期了"
+  if (c.delayStart && !c.autoReset) {
+    if (!c.resetDays) c.resetDays = 30
+    return
+  }
+  if (!c.resetDays && !c.resetDayOfMonth) c.resetDays = 30
+}
 const delayStart = computed({
   get: () => client.value.delayStart ?? false,
   set: (v: boolean) => {
     client.value.delayStart = v
-    // 月结模式不用 resetDays,清成 0 会被后端当成"没有周期"而跳过
-    if (!client.value.resetDayOfMonth) client.value.resetDays = v ? 1 : 0
+    syncResetPeriod()
     if (v && !autoReset.value) client.value.expiry = 0
   },
 })
@@ -447,13 +467,9 @@ const autoReset = computed({
   get: () => client.value.autoReset ?? false,
   set: (v: boolean) => {
     client.value.autoReset = v
-    if (!v) {
-      client.value.resetDays = 0
-      client.value.resetDayOfMonth = 0
-      client.value.nextReset = 0
-    } else if (!client.value.resetDays && !client.value.resetDayOfMonth) {
-      client.value.resetDays = 1
-    }
+    // 不重置了,下次重置时间就没有意义;后端 alignNextReset 也会写 0
+    if (!v) client.value.nextReset = 0
+    syncResetPeriod()
   },
 })
 const resetMode = computed<'days' | 'monthly'>({

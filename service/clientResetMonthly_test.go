@@ -332,6 +332,77 @@ func TestSaveResetPolicy(t *testing.T) {
 	}
 }
 
+// Switching auto reset off must not wipe reset_days on a delay-start row: there
+// the same column is the plan length, and ResetClients' first branch needs it
+// above zero to ever write Expiry.
+func TestSaveResetPolicyKeepsDelayStartPlanLength(t *testing.T) {
+	svc := newResetDB(t)
+	db := database.GetDB()
+
+	seedClient(t, &model.Client{Name: "delayed", Enable: true, DelayStart: true, AutoReset: true, ResetDays: 30})
+	seedClient(t, &model.Client{Name: "plain", Enable: true, AutoReset: true, ResetDays: 7})
+
+	var ids []uint
+	for _, name := range []string{"delayed", "plain"} {
+		var c model.Client
+		if err := db.Where("name = ?", name).First(&c).Error; err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		ids = append(ids, c.Id)
+	}
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"ids": ids, "autoReset": false, "resetDays": 0, "resetDayOfMonth": 0,
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	tx := db.Begin()
+	if _, err := svc.Save(tx, "resetpolicy", payload, ""); err != nil {
+		tx.Rollback()
+		t.Fatalf("Save resetpolicy: %v", err)
+	}
+	tx.Commit()
+
+	var delayed, plain model.Client
+	if err := db.Where("name = ?", "delayed").First(&delayed).Error; err != nil {
+		t.Fatalf("read back delayed: %v", err)
+	}
+	if err := db.Where("name = ?", "plain").First(&plain).Error; err != nil {
+		t.Fatalf("read back plain: %v", err)
+	}
+	if delayed.AutoReset || plain.AutoReset {
+		t.Error("auto_reset should be off on both")
+	}
+	if delayed.ResetDays != 30 {
+		t.Errorf("delayed reset_days = %d, want the plan length 30 kept", delayed.ResetDays)
+	}
+	// Nothing to protect on a row that is not delay-start, but the column is
+	// left alone there too -- the action simply stops writing it.
+	if plain.ResetDays != 7 {
+		t.Errorf("plain reset_days = %d, want 7 untouched", plain.ResetDays)
+	}
+}
+
+func TestSaveResetPolicyRejectsIdsThatMatchNothing(t *testing.T) {
+	svc := newResetDB(t)
+	db := database.GetDB()
+	seedClient(t, &model.Client{Name: "a", Enable: true})
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"ids": []uint{9001, 9002}, "autoReset": true, "resetDayOfMonth": 15,
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	tx := db.Begin()
+	_, err = svc.Save(tx, "resetpolicy", payload, "")
+	tx.Rollback()
+	if err == nil {
+		t.Error("want an error when no id matches, got success")
+	}
+}
+
 func TestSaveResetPolicyRejectsBadInput(t *testing.T) {
 	svc := newResetDB(t)
 	db := database.GetDB()

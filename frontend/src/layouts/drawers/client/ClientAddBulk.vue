@@ -172,30 +172,38 @@ const bulkData = ref({
 })
 const textInput = ref({ name: '', desc: '' })
 
-// 开关走 computed 而不是裸 v-model:直接绑定时打开自动重置会留下两个周期字段
-// 都是 0 的一行,后端把它当"没有周期"跳过,于是这批客户静默地永远不重置。
-// 关闭时反过来要清干净,否则残留的重置日会被一起写进库
+// 开关走 computed 而不是裸 v-model,规则和单客户抽屉里的 syncResetPeriod 一样:
+// 两个开关共用同一对周期字段,任一开着就必须留下一个非零周期,都关了才清空。
+// 裸绑定时打开自动重置会留下两个周期都是 0 的一行,后端当"没有周期"跳过,这批
+// 客户静默地永不重置;而关闭时无条件清零又会连带废掉延迟启动那一支——它靠
+// reset_days 写到期日,清成 0 就永不过期
+const syncResetPeriod = () => {
+  const b = bulkData.value
+  if (!b.autoReset && !b.delayStart) {
+    b.resetDays = 0
+    b.resetDayOfMonth = 0
+    return
+  }
+  // 只开延迟启动时后端走的是写 Expiry 那一支,它只读 reset_days —— 重置日
+  // 对它没有意义,所以这里不能拿 dom 当"已经有周期了"
+  if (b.delayStart && !b.autoReset) {
+    if (!b.resetDays) b.resetDays = 30
+    return
+  }
+  if (!b.resetDays && !b.resetDayOfMonth) b.resetDays = 30
+}
 const autoReset = computed({
   get: () => bulkData.value.autoReset,
   set: (v: boolean) => {
     bulkData.value.autoReset = v
-    if (!v) {
-      bulkData.value.resetDays = 0
-      bulkData.value.resetDayOfMonth = 0
-    } else if (!bulkData.value.resetDays && !bulkData.value.resetDayOfMonth) {
-      bulkData.value.resetDays = 30
-    }
+    syncResetPeriod()
   },
 })
-// 延迟启动那一支写的是 Expiry,同样要求 reset_days > 0,零值一样会被跳过 —— 
-// 区别是它让客户永远停在 delay_start 状态、到期日永不设置
 const delayStart = computed({
   get: () => bulkData.value.delayStart,
   set: (v: boolean) => {
     bulkData.value.delayStart = v
-    if (v && !bulkData.value.resetDays && !bulkData.value.resetDayOfMonth) {
-      bulkData.value.resetDays = 30
-    }
+    syncResetPeriod()
   },
 })
 

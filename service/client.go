@@ -351,18 +351,37 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 				ResetDayOfMonth: policy.ResetDayOfMonth,
 			}, now, panelLocation())
 		}
-		err = tx.Model(model.Client{}).Where("id IN ?", policy.Ids).
-			UpdateColumns(map[string]interface{}{
-				"auto_reset":         policy.AutoReset,
-				"reset_days":         policy.ResetDays,
-				"reset_day_of_month": policy.ResetDayOfMonth,
-				// A delayed start has no boundary until its first bytes arrive,
-				// and ResetClients only scans rows with delay_start = false --
-				// so writing one here would put a date in the drawer that
-				// nothing ever acts on.
-				"next_reset": gorm.Expr("CASE WHEN delay_start THEN 0 ELSE ? END", next),
-			}).Error
-		if err != nil {
+		cols := map[string]interface{}{
+			"auto_reset":         policy.AutoReset,
+			"reset_day_of_month": policy.ResetDayOfMonth,
+			// A delayed start has no boundary until its first bytes arrive,
+			// and ResetClients only scans rows with delay_start = false --
+			// so writing one here would put a date in the drawer that
+			// nothing ever acts on.
+			"next_reset": gorm.Expr("CASE WHEN delay_start THEN 0 ELSE ? END", next),
+		}
+		// reset_days is only this action's to set while auto reset is on. On a
+		// delay-start row the same column is the plan length -- ResetClients'
+		// first branch reads it to compute Expiry -- and that branch needs it
+		// above zero. Writing the incoming 0 over it (which is what switching
+		// auto reset off sends) would leave every delayed client in the
+		// selection matching no branch at all: delay_start never cleared,
+		// Expiry never set, so the client never expires. reset_day_of_month
+		// above is safe to clear either way, since that branch does not read it.
+		if policy.AutoReset {
+			cols["reset_days"] = policy.ResetDays
+		}
+		res := tx.Model(model.Client{}).Where("id IN ?", policy.Ids).UpdateColumns(cols)
+		if res.Error != nil {
+			err = res.Error
+			return nil, err
+		}
+		// Zero rows means every id was wrong -- answering "saved" to that is how
+		// an integrator keeps a broken call. Not compared against len(Ids): a
+		// repeated id would match once and make an exact check fail on a request
+		// that did exactly what was asked.
+		if res.RowsAffected == 0 {
+			err = common.NewError("no matching clients")
 			return nil, err
 		}
 		// No InboundIds: a schedule change moves no user in or out of an
