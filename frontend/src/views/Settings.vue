@@ -84,7 +84,7 @@
       <SRow :label="$t('setting.loginBanDuration')" :hint="$t('date.m')">
         <input class="input mono" type="number" min="0" v-model.number="loginBanDuration" />
       </SRow>
-      <SRow :label="$t('setting.trafficAge')" :hint="$t('date.d')">
+      <SRow :label="$t('setting.trafficAge')" :hint="$t('setting.trafficAgeHint')">
         <input class="input mono" type="number" min="0" v-model.number="trafficAge" />
       </SRow>
       <SRow :label="$t('setting.timeLoc')">
