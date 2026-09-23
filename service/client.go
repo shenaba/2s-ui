@@ -369,6 +369,24 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 				ResetDayOfMonth: policy.ResetDayOfMonth,
 			}, now, panelLocation())
 		}
+		// A delayed start has no boundary until its first bytes arrive, and
+		// ResetClients only scans rows with delay_start = false -- so writing
+		// one there would put a date in the drawer that nothing ever acts on.
+		nextReset := gorm.Expr("CASE WHEN delay_start THEN 0 ELSE ? END", next)
+		if policy.AutoReset {
+			// A row already on exactly this schedule keeps its boundary. The
+			// selection is often "everyone" -- to switch auto reset on for the
+			// clients without it -- and re-anchoring the rest to now would move
+			// a client due in two days a whole period out, disabling it for that
+			// long once its quota runs out. The comparison reads the row as it
+			// was before this UPDATE, which is what SQL evaluates SET against.
+			// Monthly boundaries would come out the same anyway; N-day ones are
+			// the ones this protects.
+			nextReset = gorm.Expr(`CASE
+				WHEN delay_start THEN 0
+				WHEN auto_reset AND reset_days = ? AND reset_day_of_month = ? AND next_reset > ? THEN next_reset
+				ELSE ? END`, policy.ResetDays, policy.ResetDayOfMonth, now, next)
+		}
 		// plan_days is absent on purpose: the plan length of a delay-start
 		// client is not a reset schedule and nothing here should touch it.
 		// While the two shared a column this needed a CASE to protect, which is
@@ -377,11 +395,7 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 			"auto_reset":         policy.AutoReset,
 			"reset_days":         policy.ResetDays,
 			"reset_day_of_month": policy.ResetDayOfMonth,
-			// A delayed start has no boundary until its first bytes arrive,
-			// and ResetClients only scans rows with delay_start = false --
-			// so writing one here would put a date in the drawer that
-			// nothing ever acts on.
-			"next_reset": gorm.Expr("CASE WHEN delay_start THEN 0 ELSE ? END", next),
+			"next_reset":         nextReset,
 		}
 		res := tx.Model(model.Client{}).Where("id IN ?", policy.Ids).UpdateColumns(cols)
 		if res.Error != nil {
@@ -1367,21 +1381,25 @@ func panelLocation() *time.Location {
 	return loc
 }
 
-// alignNextReset recomputes the next boundary when the schedule that produces
-// it has changed, so a new day of the month takes effect now rather than one
-// period late.
+// alignNextReset decides NextReset for a client about to be stored: keep the one
+// submitted, or compute one from the schedule.
 //
-// It deliberately does not fire on a changed ResetDays. The panel shifts
-// NextReset by the difference itself, which is how an operator moves a single
-// period without restarting it, and recomputing here would overrule that
-// silently. A changed day of the month has no such shift to preserve -- the
-// calendar it lands on is the whole point -- and switching auto-reset on has
-// nothing to preserve at all.
+// It computes when there is no usable boundary: a new client, a NextReset of 0,
+// a day of the month that changed (the old boundary belongs to the old day), or
+// auto reset just switched on without a future date to start from. Anything
+// else is kept as submitted -- a date the operator typed, a shift the drawer
+// applied for a changed ResetDays (how one period is moved without restarting
+// it), or a date in the past, which is how "reset now" is asked for.
 //
-// Zeroing rather than leaving the old boundary when auto-reset is off is not
-// cosmetic: ResetClients scans for `next_reset < now`, so a stale PAST boundary
-// would clear a client's counters on the first tick after it is switched back
-// on, months later.
+// Zero has to mean "compute", not "keep": with auto reset on, the periodic
+// branch in ResetClients matches `next_reset < now` on its next tick, so a
+// stored 0 clears the client's usage within a minute. The drawer's date field
+// has a clear button that writes exactly that, and shows "unlimited" while it
+// does -- the opposite of what storing it would do.
+//
+// Zeroing rather than leaving the old boundary when auto reset is off is not
+// cosmetic either: a stale PAST boundary would clear a client's counters on
+// the first tick after auto reset is switched back on, months later.
 func (s *ClientService) alignNextReset(tx *gorm.DB, client *model.Client, isNew bool, dt int64, loc *time.Location) error {
 	if !client.AutoReset || client.DelayStart {
 		// A delayed start has no boundary yet by design: ResetClients sets the
@@ -1394,16 +1412,17 @@ func (s *ClientService) alignNextReset(tx *gorm.DB, client *model.Client, isNew 
 		// purpose. Leave whatever came in rather than inventing a boundary.
 		return nil
 	}
-	if isNew {
-		client.NextReset = nextResetAt(client, dt, loc)
-		return nil
+	recompute := client.NextReset <= 0 || (isNew && client.NextReset <= dt)
+	if !recompute && !isNew {
+		var old model.Client
+		if err := tx.Model(model.Client{}).Select("auto_reset", "reset_day_of_month").
+			Where("id = ?", client.Id).First(&old).Error; err != nil {
+			return err
+		}
+		recompute = old.ResetDayOfMonth != client.ResetDayOfMonth ||
+			(!old.AutoReset && client.NextReset <= dt)
 	}
-	var old model.Client
-	if err := tx.Model(model.Client{}).Select("auto_reset", "reset_day_of_month").
-		Where("id = ?", client.Id).First(&old).Error; err != nil {
-		return err
-	}
-	if !old.AutoReset || old.ResetDayOfMonth != client.ResetDayOfMonth {
+	if recompute {
 		client.NextReset = nextResetAt(client, dt, loc)
 	}
 	return nil

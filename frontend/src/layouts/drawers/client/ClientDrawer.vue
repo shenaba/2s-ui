@@ -493,6 +493,7 @@ const resetDays = computed({
     // 按日历重算,挪它下一轮就被盖掉
     if (!client.value.resetDayOfMonth && client.value.nextReset && client.value.nextReset > 0) {
       client.value.nextReset += (n - (client.value.resetDays ?? 0)) * 24 * 60 * 60
+      didEditNextReset.value = true
     }
     client.value.resetDays = n
   },
@@ -501,6 +502,7 @@ const nextReset = computed({
   get: () => client.value.nextReset ?? 0,
   set: (v: number) => {
     client.value.nextReset = v
+    didEditNextReset.value = true
   },
 })
 
@@ -520,6 +522,10 @@ const percentColor = computed(() => {
 // flag is that intent: without it a drawer left open would save counters read
 // minutes ago and roll back everything the stats job recorded meanwhile.
 const didReset = ref(false)
+// nextReset 同理:定时任务每到一个边界就把它往后推,抽屉开着跨过边界再保存,就会把
+// 打开时读到的旧日期写回去,下一分钟再重置一次。只有运营真的改了它(或改天数时
+// 顺带挪了它)才发;没发的话后端保留库里的值
+const didEditNextReset = ref(false)
 const resetUsage = () => {
   client.value.totalUp = (client.value.totalUp ?? 0) + client.value.up
   client.value.totalDown = (client.value.totalDown ?? 0) + client.value.down
@@ -532,6 +538,7 @@ const resetUsage = () => {
 const updateData = async (id: number) => {
   tab.value = 'general'
   didReset.value = false
+  didEditNextReset.value = false
   if (id > 0) {
     loading.value = true
     const newData = await Data().loadClients(id)
@@ -575,6 +582,7 @@ const saveChanges = async () => {
     delete payload.totalUp
     delete payload.totalDown
   }
+  if (!didEditNextReset.value) delete payload.nextReset
   const success = await Data().save('clients', props.id == 0 ? 'new' : 'edit', payload)
   if (success) emit('close')
   loading.value = false

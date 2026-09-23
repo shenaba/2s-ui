@@ -263,3 +263,132 @@ func TestCreateMatrix(t *testing.T) {
 		}
 	}
 }
+
+// The drawer's next-reset field has a clear button that writes 0 and reads
+// "unlimited". Stored as 0 on an auto-reset client, the periodic branch would
+// match on its next tick and clear the usage; 0 has to mean "compute one".
+func TestEditClearedNextResetComputesOne(t *testing.T) {
+	now := time.Now().Unix()
+	for name, shape := range map[string]model.Client{
+		"by days": {AutoReset: true, ResetDays: 30, NextReset: now + 10*86400, Up: 500, Down: 500},
+		"monthly": {AutoReset: true, ResetDayOfMonth: 15, NextReset: now + 10*86400, Up: 500, Down: 500},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc := newResetDB(t)
+			db := database.GetDB()
+			seed := shape
+			seed.Name, seed.Enable = "c", true
+			seedClient(t, &seed)
+			var row model.Client
+			if err := db.Where("name = ?", "c").First(&row).Error; err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			row.NextReset = 0
+			payload, err := json.Marshal(row)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			tx := db.Begin()
+			if _, err := svc.Save(tx, "edit", payload, ""); err != nil {
+				tx.Rollback()
+				t.Fatalf("Save: %v", err)
+			}
+			tx.Commit()
+			tx = db.Begin()
+			if _, _, _, err := svc.ResetClients(tx, time.Now().Unix(), time.UTC); err != nil {
+				tx.Rollback()
+				t.Fatalf("ResetClients: %v", err)
+			}
+			tx.Commit()
+			if err := db.Where("name = ?", "c").First(&row).Error; err != nil {
+				t.Fatalf("read back: %v", err)
+			}
+			if row.NextReset <= time.Now().Unix() {
+				t.Errorf("nextReset = %d, want a future boundary computed from the schedule", row.NextReset)
+			}
+			if row.Up != 500 || row.Down != 500 {
+				t.Errorf("usage cleared by clearing the date field: %d/%d", row.Up, row.Down)
+			}
+		})
+	}
+}
+
+// Switching auto reset on together with a first reset date: the date is the
+// operator's anchor and must be kept, not replaced by now + period.
+func TestEditKeepsAnExplicitFirstReset(t *testing.T) {
+	svc := newResetDB(t)
+	db := database.GetDB()
+	seedClient(t, &model.Client{Name: "c", Enable: true})
+	var row model.Client
+	if err := db.Where("name = ?", "c").First(&row).Error; err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	anchor := time.Now().Unix() + 3*86400
+	row.AutoReset, row.ResetDays, row.NextReset = true, 30, anchor
+	payload, err := json.Marshal(row)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	tx := db.Begin()
+	if _, err := svc.Save(tx, "edit", payload, ""); err != nil {
+		tx.Rollback()
+		t.Fatalf("Save: %v", err)
+	}
+	tx.Commit()
+	if err := db.Where("name = ?", "c").First(&row).Error; err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if row.NextReset != anchor {
+		t.Errorf("nextReset = %d, want the submitted anchor %d", row.NextReset, anchor)
+	}
+}
+
+// Re-applying a schedule in bulk must not re-anchor the rows already on it.
+// The usual selection is "everyone", to switch auto reset on for the rest.
+func TestResetPolicyKeepsTheBoundaryOfAnUnchangedSchedule(t *testing.T) {
+	svc := newResetDB(t)
+	db := database.GetDB()
+	now := time.Now().Unix()
+	dueSoon := now + 2*86400
+	seedClient(t, &model.Client{Name: "same", Enable: true, AutoReset: true, ResetDays: 30, NextReset: dueSoon})
+	seedClient(t, &model.Client{Name: "other-period", Enable: true, AutoReset: true, ResetDays: 7, NextReset: dueSoon})
+	seedClient(t, &model.Client{Name: "off", Enable: true})
+	// Same schedule but no usable boundary: it gets one.
+	seedClient(t, &model.Client{Name: "same-no-boundary", Enable: true, AutoReset: true, ResetDays: 30})
+
+	var ids []uint
+	for _, n := range []string{"same", "other-period", "off", "same-no-boundary"} {
+		var c model.Client
+		if err := db.Where("name = ?", n).First(&c).Error; err != nil {
+			t.Fatalf("read %s: %v", n, err)
+		}
+		ids = append(ids, c.Id)
+	}
+	payload, err := json.Marshal(map[string]interface{}{"ids": ids, "autoReset": true, "resetDays": 30, "resetDayOfMonth": 0})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	tx := db.Begin()
+	if _, err := svc.Save(tx, "resetpolicy", payload, ""); err != nil {
+		tx.Rollback()
+		t.Fatalf("Save resetpolicy: %v", err)
+	}
+	tx.Commit()
+
+	read := func(n string) model.Client {
+		var c model.Client
+		if err := db.Where("name = ?", n).First(&c).Error; err != nil {
+			t.Fatalf("read back %s: %v", n, err)
+		}
+		return c
+	}
+	if c := read("same"); c.NextReset != dueSoon {
+		t.Errorf("same: nextReset moved from %d to %d", dueSoon, c.NextReset)
+	}
+	for _, n := range []string{"other-period", "off", "same-no-boundary"} {
+		c := read(n)
+		if c.NextReset <= now || c.NextReset == dueSoon {
+			t.Errorf("%s: nextReset = %d, want a boundary computed from now", n, c.NextReset)
+		}
+	}
+}
