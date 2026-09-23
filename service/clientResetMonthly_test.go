@@ -137,11 +137,102 @@ func TestResetClientsMonthlyDayWithDelayStart(t *testing.T) {
 	if c.DelayStart {
 		t.Error("delay_start should be cleared once the client has traffic")
 	}
+	// No plan length: the reset clock starts, the expiry is left as set.
+	if c.Expiry != 0 {
+		t.Errorf("expiry = %d, want 0 -- a client with no plan length has no time limit", c.Expiry)
+	}
 	want := at(2026, time.October, 15, 0, 0).Unix()
 	if c.NextReset != want {
 		t.Errorf("next_reset = %s, want %s",
 			time.Unix(c.NextReset, 0).UTC().Format(time.RFC3339),
 			time.Unix(want, 0).UTC().Format(time.RFC3339))
+	}
+}
+
+// Delay start and auto reset are two independent clocks, and both start on
+// first use. This is the combination the old two-block version could not
+// express: with auto reset on, the plan length was ignored, so a "90 days from
+// first use, traffic resets on the 15th" client never expired.
+func TestResetClientsDelayStartRunsBothClocks(t *testing.T) {
+	svc := newResetDB(t)
+	now := at(2026, time.September, 22, 14, 37).Unix()
+
+	seedClient(t, &model.Client{
+		Enable: true, Name: "both",
+		DelayStart: true, PlanDays: 90,
+		AutoReset: true, ResetDayOfMonth: 15,
+		Up: 1, Down: 1,
+	})
+
+	db := database.GetDB()
+	tx := db.Begin()
+	if _, _, _, err := svc.ResetClients(tx, now, time.UTC); err != nil {
+		tx.Rollback()
+		t.Fatalf("ResetClients: %v", err)
+	}
+	tx.Commit()
+
+	var c model.Client
+	if err := db.Where("name = ?", "both").First(&c).Error; err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if want := now + 90*86400; c.Expiry != want {
+		t.Errorf("expiry = %d, want %d (90 days from first use)", c.Expiry, want)
+	}
+	if want := at(2026, time.October, 15, 0, 0).Unix(); c.NextReset != want {
+		t.Errorf("next_reset = %d, want %d (the next 15th)", c.NextReset, want)
+	}
+	if c.DelayStart {
+		t.Error("delay_start should clear on first use")
+	}
+}
+
+// No delay-start row may stay delayed once traffic arrives, whatever else it
+// carries. Each of these shapes used to be able to match neither first-use
+// block -- a fifth review round found two more ways in after four rounds of
+// closing them one by one -- so the property is asserted over all of them at
+// once instead of per path.
+func TestResetClientsNoRowStaysDelayed(t *testing.T) {
+	shapes := []model.Client{
+		{Name: "plan-only", PlanDays: 30},
+		{Name: "nothing-at-all"},
+		{Name: "auto-no-period", AutoReset: true},
+		{Name: "auto-days", AutoReset: true, ResetDays: 30},
+		{Name: "auto-monthly", AutoReset: true, ResetDayOfMonth: 15},
+		{Name: "plan-and-auto", PlanDays: 30, AutoReset: true, ResetDays: 7},
+		// The fifth round's shape: a pre-upgrade delay+auto client (no plan
+		// length after the migration) whose auto reset was switched off.
+		{Name: "was-auto-now-off"},
+	}
+	svc := newResetDB(t)
+	now := at(2026, time.September, 22, 14, 37).Unix()
+	for i := range shapes {
+		c := shapes[i]
+		c.Enable, c.DelayStart, c.Up, c.Down = true, true, 1, 1
+		seedClient(t, &c)
+	}
+
+	db := database.GetDB()
+	tx := db.Begin()
+	if _, _, _, err := svc.ResetClients(tx, now, time.UTC); err != nil {
+		tx.Rollback()
+		t.Fatalf("ResetClients: %v", err)
+	}
+	tx.Commit()
+
+	for _, shape := range shapes {
+		var c model.Client
+		if err := db.Where("name = ?", shape.Name).First(&c).Error; err != nil {
+			t.Fatalf("read back %s: %v", shape.Name, err)
+		}
+		if c.DelayStart {
+			t.Errorf("%s: still delayed after first use", shape.Name)
+		}
+		// And never the failure the old guard existed for: an expiry of
+		// right now, killing the client on its first byte.
+		if c.Expiry == now {
+			t.Errorf("%s: expiry set to the moment of first use", shape.Name)
+		}
 	}
 }
 
@@ -256,6 +347,98 @@ func TestSaveRejectsOutOfRangeResetDay(t *testing.T) {
 				t.Errorf("dom=%d: unexpected error: %v", c.dom, err)
 			}
 		})
+	}
+}
+
+// The request contract moved the plan length from resetDays to planDays. The
+// old shape is what the panel itself sent before the split -- so it is what
+// apiv2 integrations copied, and what a tab left open across the upgrade keeps
+// sending -- and stored untranslated it has no plan length: the client never
+// expires.
+func TestSaveDecodesTheLegacyPlanLength(t *testing.T) {
+	svc := newResetDB(t)
+	db := database.GetDB()
+
+	save := func(name string, body map[string]interface{}) model.Client {
+		t.Helper()
+		body["name"], body["enable"] = name, true
+		body["config"], body["inbounds"], body["links"] = map[string]interface{}{}, []uint{}, []interface{}{}
+		payload, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		tx := db.Begin()
+		if _, err := svc.Save(tx, "new", payload, ""); err != nil {
+			tx.Rollback()
+			t.Fatalf("Save %s: %v", name, err)
+		}
+		tx.Commit()
+		var c model.Client
+		if err := db.Where("name = ?", name).First(&c).Error; err != nil {
+			t.Fatalf("read back %s: %v", name, err)
+		}
+		return c
+	}
+
+	// Old contract, delay start without auto reset: resetDays was the plan.
+	if c := save("legacy", map[string]interface{}{
+		"delayStart": true, "autoReset": false, "resetDays": 30,
+	}); c.PlanDays != 30 || c.ResetDays != 0 {
+		t.Errorf("legacy: planDays=%d resetDays=%d, want 30/0", c.PlanDays, c.ResetDays)
+	}
+	// Old contract with auto reset: resetDays was the period then too, so the
+	// shape already means the same thing and must not be touched.
+	if c := save("legacy-auto", map[string]interface{}{
+		"delayStart": true, "autoReset": true, "resetDays": 30,
+	}); c.PlanDays != 0 || c.ResetDays != 30 {
+		t.Errorf("legacy-auto: planDays=%d resetDays=%d, want 0/30", c.PlanDays, c.ResetDays)
+	}
+	// New contract: a plan length is present, nothing to translate.
+	if c := save("current", map[string]interface{}{
+		"delayStart": true, "autoReset": false, "planDays": 45, "resetDays": 0,
+	}); c.PlanDays != 45 {
+		t.Errorf("current: planDays=%d, want 45", c.PlanDays)
+	}
+}
+
+// Under a plan length the expiry is decided at first use; an absolute one left
+// from before would get the client disabled before it ever connected. With no
+// plan length the absolute expiry is the only time limit there is, and stays.
+func TestSaveClearsExpiryOnlyUnderAPlanLength(t *testing.T) {
+	svc := newResetDB(t)
+	db := database.GetDB()
+	past := time.Now().Unix() - 86400
+
+	for _, c := range []struct {
+		name       string
+		planDays   int
+		wantExpiry int64
+	}{
+		{"with-plan", 30, 0},
+		{"no-plan", 0, past},
+	} {
+		payload, err := json.Marshal(map[string]interface{}{
+			"name": c.name, "enable": true, "config": map[string]interface{}{},
+			"inbounds": []uint{}, "links": []interface{}{},
+			"delayStart": true, "autoReset": true, "resetDays": 30,
+			"planDays": c.planDays, "expiry": past,
+		})
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		tx := db.Begin()
+		if _, err := svc.Save(tx, "new", payload, ""); err != nil {
+			tx.Rollback()
+			t.Fatalf("Save %s: %v", c.name, err)
+		}
+		tx.Commit()
+		var got model.Client
+		if err := db.Where("name = ?", c.name).First(&got).Error; err != nil {
+			t.Fatalf("read back %s: %v", c.name, err)
+		}
+		if got.Expiry != c.wantExpiry {
+			t.Errorf("%s: expiry = %d, want %d", c.name, got.Expiry, c.wantExpiry)
+		}
 	}
 }
 

@@ -100,6 +100,7 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 		if err = normalizeClientName(&client); err != nil {
 			return nil, err
 		}
+		normalizeDelayStart(&client)
 		if err = validateResetSchedule(&client); err != nil {
 			return nil, err
 		}
@@ -179,6 +180,7 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 			if err = normalizeClientName(client); err != nil {
 				return nil, err
 			}
+			normalizeDelayStart(client)
 			if err = validateResetSchedule(client); err != nil {
 				return nil, err
 			}
@@ -1188,6 +1190,37 @@ func nextResetAt(c *model.Client, dt int64, loc *time.Location) int64 {
 // Deliberately narrower than the bulk action's checks: a period of zero with
 // auto reset on stays writable here, because ResetClients leaves such a row
 // alone on purpose and older rows already carry that combination.
+// normalizeDelayStart brings an incoming client into the shape the first-use
+// step in ResetClients expects. Called on every write path that takes a whole
+// client from outside -- new, edit, addbulk -- before validation, so the stored
+// row is always the translated one.
+//
+// The request contract changed when the plan length moved out of reset_days:
+// a delay-start client without auto reset used to carry its plan length there.
+// The panel's own drawer sent exactly that shape before the split, so it is
+// what apiv2 integrations copied from it, and what a panel tab left open
+// across an upgrade keeps sending until it reloads. Stored as-is it has no
+// plan length at all, and the client never expires. Only that combination is
+// translated: with auto reset on, reset_days was the period under the old
+// contract too, so the shape already means the same thing.
+//
+// A plan length also makes any absolute Expiry meaningless until first use,
+// when the plan length replaces it -- and harmful meanwhile, since
+// DepleteClients disables on `expiry < now` and a stale date would disable the
+// client before it ever connected. The drawer has always cleared it for that
+// reason; doing it here holds for every caller.
+func normalizeDelayStart(c *model.Client) {
+	if !c.DelayStart {
+		return
+	}
+	if !c.AutoReset && c.PlanDays == 0 && c.ResetDays > 0 {
+		c.PlanDays, c.ResetDays = c.ResetDays, 0
+	}
+	if c.PlanDays > 0 {
+		c.Expiry = 0
+	}
+}
+
 // maxScheduleDays caps both day counts at roughly a century. The point is not
 // the policy but the arithmetic: nextResetAt computes dt + days*86400 in int64,
 // which wraps negative somewhere above 1e14 days and lands NextReset in the
@@ -1285,21 +1318,37 @@ func (s *ClientService) ResetClients(tx *gorm.DB, dt int64, loc *time.Location) 
 	var changes []model.Changes
 	var inboundIds []uint
 	var reenabled []string
-	// Each block needs a period above zero, or the date it computes collapses to
-	// dt itself -- the first would set Expiry to right now (a client dead the
-	// instant it sends a byte) and the third would set NextReset to dt, which
-	// matches again on the very next tick, clearing the counters every minute so
-	// the volume quota is never reached. A row like that is misconfigured either
-	// way; leaving it untouched keeps it visible rather than quietly breaking it.
-	// The panel forms cannot produce one, but apiv2 and older rows can.
-	// Set delay start without periodic reset
+	// First use. Delay start means "the clocks this client has start on its
+	// first bytes", and that is all it means: whichever are configured start
+	// here -- the plan length becomes an Expiry, auto reset gets its first
+	// boundary -- and delay_start is cleared unconditionally.
+	//
+	// This used to be two blocks keyed on auto_reset, each with its own
+	// preconditions: without auto reset the plan length decided the expiry,
+	// with it the plan length was ignored and Expiry stayed whatever was set.
+	// So switching auto reset either way silently changed what delay start
+	// meant -- on, and a client with a 30-day plan never expired; off, and one
+	// with no plan length matched neither block, so delay_start was never
+	// cleared at all. With no precondition beyond traffic, a row that stays
+	// delayed forever cannot exist.
+	//
+	// A zero plan length is not a misconfiguration here, it is "no plan
+	// length": Expiry is left as set, which is exactly how a delay-start client
+	// with auto reset has always behaved. What must never happen is the old
+	// failure this guard grew out of -- Expiry = dt, a client dead the instant
+	// it sends a byte -- and plan_days > 0 is what rules that out.
 	err = tx.Model(model.Client{}).
-		Where("enable = true AND delay_start = true AND auto_reset = false AND plan_days > 0 AND (Up + Down) > 0").Find(&resetClients).Error
+		Where("enable = true AND delay_start = true AND (Up + Down) > 0").Find(&resetClients).Error
 	if err != nil {
 		return nil, nil, false, err
 	}
 	for _, client := range resetClients {
-		client.Expiry = dt + (int64(client.PlanDays) * 86400)
+		if client.PlanDays > 0 {
+			client.Expiry = dt + (int64(client.PlanDays) * 86400)
+		}
+		if client.AutoReset && (client.ResetDays > 0 || client.ResetDayOfMonth > 0) {
+			client.NextReset = nextResetAt(client, dt, loc)
+		}
 		client.DelayStart = false
 		changes = append(changes, model.Changes{
 			DateTime: dt,
@@ -1311,25 +1360,12 @@ func (s *ClientService) ResetClients(tx *gorm.DB, dt int64, loc *time.Location) 
 	}
 	allClients = append(allClients, resetClients...)
 
-	// Set delay start with periodic reset
-	err = tx.Model(model.Client{}).
-		Where("enable = true AND delay_start = true AND auto_reset = true AND (reset_days > 0 OR reset_day_of_month > 0) AND (Up + Down) > 0").Find(&resetClients).Error
-	if err != nil {
-		return nil, nil, false, err
-	}
-	for _, client := range resetClients {
-		client.NextReset = nextResetAt(client, dt, loc)
-		client.DelayStart = false
-		changes = append(changes, model.Changes{
-			DateTime: dt,
-			Actor:    "ResetJob",
-			Key:      "clients",
-			Action:   "reset",
-			Obj:      changeObjName(client.Name),
-		})
-	}
-	allClients = append(allClients, resetClients...)
-
+	// The periodic block needs a period above zero, or NextReset collapses to
+	// dt and matches again on the very next tick, clearing the counters every
+	// minute so the volume quota is never reached. A row like that is
+	// misconfigured; leaving it untouched keeps it visible rather than quietly
+	// breaking it. The panel forms cannot produce one, but apiv2 and older rows
+	// can.
 	// Set periodic reset
 	err = tx.Model(model.Client{}).
 		Where("delay_start = false AND auto_reset = true AND (reset_days > 0 OR reset_day_of_month > 0) AND next_reset < ?", dt).Find(&resetClients).Error

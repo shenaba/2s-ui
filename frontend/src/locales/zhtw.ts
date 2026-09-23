@@ -429,7 +429,7 @@ export default {
     resetDayOfMonth: "重置日",
     resetDayOfMonthHint: "短月自動落到當月最後一天",
     validDays: "有效天數",
-    validDaysHint: "從首次連線開始計時",
+    validDaysHint: "從首次連線開始計時,0 表示不限時長",
   },
   bulk: {
     resetPolicy: "重置策略",

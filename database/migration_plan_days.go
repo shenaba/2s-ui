@@ -14,14 +14,19 @@ const migratedKeyPlanDays = "migratedPlanDays"
 // reset_days and into its own column.
 //
 // Until now reset_days meant two things depending on the row: the plan length
-// on a client with delay_start on and auto_reset off (ResetClients derives
-// Expiry from it), and the reset period everywhere else. The panel's own reset
-// schedule mode was later allowed to leave reset_days at zero, so every path
-// that cleared a period could silently clear a plan length instead.
+// on a client with delay_start on and auto_reset off (ResetClients derived
+// Expiry from it), and the reset period everywhere else.
 //
-// Only rows in that one combination carry a plan length. A delay-start client
-// that also auto-resets takes its expiry from the Expiry column directly, so
-// its reset_days is a period and stays where it is.
+// Only rows in that one combination carry a plan length, and only they are
+// moved. A delay-start client with auto reset took its expiry from the Expiry
+// column and never from reset_days, so it has no plan length to move -- and
+// must not be given one: the first-use step now applies a plan length whenever
+// one is set, so copying its period across would make a client that has never
+// had a time limit start expiring. plan_days = 0 is what "no plan length"
+// means, and that is exactly what those rows are.
+//
+// plan_days = 0 in the condition keeps a re-run from overwriting a value set
+// since, should the flag ever be lost.
 //
 // Run after AutoMigrate, not from cmd/migration: those repairs assume the
 // pre-AutoMigrate schema, where plan_days does not exist yet.
@@ -37,7 +42,7 @@ func migratePlanDays() error {
 
 	return db.Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(model.Client{}).
-			Where("delay_start = ? AND auto_reset = ? AND reset_days > 0", true, false).
+			Where("delay_start = ? AND auto_reset = ? AND reset_days > 0 AND plan_days = 0", true, false).
 			UpdateColumn("plan_days", gorm.Expr("reset_days"))
 		if res.Error != nil {
 			return res.Error

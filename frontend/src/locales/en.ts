@@ -435,7 +435,7 @@ export default {
     resetDayOfMonth: "Reset Day",
     resetDayOfMonthHint: "Short months fall back to their last day",
     validDays: "Valid Days",
-    validDaysHint: "Counted from the first connection",
+    validDaysHint: "Counted from the first connection; 0 means no time limit",
   },
   bulk: {
     resetPolicy: "Reset schedule",

@@ -87,9 +87,10 @@ type Client struct {
 	DelayStart bool `json:"delayStart" form:"delayStart" gorm:"default:false;not null"`
 	AutoReset  bool `json:"autoReset" form:"autoReset" gorm:"default:false;not null"`
 
-	// How long the plan runs from the client's first bytes, in days. Only the
-	// delay-start-without-auto-reset combination reads it: ResetClients sets
-	// Expiry from it once traffic appears, and nothing else touches it.
+	// How long the plan runs from the client's first bytes, in days; 0 means
+	// the plan has no length of its own and Expiry applies as set. Read once,
+	// by the first-use step in ResetClients, whenever delay_start is on --
+	// with or without auto reset, which is its own independent clock.
 	//
 	// Split out of ResetDays, which used to mean this on such a row and the
 	// reset period on every other one. Sharing a column meant every way of

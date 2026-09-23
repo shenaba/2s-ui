@@ -98,7 +98,7 @@
             </div>
           </Field>
           <Field
-            v-if="!(client.delayStart && !client.autoReset)"
+            v-if="!(client.delayStart && (client.planDays ?? 0) > 0)"
             :label="$t('ui.expiryDate')"
             :hint="$t('ui.noExpiryHint')"
             :mb="0"
@@ -115,8 +115,8 @@
           <SwitchLabel v-model="autoReset" :label="$t('client.autoReset')" />
         </div>
 
-        <!-- 自动重置开着时这里是重置周期;只开延迟启动时同一个数字是套餐时长,
-             写的是到期日而不是重置边界,所以标签不同 -->
+        <!-- 两个开关是两个独立的时钟:自动重置管周期,延迟启动管"从首次连接起多久"。
+             两行各自出现,可以同时开 -->
         <div v-if="client.autoReset" class="grid2" style="margin-bottom: 15px;">
           <Field :label="$t('client.resetCycle')" :mb="0">
             <Select v-model="resetMode">
@@ -143,10 +143,10 @@
             </div>
           </Field>
         </div>
-        <div v-else-if="client.delayStart" class="grid2" style="margin-bottom: 15px;">
+        <div v-if="client.delayStart" class="grid2" style="margin-bottom: 15px;">
           <Field :label="$t('client.validDays')" :hint="$t('client.validDaysHint')" :mb="0">
             <div style="display: flex; gap: 8px;">
-              <input class="input mono" type="number" min="1" v-model.number="planDays" />
+              <input class="input mono" type="number" min="0" v-model.number="planDays" />
               <div class="input suffix-box">{{ $t('date.d') }}</div>
             </div>
           </Field>
@@ -442,7 +442,6 @@ const delayStart = computed({
   set: (v: boolean) => {
     client.value.delayStart = v
     if (v && !client.value.planDays) client.value.planDays = 30
-    if (v && !autoReset.value) client.value.expiry = 0
   },
 })
 const autoReset = computed({
@@ -460,7 +459,7 @@ const autoReset = computed({
   },
 })
 const planDays = computed({
-  get: () => client.value.planDays ?? 1,
+  get: () => client.value.planDays ?? 0,
   set: (v: number | string | null) => {
     client.value.planDays = coercePlanDays(v)
   },
@@ -557,8 +556,9 @@ const saveChanges = async () => {
   const isDuplicateName = Data().checkClientName(props.id, client.value.name)
   if (isDuplicateName) return
 
-  // check if delayStart is true and autoReset is false, set expiry to 0
-  if (client.value.delayStart && !client.value.autoReset) client.value.expiry = 0
+  // 有套餐时长时到期日在首次连接那一刻才算出来,之前留着的旧日期只会让客户在
+  // 连上之前就被停用;套餐时长为 0 时到期日字段照常生效,不能清
+  if (client.value.delayStart && (client.value.planDays ?? 0) > 0) client.value.expiry = 0
 
   loading.value = true
   client.value.config = updateConfigs(clientConfig.value, client.value.name)

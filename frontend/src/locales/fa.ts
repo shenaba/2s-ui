@@ -429,7 +429,7 @@ export default {
     resetDayOfMonth: "روز بازنشانی",
     resetDayOfMonthHint: "در ماه‌های کوتاه به آخرین روز ماه می‌افتد",
     validDays: "روزهای اعتبار",
-    validDaysHint: "از نخستین اتصال شمرده می‌شود",
+    validDaysHint: "از نخستین اتصال شمرده می‌شود؛ ۰ یعنی بدون محدودیت زمانی",
   },
   bulk: {
     resetPolicy: "زمان‌بندی بازنشانی",

@@ -29,13 +29,17 @@ func TestMigratePlanDays(t *testing.T) {
 		// The one shape that carries a plan length.
 		{Name: "plan", DelayStart: true, AutoReset: false, ResetDays: 30},
 		// Delay start WITH auto reset: reset_days is a period here, and expiry
-		// comes from the Expiry column, so nothing should move.
+		// comes from the Expiry column. It must NOT gain a plan length: the
+		// first-use step applies one whenever it is set, so copying the period
+		// across would make a client that never had a time limit start expiring.
 		{Name: "delayed-periodic", DelayStart: true, AutoReset: true, ResetDays: 7},
 		// No delay start at all: plainly a period.
 		{Name: "periodic", DelayStart: false, AutoReset: true, ResetDays: 14},
 		// Zero is not a plan length; leaving it alone keeps a misconfigured row
 		// visible rather than inventing a schedule for it.
 		{Name: "zero", DelayStart: true, AutoReset: false, ResetDays: 0},
+		// Set since the split: a re-run must not overwrite it with reset_days.
+		{Name: "already-set", DelayStart: true, AutoReset: false, ResetDays: 30, PlanDays: 45},
 	}
 	for _, c := range rows {
 		c.Config = []byte(`{}`)
@@ -50,7 +54,7 @@ func TestMigratePlanDays(t *testing.T) {
 		t.Fatalf("migratePlanDays: %v", err)
 	}
 
-	want := map[string]int{"plan": 30, "delayed-periodic": 0, "periodic": 0, "zero": 0}
+	want := map[string]int{"plan": 30, "delayed-periodic": 0, "periodic": 0, "zero": 0, "already-set": 45}
 	for name, wantPlan := range want {
 		var c model.Client
 		if err := db.Where("name = ?", name).First(&c).Error; err != nil {

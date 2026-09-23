@@ -193,8 +193,12 @@ export function randomConfigs(user: string): Config {
 // 清空得到的是 "" 而不是 0。这些值会直接进 JSON 提交给 Go 端的 int 字段,空字符串
 // 让整个请求以一条 "cannot unmarshal string into Go struct field" 失败——批量创建
 // 会整批中止。每个绑定点都要经过这里收敛。
-// 同一个收敛规则给套餐时长用:它和重置周期是两列,但输入框的坑一样
-export const coercePlanDays = (v: unknown): number => coerceResetDays(v)
+// 套餐时长和重置周期不一样:0 是合法值,意思是"不限时长"(到期日照常由到期日
+// 字段决定),所以只收敛成非负整数,不像周期那样把 0 抬到 1
+export function coercePlanDays(v: unknown): number {
+  const n = Math.floor(Number(v))
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
 
 export function coerceResetDays(v: unknown): number {
   const n = Math.floor(Number(v))

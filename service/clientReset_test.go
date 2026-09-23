@@ -114,8 +114,12 @@ func TestResetClientsDoesNotExpireAZeroPeriodDelayStart(t *testing.T) {
 	if c.Expiry != 0 {
 		t.Errorf("expiry = %d, want it left unset rather than set to now", c.Expiry)
 	}
-	if !c.DelayStart {
-		t.Error("delay_start must stay on: the row is misconfigured and should stay visible as such")
+	// A zero plan length means "no plan length", not a misconfiguration: the
+	// client has started, so the flag clears. This used to assert the opposite,
+	// and a row left delayed forever is exactly what the first-use step no
+	// longer allows to exist.
+	if c.DelayStart {
+		t.Error("delay_start should clear on first use even with no plan length")
 	}
 }
 

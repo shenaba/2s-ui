@@ -63,7 +63,7 @@
     </div>
 
     <Field
-      v-if="!(bulkData.delayStart && !bulkData.autoReset)"
+      v-if="!(bulkData.delayStart && bulkData.planDays > 0)"
       :label="$t('date.expiry')"
     >
       <DateTimeInput v-model="bulkData.expiry" />
@@ -95,9 +95,9 @@
         </div>
       </Field>
     </div>
-    <Field v-else-if="bulkData.delayStart" :label="$t('client.validDays')" :hint="$t('client.validDaysHint')">
+    <Field v-if="bulkData.delayStart" :label="$t('client.validDays')" :hint="$t('client.validDaysHint')">
       <div style="display: flex; gap: 8px;">
-        <input class="input mono" type="number" min="1" v-model.number="planDays" />
+        <input class="input mono" type="number" min="0" v-model.number="planDays" />
         <div class="input suffix-box">{{ $t('date.d') }}</div>
       </div>
     </Field>
@@ -319,7 +319,7 @@ const saveChanges = async () => {
       links: [],
       volume: bulkData.value.Volume * (1024 ** 3),
       limitIp: bulkData.value.limitIp > 0 ? Math.floor(bulkData.value.limitIp) : 0,
-      expiry: (bulkData.value.delayStart && !bulkData.value.autoReset) ? 0 : bulkData.value.expiry,
+      expiry: (bulkData.value.delayStart && bulkData.value.planDays > 0) ? 0 : bulkData.value.expiry,
       up: 0,
       down: 0,
       desc: genByPattern(bulkData.value.desc, i),

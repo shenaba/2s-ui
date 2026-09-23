@@ -430,7 +430,7 @@ export default {
     resetDayOfMonth: "День сброса",
     resetDayOfMonthHint: "В коротких месяцах — последний день месяца",
     validDays: "Срок действия",
-    validDaysHint: "Отсчёт с первого подключения",
+    validDaysHint: "Отсчёт с первого подключения; 0 — без ограничения срока",
   },
   bulk: {
     resetPolicy: "Расписание сброса",
