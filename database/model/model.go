@@ -83,21 +83,11 @@ type Client struct {
 	// sender through it.
 	TgId int64 `json:"tgId" form:"tgId" gorm:"default:0;not null;index"`
 
-	// Delay start and periodic reset
+	// Delay start and periodic reset. Delay start only holds the reset clock
+	// until the client's first bytes, so it means nothing without auto reset,
+	// and every write path clears the two together.
 	DelayStart bool `json:"delayStart" form:"delayStart" gorm:"default:false;not null"`
 	AutoReset  bool `json:"autoReset" form:"autoReset" gorm:"default:false;not null"`
-
-	// How long the plan runs from the client's first bytes, in days; 0 means
-	// the plan has no length of its own and Expiry applies as set. Read once,
-	// by the first-use step in ResetClients, whenever delay_start is on --
-	// with or without auto reset, which is its own independent clock.
-	//
-	// Split out of ResetDays, which used to mean this on such a row and the
-	// reset period on every other one. Sharing a column meant every way of
-	// clearing a period had to remember it might be clearing a plan length
-	// instead -- four separate places forgot, in both directions, and each fix
-	// only closed the one path it was written for.
-	PlanDays int `json:"planDays" form:"planDays" gorm:"default:0;not null"`
 
 	// Days between periodic resets, or zero when ResetDayOfMonth supplies the
 	// schedule instead.

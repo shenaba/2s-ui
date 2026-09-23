@@ -183,16 +183,13 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 		// the batch, which the table cannot show: none of them are committed yet.
 		names := make([]string, 0, len(clients))
 		seen := make(map[string]bool, len(clients))
-		hasList := payloadFieldsList(data)
-		for i, client := range clients {
+		for _, client := range clients {
 			if err = normalizeClientName(client); err != nil {
 				return nil, err
 			}
-			var has map[string]bool
-			if i < len(hasList) {
-				has = hasList[i]
-			}
-			normalizeResetSchedule(client, has, nil)
+			// A create has no stored row, so there is nothing for omitted
+			// fields to fall back on and no key set to pass.
+			normalizeResetSchedule(client, nil, nil)
 			if err = validateResetSchedule(client); err != nil {
 				return nil, err
 			}
@@ -356,7 +353,8 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 			err = common.NewError("auto reset needs a period: set reset days or a day of the month")
 			return nil, err
 		}
-		// Same invariant as a single save: no period without auto reset.
+		// Same invariants as a single save: without auto reset there is no
+		// period, and no delayed start (cleared below with the other columns).
 		if !policy.AutoReset {
 			policy.ResetDays, policy.ResetDayOfMonth = 0, 0
 		}
@@ -387,15 +385,14 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 				WHEN auto_reset AND reset_days = ? AND reset_day_of_month = ? AND next_reset > ? THEN next_reset
 				ELSE ? END`, policy.ResetDays, policy.ResetDayOfMonth, now, next)
 		}
-		// plan_days is absent on purpose: the plan length of a delay-start
-		// client is not a reset schedule and nothing here should touch it.
-		// While the two shared a column this needed a CASE to protect, which is
-		// what the split removed.
 		cols := map[string]interface{}{
 			"auto_reset":         policy.AutoReset,
 			"reset_days":         policy.ResetDays,
 			"reset_day_of_month": policy.ResetDayOfMonth,
 			"next_reset":         nextReset,
+		}
+		if !policy.AutoReset {
+			cols["delay_start"] = false
 		}
 		res := tx.Model(model.Client{}).Where("id IN ?", policy.Ids).UpdateColumns(cols)
 		if res.Error != nil {
@@ -580,21 +577,6 @@ func (s *ClientService) preserveServerManagedFields(tx *gorm.DB, client *model.C
 		client.TgId = existing.TgId
 	}
 	return nil
-}
-
-// payloadFieldsList is payloadFields for a request whose data is an array of
-// objects, one key set per element. A malformed element yields nil, which reads
-// as "mentions nothing" -- the same as an absent key.
-func payloadFieldsList(data json.RawMessage) []map[string]bool {
-	var raws []json.RawMessage
-	if json.Unmarshal(data, &raws) != nil {
-		return nil
-	}
-	out := make([]map[string]bool, len(raws))
-	for i, raw := range raws {
-		out[i] = payloadFields(raw)
-	}
-	return out
 }
 
 // payloadFields reports which keys the request object actually carried, so an
@@ -1226,62 +1208,31 @@ func nextResetAt(c *model.Client, dt int64, loc *time.Location) int64 {
 
 // normalizeResetSchedule brings an incoming client into the shape ResetClients
 // expects. Called on every write path that takes a whole client from outside --
-// new, edit, addbulk -- before validation, so the stored row is always the
-// translated one and validation judges what will actually be stored.
+// new, edit, addbulk -- before validation, so validation judges what will
+// actually be stored.
 //
-// The request contract changed when the plan length moved out of reset_days:
-// a delay-start client without auto reset used to carry its plan length there.
-// The panel's own drawer sent exactly that shape before the split, so it is
-// what apiv2 integrations copied from it, and what a panel tab left open
-// across an upgrade keeps sending until it reloads. Stored as-is it has no
-// plan length at all, and the client never expires. Only that combination is
-// translated: with auto reset on, reset_days was the period under the old
-// contract too, so the shape already means the same thing.
-//
-// A plan length also makes any absolute Expiry meaningless until first use,
-// when the plan length replaces it -- and harmful meanwhile, since
-// DepleteClients disables on `expiry < now` and a stale date would disable the
-// client before it ever connected. The drawer has always cleared it for that
-// reason; doing it here holds for every caller.
-//
-// Last, a client that does not auto-reset has no period, and the columns are
-// cleared to say so. This is an invariant rather than tidiness, and the
-// translation above is why: a period left on such a row is indistinguishable
-// from a legacy plan length the moment planDays is 0, so an operator setting a
-// migrated client to "no time limit" had the old value moved straight back
-// into plan_days. It also stops a leftover the drawer never shows from failing
-// validation on an unrelated edit -- main left a delay-start client's plan
-// length in reset_days after first use, with both toggles off and the field
-// hidden. main cleared the period whenever auto reset was switched off, so
-// this is the same rule, applied to every caller.
+// Auto reset owns the whole schedule, and a client without it has none: no
+// period and no delayed start. Delay start only holds the reset clock until the
+// first connection. It used to carry a plan length as well -- "expire N days
+// after first use", kept in reset_days on a delay-start client without auto
+// reset -- and that feature is gone, so on such a client both are cleared and
+// the row says what it does. A request in main's plan-length shape is stored as
+// a client with no time limit. main cleared the period whenever auto reset was
+// switched off in the drawer; this is the same rule, applied to every caller.
 //
 // On an edit, a schedule field the request does not mention keeps its stored
 // value -- the same stance preserveServerManagedFields takes for the counters --
 // with one adjustment: a kept NextReset moves with a changed N-day period.
 // Whole-row writers (the bot, a JSON round-trip) are unaffected, since they
 // mention everything; the drawer leaves out only nextReset, unless the operator
-// set it. The writers this is for do not: an
-// integration typed against main has no planDays or resetDayOfMonth to send
-// and drops them on read, a minimal one sends only what it changes, and the
-// master's cluster push names its keys and none of these. Zeroing what they
-// omit wiped a plan length (the client stopped expiring), a day of the month
-// (auto reset with no period, which ResetClients skips: the client stopped
-// resetting), or NextReset (the periodic branch matched on the next tick and
-// cleared the client's usage -- that one on main already).
-//
-// The same key-presence test is what identifies the legacy request shape. A
-// caller that sends planDays, even as 0, speaks the new contract and means it;
-// only one that does not know the field can have meant its plan length in
-// resetDays. Keying the translation on "planDays is 0" instead is how an
-// operator's explicit "no time limit" got the old value moved back in.
-//
-// Order matters in one place: stored values are filled in before the
-// translation reads resetDays. That is safe because a stored row never has a
-// period without auto reset, so a stored resetDays cannot pass for a legacy
-// plan length -- unless this very request switches auto reset off, and then
-// reading the period as the plan length is exactly what the old contract meant.
+// set it. The writers this is for do not: an integration typed against main has
+// no resetDayOfMonth to send and drops it on read, a minimal one sends only what
+// it changes, and the master's cluster push names its keys and none of these.
+// Zeroing what they omit wiped a day of the month (auto reset with no period,
+// which ResetClients skips: the client stopped resetting) or NextReset (the
+// periodic branch matched on the next tick and cleared the client's usage --
+// that one on main already).
 func normalizeResetSchedule(c *model.Client, has map[string]bool, stored *model.Client) {
-	planOmitted := !has["planDays"]
 	if stored != nil {
 		if !has["delayStart"] {
 			c.DelayStart = stored.DelayStart
@@ -1315,17 +1266,8 @@ func normalizeResetSchedule(c *model.Client, has map[string]bool, stored *model.
 			}
 		}
 	}
-	if planOmitted {
-		if c.DelayStart && !c.AutoReset && c.ResetDays > 0 {
-			c.PlanDays, c.ResetDays = c.ResetDays, 0
-		} else if stored != nil {
-			c.PlanDays = stored.PlanDays
-		}
-	}
-	if c.DelayStart && c.PlanDays > 0 {
-		c.Expiry = 0
-	}
 	if !c.AutoReset {
+		c.DelayStart = false
 		c.ResetDays, c.ResetDayOfMonth = 0, 0
 	}
 }
@@ -1335,7 +1277,7 @@ func normalizeResetSchedule(c *model.Client, has map[string]bool, stored *model.
 func (s *ClientService) storedSchedule(tx *gorm.DB, id uint) (*model.Client, error) {
 	var stored model.Client
 	err := tx.Model(model.Client{}).
-		Select("delay_start", "auto_reset", "plan_days", "reset_days", "reset_day_of_month", "next_reset").
+		Select("delay_start", "auto_reset", "reset_days", "reset_day_of_month", "next_reset").
 		Where("id = ?", id).First(&stored).Error
 	if err != nil {
 		return nil, err
@@ -1343,19 +1285,18 @@ func (s *ClientService) storedSchedule(tx *gorm.DB, id uint) (*model.Client, err
 	return &stored, nil
 }
 
-// maxScheduleDays bounds both day counts. It is not a policy: operators on main
-// stored numbers like 99999 to mean "lifetime", and a cap that rejects them
-// turns every later edit of such a client into an error. What it protects is
-// the arithmetic on either side. In Go, dt + days*86400 is int64 and wraps
-// negative somewhere above 1e14 days, landing NextReset in the past -- and
-// ResetClients scans for `next_reset < now`, so such a client would be reset
-// every minute and never reach its quota. In the panel, Expiry and NextReset
-// become JavaScript Dates, which end 1e8 days after the epoch; ten million
-// days from any plausible now stays well inside both.
+// maxScheduleDays bounds the reset period. It is not a policy -- a cap below what
+// rows already hold would turn every later edit of such a client into an error
+// -- it protects the arithmetic on either side. In Go, dt + days*86400 is int64
+// and wraps negative somewhere above 1e14 days, landing NextReset in the past --
+// and ResetClients scans for `next_reset < now`, so such a client would be reset
+// every minute and never reach its quota. In the panel, NextReset becomes a
+// JavaScript Date, which ends 1e8 days after the epoch; ten million days from
+// any plausible now stays well inside both.
 const maxScheduleDays = 10_000_000
 
 // validateResetSchedule rejects a schedule the panel cannot represent: a day of
-// the month outside 0-31, or a day count outside 0..maxScheduleDays.
+// the month outside 0-31, or a period outside 0..maxScheduleDays days.
 //
 // A day out of range is not dangerous in itself -- nextMonthlyReset clamps per
 // month, so 200 silently means "month end" and nothing loops -- but the drawer's
@@ -1372,9 +1313,6 @@ func validateResetSchedule(c *model.Client) error {
 	}
 	if c.ResetDays < 0 || c.ResetDays > maxScheduleDays {
 		return common.NewErrorf("reset days out of range: %d", c.ResetDays)
-	}
-	if c.PlanDays < 0 || c.PlanDays > maxScheduleDays {
-		return common.NewErrorf("plan days out of range: %d", c.PlanDays)
 	}
 	return nil
 }
@@ -1462,34 +1400,22 @@ func (s *ClientService) ResetClients(tx *gorm.DB, dt int64, loc *time.Location) 
 	var changes []model.Changes
 	var inboundIds []uint
 	var reenabled []string
-	// First use. Delay start means "the clocks this client has start on its
-	// first bytes", and that is all it means: whichever are configured start
-	// here -- the plan length becomes an Expiry, auto reset gets its first
-	// boundary -- and delay_start is cleared unconditionally.
+	// First use. Delay start holds the reset clock until the client's first
+	// bytes; here the first boundary is set and delay_start is cleared. Expiry
+	// is not touched: it applies as set, delayed start or not.
 	//
-	// This used to be two blocks keyed on auto_reset, each with its own
-	// preconditions: without auto reset the plan length decided the expiry,
-	// with it the plan length was ignored and Expiry stayed whatever was set.
-	// So switching auto reset either way silently changed what delay start
-	// meant -- on, and a client with a 30-day plan never expired; off, and one
-	// with no plan length matched neither block, so delay_start was never
-	// cleared at all. With no precondition beyond traffic, a row that stays
-	// delayed forever cannot exist.
-	//
-	// A zero plan length is not a misconfiguration here, it is "no plan
-	// length": Expiry is left as set, which is exactly how a delay-start client
-	// with auto reset has always behaved. What must never happen is the old
-	// failure this guard grew out of -- Expiry = dt, a client dead the instant
-	// it sends a byte -- and plan_days > 0 is what rules that out.
+	// No precondition beyond traffic, on purpose. On main this was two blocks
+	// keyed on auto_reset, each with its own preconditions, and a delay-start
+	// client that matched neither -- auto reset switched off, which zeroed
+	// reset_days -- stayed delayed forever. Every write path now clears delay
+	// start together with auto reset, but whatever wrote a row, one that stays
+	// delayed forever must not be possible here.
 	err = tx.Model(model.Client{}).
 		Where("enable = true AND delay_start = true AND (Up + Down) > 0").Find(&resetClients).Error
 	if err != nil {
 		return nil, nil, false, err
 	}
 	for _, client := range resetClients {
-		if client.PlanDays > 0 {
-			client.Expiry = dt + (int64(client.PlanDays) * 86400)
-		}
 		if client.AutoReset && (client.ResetDays > 0 || client.ResetDayOfMonth > 0) {
 			client.NextReset = nextResetAt(client, dt, loc)
 		}
@@ -1637,7 +1563,6 @@ func (s *ClientService) findInboundsChanges(tx *gorm.DB, client *model.Client, f
 		client.Links = oldClient.Links
 		client.Config = oldClient.Config
 		client.AutoReset = oldClient.AutoReset
-		client.PlanDays = oldClient.PlanDays
 		client.ResetDays = oldClient.ResetDays
 		client.ResetDayOfMonth = oldClient.ResetDayOfMonth
 		client.NextReset = oldClient.NextReset

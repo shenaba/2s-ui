@@ -435,8 +435,6 @@ export default {
     resetCycleMonthly: "Day of month",
     resetDayOfMonth: "Reset Day",
     resetDayOfMonthHint: "Midnight in the panel timezone (Settings → Timezone Location); short months use their last day",
-    validDays: "Valid Days",
-    validDaysHint: "Counted from the first connection; 0 means no time limit",
   },
   bulk: {
     resetPolicy: "Reset schedule",

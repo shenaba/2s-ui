@@ -183,7 +183,7 @@ func InitDB(dbPath string) error {
 	if err != nil {
 		return err
 	}
-	err = migratePlanDays()
+	err = migrateResetSchedule()
 	if err != nil {
 		return err
 	}

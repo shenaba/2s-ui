@@ -429,8 +429,6 @@ export default {
     resetCycleMonthly: "Ngày cố định hàng tháng",
     resetDayOfMonth: "Ngày đặt lại",
     resetDayOfMonthHint: "0 giờ theo múi giờ của bảng (Cài đặt → Vị trí múi giờ); tháng ngắn dùng ngày cuối tháng",
-    validDays: "Số ngày hiệu lực",
-    validDaysHint: "Tính từ lần kết nối đầu tiên; 0 là không giới hạn thời gian",
   },
   bulk: {
     resetPolicy: "Lịch đặt lại",

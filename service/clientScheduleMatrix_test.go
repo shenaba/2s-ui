@@ -77,10 +77,9 @@ func drawerPayload(c model.Client) map[string]interface{} {
 func matrixShapes(now int64) map[string]model.Client {
 	future := now + 10*86400
 	return map[string]model.Client{
-		"delay start, plan length":          {DelayStart: true, PlanDays: 30},
 		"delay start, auto reset by days":   {DelayStart: true, AutoReset: true, ResetDays: 30},
 		"delay start, auto reset monthly":   {DelayStart: true, AutoReset: true, ResetDayOfMonth: 15},
-		"delay start, plan and monthly":     {DelayStart: true, PlanDays: 90, AutoReset: true, ResetDayOfMonth: 15},
+		"delay start, with expiry":          {DelayStart: true, AutoReset: true, ResetDays: 30, Expiry: future},
 		"started, auto reset by days":       {AutoReset: true, ResetDays: 30, NextReset: future, Up: 500, Down: 500},
 		"started, auto reset monthly":       {AutoReset: true, ResetDayOfMonth: 15, NextReset: future, Up: 500, Down: 500},
 		"started, no schedule, with expiry": {Expiry: future, Up: 500, Down: 500},
@@ -146,12 +145,12 @@ func TestEditMatrixKeepsTheSchedule(t *testing.T) {
 func checkScheduleKept(t *testing.T, before, after model.Client) {
 	t.Helper()
 	type sched struct {
-		DelayStart, AutoReset         bool
-		PlanDays, ResetDays, ResetDom int
-		NextReset, Expiry             int64
+		DelayStart, AutoReset bool
+		ResetDays, ResetDom   int
+		NextReset, Expiry     int64
 	}
-	b := sched{before.DelayStart, before.AutoReset, before.PlanDays, before.ResetDays, before.ResetDayOfMonth, before.NextReset, before.Expiry}
-	a := sched{after.DelayStart, after.AutoReset, after.PlanDays, after.ResetDays, after.ResetDayOfMonth, after.NextReset, after.Expiry}
+	b := sched{before.DelayStart, before.AutoReset, before.ResetDays, before.ResetDayOfMonth, before.NextReset, before.Expiry}
+	a := sched{after.DelayStart, after.AutoReset, after.ResetDays, after.ResetDayOfMonth, after.NextReset, after.Expiry}
 	if a != b {
 		t.Errorf("schedule moved:\n  before %+v\n  after  %+v", b, a)
 	}
@@ -198,9 +197,10 @@ func TestEditBulkMatrixKeepsTheSchedule(t *testing.T) {
 	}
 }
 
-// Creates, by the same writers. A writer that does not know planDays and sends
-// delay start without auto reset meant its plan length in resetDays; one that
-// sends planDays -- even 0 -- means exactly what it sent.
+// Creates, by the same writers, single and bulk. main's plan-length shape --
+// delay start without auto reset, the length in resetDays -- asked for a
+// feature that is gone and comes out as a client with no schedule; with auto
+// reset on, the same fields keep their meaning.
 func TestCreateMatrix(t *testing.T) {
 	base := func(name string) map[string]interface{} {
 		return map[string]interface{}{
@@ -214,28 +214,44 @@ func TestCreateMatrix(t *testing.T) {
 		}
 		return m
 	}
+	type want struct {
+		delay bool
+		days  int
+		auto  bool
+	}
 	cases := []struct {
-		name     string
-		body     map[string]interface{}
-		wantPlan int
-		wantDays int
-		wantAuto bool
+		name string
+		body map[string]interface{}
+		want want
 	}{
-		{"typed against main, delay start only", with(base("a"), "delayStart", true, "autoReset", false, "resetDays", 30), 30, 0, false},
-		{"typed against main, delay start and auto reset", with(base("b"), "delayStart", true, "autoReset", true, "resetDays", 30), 0, 30, true},
-		{"new contract, explicit no time limit", with(base("c"), "delayStart", true, "autoReset", false, "planDays", 0, "resetDays", 30), 0, 0, false},
-		{"new contract, plan and period", with(base("d"), "delayStart", true, "autoReset", true, "planDays", 90, "resetDays", 7), 90, 7, true},
+		{"typed against main, delay start only", with(base("a"), "delayStart", true, "autoReset", false, "resetDays", 30), want{false, 0, false}},
+		{"typed against main, delay start and auto reset", with(base("b"), "delayStart", true, "autoReset", true, "resetDays", 30), want{true, 30, true}},
 		// The bot's create form: a whole model.Client, schedule left at zero.
 		{"bot create", func() map[string]interface{} {
-			raw, _ := json.Marshal(model.Client{Enable: true, Name: "e", Config: json.RawMessage("{}"),
+			raw, err := json.Marshal(model.Client{Enable: true, Name: "e", Config: json.RawMessage("{}"),
 				Inbounds: json.RawMessage("[]"), Links: json.RawMessage("[]")})
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
 			var m map[string]interface{}
-			json.Unmarshal(raw, &m)
+			if err := json.Unmarshal(raw, &m); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
 			return m
-		}(), 0, 0, false},
+		}(), want{false, 0, false}},
 	}
 	svc := newResetDB(t)
 	db := database.GetDB()
+	check := func(name string, w want) {
+		t.Helper()
+		var got model.Client
+		if err := db.Where("name = ?", name).First(&got).Error; err != nil {
+			t.Fatalf("read back %s: %v", name, err)
+		}
+		if g := (want{got.DelayStart, got.ResetDays, got.AutoReset}); g != w {
+			t.Errorf("%s: delayStart/resetDays/autoReset = %+v, want %+v", name, g, w)
+		}
+	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			payload, err := json.Marshal(c.body)
@@ -248,22 +264,13 @@ func TestCreateMatrix(t *testing.T) {
 				t.Fatalf("Save: %v", err)
 			}
 			tx.Commit()
-			var got model.Client
-			if err := db.Where("name = ?", c.body["name"]).First(&got).Error; err != nil {
-				t.Fatalf("read back: %v", err)
-			}
-			if got.PlanDays != c.wantPlan || got.ResetDays != c.wantDays || got.AutoReset != c.wantAuto {
-				t.Errorf("planDays=%d resetDays=%d autoReset=%v, want %d/%d/%v",
-					got.PlanDays, got.ResetDays, got.AutoReset, c.wantPlan, c.wantDays, c.wantAuto)
-			}
+			check(c.body["name"].(string), c.want)
 		})
 	}
 
-	// The same rule in a bulk create, which sends an array: each element's own
-	// keys decide, not the first element's or none at all.
 	payload, err := json.Marshal([]map[string]interface{}{
-		with(base("bulk-legacy"), "delayStart", true, "resetDays", 30),
-		with(base("bulk-current"), "delayStart", true, "planDays", 0, "resetDays", 30),
+		with(base("bulk-main-plan"), "delayStart", true, "resetDays", 30),
+		with(base("bulk-periodic"), "delayStart", true, "autoReset", true, "resetDays", 30),
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -274,15 +281,8 @@ func TestCreateMatrix(t *testing.T) {
 		t.Fatalf("Save addbulk: %v", err)
 	}
 	tx.Commit()
-	for name, want := range map[string]int{"bulk-legacy": 30, "bulk-current": 0} {
-		var got model.Client
-		if err := db.Where("name = ?", name).First(&got).Error; err != nil {
-			t.Fatalf("read back %s: %v", name, err)
-		}
-		if got.PlanDays != want {
-			t.Errorf("%s: planDays=%d, want %d", name, got.PlanDays, want)
-		}
-	}
+	check("bulk-main-plan", want{false, 0, false})
+	check("bulk-periodic", want{true, 30, true})
 }
 
 // The drawer's next-reset field has a clear button that writes 0. Stored as 0 on

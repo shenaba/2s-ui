@@ -97,26 +97,19 @@
               <div class="input suffix-box">{{ $t('stats.GB') }}</div>
             </div>
           </Field>
-          <Field
-            v-if="!(client.delayStart && (client.planDays ?? 0) > 0)"
-            :label="$t('ui.expiryDate')"
-            :hint="$t('ui.noExpiryHint')"
-            :mb="0"
-          >
+          <Field :label="$t('ui.expiryDate')" :hint="$t('ui.noExpiryHint')" :mb="0">
             <DateTimeInput v-model="client.expiry" />
           </Field>
         </div>
 
-        <!-- 延迟开始 | 自动重置 两列开关 -->
+        <!-- 延迟开始 | 自动重置 两列开关。延迟启动只推迟重置周期的起点,没开自动重置时不可用 -->
         <div class="grid2" style="margin-bottom: 15px;">
-          <div :style="client.up + client.down > 0 ? { opacity: 0.5, pointerEvents: 'none' } : undefined">
+          <div :style="client.up + client.down > 0 || !client.autoReset ? { opacity: 0.5, pointerEvents: 'none' } : undefined">
             <SwitchLabel v-model="delayStart" :label="$t('client.delayStart')" />
           </div>
           <SwitchLabel v-model="autoReset" :label="$t('client.autoReset')" />
         </div>
 
-        <!-- 两个开关是两个独立的时钟:自动重置管周期,延迟启动管"从首次连接起多久"。
-             两行各自出现,可以同时开 -->
         <div v-if="client.autoReset" class="grid2" style="margin-bottom: 15px;">
           <Field :label="$t('client.resetCycle')" :mb="0">
             <Select v-model="resetMode">
@@ -140,14 +133,6 @@
               />
               <input v-else class="input mono" type="number" min="1" v-model.number="resetDays" />
               <div class="input suffix-box">{{ resetMode === 'monthly' ? $t('date.dayOfMonth') : $t('date.d') }}</div>
-            </div>
-          </Field>
-        </div>
-        <div v-if="client.delayStart" class="grid2" style="margin-bottom: 15px;">
-          <Field :label="$t('client.validDays')" :hint="$t('client.validDaysHint')" :mb="0">
-            <div style="display: flex; gap: 8px;">
-              <input class="input mono" type="number" min="0" v-model.number="planDays" />
-              <div class="input suffix-box">{{ $t('date.d') }}</div>
             </div>
           </Field>
         </div>
@@ -297,7 +282,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Data from '@/store/modules/data'
-import { Client, Link, coercePlanDays, coerceResetDayOfMonth, coerceResetDays, createClient, randomConfigs, shuffleConfigs, updateConfigs } from '@/types/clients'
+import { Client, Link, coerceResetDayOfMonth, coerceResetDays, createClient, randomConfigs, shuffleConfigs, updateConfigs } from '@/types/clients'
 import { HumanReadable } from '@/plugins/utils'
 import Drawer from '@/components/ui/Drawer.vue'
 import Tabs from '@/components/ui/Tabs.vue'
@@ -434,16 +419,12 @@ const limitIp = computed({
     client.value.limitIp = n > 0 ? n : 0
   },
 })
-// 两个开关各管各的列,互不联动。
-//
-// 延迟启动不再预填套餐时长:planDays 为 0 是合法值,意思是"不限时长",输入框旁有
-// 提示。预填 30 会改变最常见的那条操作路径——新建客户端默认开着自动重置,再打开延迟
-// 启动,在 main 上得到的是"首次连接起按周期重置、永不过期";预填之后同样的点击变成
-// 首次连接 30 天后停用,而唯一的迹象只是多出来一个值为 30 的字段
+// 延迟启动只推迟重置周期的起点(首次连接时才开始算),到期日期照常生效。没开自动重置
+// 就没有周期可推迟,所以它跟着自动重置走:关自动重置时一起关,后端保存时也会清
 const delayStart = computed({
   get: () => client.value.delayStart ?? false,
   set: (v: boolean) => {
-    client.value.delayStart = v
+    client.value.delayStart = v && !!client.value.autoReset
   },
 })
 const autoReset = computed({
@@ -451,19 +432,14 @@ const autoReset = computed({
   set: (v: boolean) => {
     client.value.autoReset = v
     if (!v) {
-      // 不重置了,周期和下次重置时间都没有意义;后端保存时也会清(没开自动重置就没有周期)
+      // 不重置了,周期、下次重置时间和延迟启动都没有意义;后端保存时也会清
       client.value.resetDays = 0
       client.value.resetDayOfMonth = 0
       client.value.nextReset = 0
+      client.value.delayStart = false
     } else if (!client.value.resetDays && !client.value.resetDayOfMonth) {
       client.value.resetDays = 30
     }
-  },
-})
-const planDays = computed({
-  get: () => client.value.planDays ?? 0,
-  set: (v: number | string | null) => {
-    client.value.planDays = coercePlanDays(v)
   },
 })
 const resetMode = computed<'days' | 'monthly'>({
@@ -566,10 +542,6 @@ const saveChanges = async () => {
   // check duplicate name
   const isDuplicateName = Data().checkClientName(props.id, client.value.name)
   if (isDuplicateName) return
-
-  // 有套餐时长时到期日在首次连接那一刻才算出来,之前留着的旧日期只会让客户在
-  // 连上之前就被停用;套餐时长为 0 时到期日字段照常生效,不能清
-  if (client.value.delayStart && (client.value.planDays ?? 0) > 0) client.value.expiry = 0
 
   loading.value = true
   client.value.config = updateConfigs(clientConfig.value, client.value.name)

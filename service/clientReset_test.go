@@ -87,7 +87,7 @@ func TestResetClientsIgnoresAZeroPeriod(t *testing.T) {
 	}
 }
 
-// A delay-start client with no plan length had its expiry set to the moment it
+// A delay-start client with a zero period had its expiry set to the moment it
 // sent its first byte, killing it outright.
 func TestResetClientsDoesNotExpireAZeroPeriodDelayStart(t *testing.T) {
 	svc := newResetDB(t)
@@ -95,7 +95,7 @@ func TestResetClientsDoesNotExpireAZeroPeriodDelayStart(t *testing.T) {
 
 	seedClient(t, &model.Client{
 		Enable: true, Name: "delayed",
-		DelayStart: true, AutoReset: false, PlanDays: 0,
+		DelayStart: true, AutoReset: false, ResetDays: 0,
 		Up: 1, Down: 1,
 	})
 
@@ -114,12 +114,11 @@ func TestResetClientsDoesNotExpireAZeroPeriodDelayStart(t *testing.T) {
 	if c.Expiry != 0 {
 		t.Errorf("expiry = %d, want it left unset rather than set to now", c.Expiry)
 	}
-	// A zero plan length means "no plan length", not a misconfiguration: the
-	// client has started, so the flag clears. This used to assert the opposite,
-	// and a row left delayed forever is exactly what the first-use step no
-	// longer allows to exist.
+	// The client has started, so the flag clears. This used to assert the
+	// opposite, and a row left delayed forever is exactly what the first-use
+	// step no longer allows to exist.
 	if c.DelayStart {
-		t.Error("delay_start should clear on first use even with no plan length")
+		t.Error("delay_start should clear on first use")
 	}
 }
 

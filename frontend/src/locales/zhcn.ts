@@ -429,8 +429,6 @@ export default {
     resetCycleMonthly: "每月固定日",
     resetDayOfMonth: "重置日",
     resetDayOfMonthHint: "按面板时区(设置 → 时区)的 0 点清零;短月落到当月最后一天",
-    validDays: "有效天数",
-    validDaysHint: "从首次连接开始计时,0 表示不限时长",
   },
   bulk: {
     resetPolicy: "重置策略",

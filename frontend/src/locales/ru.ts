@@ -430,8 +430,6 @@ export default {
     resetCycleMonthly: "День месяца",
     resetDayOfMonth: "День сброса",
     resetDayOfMonthHint: "Полночь по часовому поясу панели (Настройки → Часовой пояс); в коротких месяцах — последний день",
-    validDays: "Срок действия",
-    validDaysHint: "Отсчёт с первого подключения; 0 — без ограничения срока",
   },
   bulk: {
     resetPolicy: "Расписание сброса",
