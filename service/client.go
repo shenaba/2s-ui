@@ -582,8 +582,6 @@ func (s *ClientService) preserveServerManagedFields(tx *gorm.DB, client *model.C
 	return nil
 }
 
-// payloadFields reports which keys the request object actually carried, so an
-// omitted server-managed value is preserved rather than written as zero.
 // payloadFieldsList is payloadFields for a request whose data is an array of
 // objects, one key set per element. A malformed element yields nil, which reads
 // as "mentions nothing" -- the same as an absent key.
@@ -599,6 +597,8 @@ func payloadFieldsList(data json.RawMessage) []map[string]bool {
 	return out
 }
 
+// payloadFields reports which keys the request object actually carried, so an
+// omitted server-managed value is preserved rather than written as zero.
 func payloadFields(data json.RawMessage) map[string]bool {
 	var raw map[string]json.RawMessage
 	if json.Unmarshal(data, &raw) != nil {
@@ -1224,17 +1224,6 @@ func nextResetAt(c *model.Client, dt int64, loc *time.Location) int64 {
 	return dt + (int64(c.ResetDays) * 86400)
 }
 
-// validateResetSchedule rejects a day of the month the panel cannot represent.
-//
-// Out of range is not dangerous in itself -- nextMonthlyReset clamps per month,
-// so 200 silently means "month end" and nothing loops -- but the drawer's input
-// carries max=31 and would show the stored number unchanged, so the panel and
-// the row disagree about what was configured. The bulk action refuses the same
-// range; without this the two write paths disagreed about a legal day.
-//
-// Deliberately narrower than the bulk action's checks: a period of zero with
-// auto reset on stays writable here, because ResetClients leaves such a row
-// alone on purpose and older rows already carry that combination.
 // normalizeResetSchedule brings an incoming client into the shape ResetClients
 // expects. Called on every write path that takes a whole client from outside --
 // new, edit, addbulk -- before validation, so the stored row is always the
@@ -1267,9 +1256,11 @@ func nextResetAt(c *model.Client, dt int64, loc *time.Location) int64 {
 // this is the same rule, applied to every caller.
 //
 // On an edit, a schedule field the request does not mention keeps its stored
-// value -- the same stance preserveServerManagedFields takes for the counters.
-// Whole-row writers (the drawer, the bot, a JSON round-trip) are unaffected,
-// since they mention everything. The writers this is for do not: an
+// value -- the same stance preserveServerManagedFields takes for the counters --
+// with one adjustment: a kept NextReset moves with a changed N-day period.
+// Whole-row writers (the bot, a JSON round-trip) are unaffected, since they
+// mention everything; the drawer leaves out only nextReset, unless the operator
+// set it. The writers this is for do not: an
 // integration typed against main has no planDays or resetDayOfMonth to send
 // and drops them on read, a minimal one sends only what it changes, and the
 // master's cluster push names its keys and none of these. Zeroing what they
@@ -1306,6 +1297,22 @@ func normalizeResetSchedule(c *model.Client, has map[string]bool, stored *model.
 		}
 		if !has["nextReset"] {
 			c.NextReset = stored.NextReset
+			// A changed period moves the boundary it produced by the same
+			// amount, which is how the panel has always let an operator
+			// lengthen or shorten the current period without restarting it.
+			// It is done here, from the stored boundary, and not by the caller:
+			// the drawer used to shift the copy it read when it opened, so once
+			// the job had moved the boundary on while the drawer stayed open, it
+			// sent the old boundary plus the difference and the client reset
+			// again that much later -- a day, for 30 -> 31. N-day mode on both
+			// sides only: a day of the month has no period to shift, and a
+			// switch of mode or of auto reset gets a fresh boundary from
+			// alignNextReset.
+			if c.AutoReset && stored.AutoReset &&
+				c.ResetDayOfMonth == 0 && stored.ResetDayOfMonth == 0 &&
+				c.ResetDays > 0 && stored.ResetDays > 0 && stored.NextReset > 0 {
+				c.NextReset += int64(c.ResetDays-stored.ResetDays) * 86400
+			}
 		}
 	}
 	if planOmitted {
@@ -1347,6 +1354,18 @@ func (s *ClientService) storedSchedule(tx *gorm.DB, id uint) (*model.Client, err
 // days from any plausible now stays well inside both.
 const maxScheduleDays = 10_000_000
 
+// validateResetSchedule rejects a schedule the panel cannot represent: a day of
+// the month outside 0-31, or a day count outside 0..maxScheduleDays.
+//
+// A day out of range is not dangerous in itself -- nextMonthlyReset clamps per
+// month, so 200 silently means "month end" and nothing loops -- but the drawer's
+// input carries max=31 and would show the stored number unchanged, so the panel
+// and the row disagree about what was configured. The bulk action refuses the
+// same range; without this the two write paths disagreed about a legal day.
+//
+// Deliberately narrower than the bulk action's checks: a period of zero with
+// auto reset on stays writable here, because ResetClients leaves such a row
+// alone on purpose and older rows already carry that combination.
 func validateResetSchedule(c *model.Client) error {
 	if c.ResetDayOfMonth < 0 || c.ResetDayOfMonth > 31 {
 		return common.NewErrorf("reset day of month out of range: %d", c.ResetDayOfMonth)
@@ -1387,9 +1406,10 @@ func panelLocation() *time.Location {
 // It computes when there is no usable boundary: a new client, a NextReset of 0,
 // a day of the month that changed (the old boundary belongs to the old day), or
 // auto reset just switched on without a future date to start from. Anything
-// else is kept as submitted -- a date the operator typed, a shift the drawer
-// applied for a changed ResetDays (how one period is moved without restarting
-// it), or a date in the past, which is how "reset now" is asked for.
+// else is kept as it arrives -- a date the operator typed, the stored boundary
+// shifted for a changed ResetDays (normalizeResetSchedule does that, which is
+// why this must not recompute on a changed period), or a date in the past,
+// which is how "reset now" is asked for.
 //
 // Zero has to mean "compute", not "keep": with auto reset on, the periodic
 // branch in ResetClients matches `next_reset < now` on its next tick, so a

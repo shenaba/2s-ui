@@ -423,6 +423,7 @@ export default {
     resetDays: "重置天数",
     nextReset: "下次重置",
     nextResetHint: "只挪动这一次,不改周期",
+    nextResetAuto: "按周期计算",
     resetCycle: "重置周期",
     resetCycleDays: "每 N 天",
     resetCycleMonthly: "每月固定日",

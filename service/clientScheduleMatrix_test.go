@@ -20,8 +20,11 @@ import (
 
 // What each writer puts on the wire for an edit of row c.
 var matrixWriters = map[string]func(c model.Client) interface{}{
-	// The drawer, the Telegram bot and any JSON round-trip: every field.
+	// The Telegram bot and any JSON round-trip: every field.
 	"whole row": func(c model.Client) interface{} { return c },
+
+	// The panel's client drawer.
+	"drawer": func(c model.Client) interface{} { return drawerPayload(c) },
 
 	// An integration typed against main: every field main had, none added here.
 	"typed against main": func(c model.Client) interface{} {
@@ -51,6 +54,24 @@ var matrixWriters = map[string]func(c model.Client) interface{}{
 			"expiry": c.Expiry, "group": c.Group, "desc": c.Desc, "limitIp": c.LimitIp,
 		}
 	},
+}
+
+// drawerPayload is what the client drawer sends for an edit: the whole row, less
+// the fields it sends only when the operator touched them -- the traffic
+// counters, and nextReset.
+func drawerPayload(c model.Client) map[string]interface{} {
+	raw, err := json.Marshal(c)
+	if err != nil {
+		panic(err)
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		panic(err)
+	}
+	for _, k := range []string{"up", "down", "totalUp", "totalDown", "nextReset"} {
+		delete(m, k)
+	}
+	return m
 }
 
 func matrixShapes(now int64) map[string]model.Client {
@@ -264,9 +285,10 @@ func TestCreateMatrix(t *testing.T) {
 	}
 }
 
-// The drawer's next-reset field has a clear button that writes 0 and reads
-// "unlimited". Stored as 0 on an auto-reset client, the periodic branch would
-// match on its next tick and clear the usage; 0 has to mean "compute one".
+// The drawer's next-reset field has a clear button that writes 0. Stored as 0 on
+// an auto-reset client, the periodic branch would match on its next tick and
+// clear the usage; 0 has to mean "compute one", which is also what the field
+// now says it means.
 func TestEditClearedNextResetComputesOne(t *testing.T) {
 	now := time.Now().Unix()
 	for name, shape := range map[string]model.Client{
@@ -390,5 +412,153 @@ func TestResetPolicyKeepsTheBoundaryOfAnUnchangedSchedule(t *testing.T) {
 		if c.NextReset <= now || c.NextReset == dueSoon {
 			t.Errorf("%s: nextReset = %d, want a boundary computed from now", n, c.NextReset)
 		}
+	}
+}
+
+// A changed N-day period moves the current boundary by the difference: the
+// panel's way to lengthen or shorten one period without restarting it. The
+// backend applies it to the stored boundary whenever the request leaves
+// nextReset out; a caller that sends nextReset gets exactly what it sent.
+func TestEditPeriodShiftsTheStoredBoundary(t *testing.T) {
+	const day = int64(86400)
+	now := time.Now().Unix()
+	boundary := now + 10*day
+	periodic := model.Client{AutoReset: true, ResetDays: 30, NextReset: boundary, Up: 500, Down: 500}
+	cases := []struct {
+		name  string
+		shape model.Client
+		edit  func(row model.Client) interface{}
+		want  int64 // 0: computed from now, want the new period from the save
+	}{
+		{"drawer, longer period", periodic, func(row model.Client) interface{} {
+			row.ResetDays = 31
+			return drawerPayload(row)
+		}, boundary + day},
+		{"drawer, shorter period", periodic, func(row model.Client) interface{} {
+			row.ResetDays = 25
+			return drawerPayload(row)
+		}, boundary - 5*day},
+		{"minimal writer", periodic, func(row model.Client) interface{} {
+			m := matrixWriters["minimal"](row).(map[string]interface{})
+			m["resetDays"] = 31
+			return m
+		}, boundary + day},
+		// Controls: these already behaved this way.
+		{"sent nextReset is kept, not shifted again", periodic, func(row model.Client) interface{} {
+			row.ResetDays, row.NextReset = 31, boundary+3*day
+			return row
+		}, boundary + 3*day},
+		{"typed against main sends the old boundary", periodic, func(row model.Client) interface{} {
+			row.ResetDays = 31
+			return matrixWriters["typed against main"](row)
+		}, boundary},
+		{"same period, nothing moves", periodic, func(row model.Client) interface{} {
+			return drawerPayload(row)
+		}, boundary},
+		{"a day of the month has no period to shift",
+			model.Client{AutoReset: true, ResetDayOfMonth: 15, NextReset: boundary},
+			func(row model.Client) interface{} {
+				row.ResetDays = 7
+				return drawerPayload(row)
+			}, boundary},
+		{"auto reset switched on starts a period from now",
+			model.Client{},
+			func(row model.Client) interface{} {
+				row.AutoReset, row.ResetDays = true, 31
+				return drawerPayload(row)
+			}, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc := newResetDB(t)
+			db := database.GetDB()
+			seed := c.shape
+			seed.Name, seed.Enable = "c", true
+			seedClient(t, &seed)
+			var row model.Client
+			if err := db.Where("name = ?", "c").First(&row).Error; err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			payload, err := json.Marshal(c.edit(row))
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			start := time.Now().Unix()
+			tx := db.Begin()
+			if _, err := svc.Save(tx, "edit", payload, ""); err != nil {
+				tx.Rollback()
+				t.Fatalf("Save: %v", err)
+			}
+			tx.Commit()
+			end := time.Now().Unix()
+			if err := db.Where("name = ?", "c").First(&row).Error; err != nil {
+				t.Fatalf("read back: %v", err)
+			}
+			if c.want != 0 {
+				if row.NextReset != c.want {
+					t.Errorf("nextReset = %d, want %d (%+d days from the stored boundary)",
+						row.NextReset, c.want, (c.want-boundary)/day)
+				}
+				return
+			}
+			if row.NextReset < start+31*day || row.NextReset > end+31*day {
+				t.Errorf("nextReset = %d, want 31 days from the save (%d..%d)", row.NextReset, start+31*day, end+31*day)
+			}
+		})
+	}
+}
+
+// The drawer left open across a boundary, then the period changed. The shift
+// has to start from where the job moved the boundary, not from the one the
+// drawer read when it opened: that one plus a day is tomorrow, a second reset
+// one day after the first.
+func TestEditPeriodShiftStartsFromTheJobsBoundary(t *testing.T) {
+	svc := newResetDB(t)
+	db := database.GetDB()
+	now := time.Now().Unix()
+	seedClient(t, &model.Client{Name: "c", Enable: true, AutoReset: true, ResetDays: 30, NextReset: now - 60, Up: 500, Down: 500})
+	var opened model.Client
+	if err := db.Where("name = ?", "c").First(&opened).Error; err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	// The tick the drawer sat through.
+	tx := db.Begin()
+	if _, _, _, err := svc.ResetClients(tx, now, time.UTC); err != nil {
+		tx.Rollback()
+		t.Fatalf("ResetClients: %v", err)
+	}
+	tx.Commit()
+	var moved model.Client
+	if err := db.Where("name = ?", "c").First(&moved).Error; err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if moved.NextReset <= now || moved.Up != 0 {
+		t.Fatalf("setup: the tick did not reset the client: nextReset=%d up=%d", moved.NextReset, moved.Up)
+	}
+
+	edited := opened
+	edited.ResetDays = 31
+	payload, err := json.Marshal(drawerPayload(edited))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	tx = db.Begin()
+	if _, err := svc.Save(tx, "edit", payload, ""); err != nil {
+		tx.Rollback()
+		t.Fatalf("Save: %v", err)
+	}
+	tx.Commit()
+
+	var after model.Client
+	if err := db.Where("name = ?", "c").First(&after).Error; err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if want := moved.NextReset + 86400; after.NextReset != want {
+		t.Errorf("nextReset = %d, want the job's boundary plus a day, %d (the drawer read %d)",
+			after.NextReset, want, opened.NextReset)
+	}
+	if after.Up != 0 || after.Down != 0 {
+		t.Errorf("counters the drawer read were written back: %d/%d", after.Up, after.Down)
 	}
 }

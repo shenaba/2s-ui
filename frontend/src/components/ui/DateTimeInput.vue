@@ -14,7 +14,7 @@
       type="datetime"
     />
     <button v-if="modelValue > 0" type="button" class="dt-clear" @click="$emit('update:modelValue', 0)">
-      {{ $t('unlimited') }}
+      {{ emptyText }}
     </button>
   </div>
   <div v-else style="display: flex; gap: 8px;">
@@ -28,7 +28,7 @@
       v-if="modelValue > 0"
       sm
       style="height: 40px; flex: none;"
-      :title="$t('unlimited')"
+      :title="emptyText"
       @click="$emit('update:modelValue', 0)"
     ><Ico name="close" :size="14" /></Btn>
   </div>
@@ -40,16 +40,19 @@ import { useI18n } from 'vue-i18n'
 import Ico from './Ico.vue'
 import Btn from './Btn.vue'
 
-// modelValue: epoch seconds; 0 = unlimited
-const props = defineProps<{ modelValue: number }>()
+// modelValue: epoch seconds; 0 = no date. emptyLabel says what that means for the
+// field -- "unlimited" by default, which is right for an expiry but not for every
+// date: an empty next reset is computed from the cycle
+const props = defineProps<{ modelValue: number; emptyLabel?: string }>()
 const emit = defineEmits<{ 'update:modelValue': [value: number] }>()
 
 const { t, locale } = useI18n({ useScope: 'global' })
 const isFa = computed(() => String(locale.value) === 'fa')
 const elId = `dt${useId().replace(/[:-]/g, '')}`
+const emptyText = computed(() => props.emptyLabel ?? t('unlimited'))
 
 const display = computed(() => {
-  if (!props.modelValue) return t('unlimited')
+  if (!props.modelValue) return emptyText.value
   return new Date(props.modelValue * 1000).toLocaleString('fa-IR')
 })
 const pickerValue = computed(() => (props.modelValue ? new Date(props.modelValue * 1000) : new Date()))

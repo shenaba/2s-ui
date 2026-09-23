@@ -423,6 +423,7 @@ export default {
     resetDays: "Số ngày đặt lại",
     nextReset: "Đặt lại lần sau",
     nextResetHint: "Chỉ dời kỳ này, chu kỳ giữ nguyên",
+    nextResetAuto: "Tính theo chu kỳ",
     resetCycle: "Chu kỳ đặt lại",
     resetCycleDays: "Mỗi N ngày",
     resetCycleMonthly: "Ngày cố định hàng tháng",

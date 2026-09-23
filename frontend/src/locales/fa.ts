@@ -423,6 +423,7 @@ export default {
     resetDays: "روزهای بازنشانی",
     nextReset: "بازنشانی بعدی",
     nextResetHint: "فقط همین دوره را جابه‌جا می‌کند؛ چرخه تغییر نمی‌کند",
+    nextResetAuto: "محاسبه بر اساس چرخه",
     resetCycle: "چرخه بازنشانی",
     resetCycleDays: "هر N روز",
     resetCycleMonthly: "روز ثابت هر ماه",

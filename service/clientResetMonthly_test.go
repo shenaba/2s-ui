@@ -291,7 +291,7 @@ func TestAlignNextReset(t *testing.T) {
 		}
 	})
 
-	t.Run("a changed period is left to the panel", func(t *testing.T) {
+	t.Run("a changed period keeps the boundary it arrives with", func(t *testing.T) {
 		stored := &model.Client{
 			Name: "shifted", AutoReset: true, ResetDays: 30,
 			NextReset: at(2026, time.October, 1, 0, 0).Unix(),
@@ -299,8 +299,9 @@ func TestAlignNextReset(t *testing.T) {
 		seedClient(t, stored)
 		edited := *stored
 		edited.ResetDays = 60
-		// The drawer shifts NextReset by the difference so an operator can move
-		// one period without restarting it; recomputing here would overrule it.
+		// Shifted by the difference, as normalizeResetSchedule does for a
+		// request without nextReset (or as the caller sent it); recomputing
+		// here would overrule either.
 		edited.NextReset = at(2026, time.October, 31, 0, 0).Unix()
 		if err := svc.alignNextReset(db, &edited, false, now, time.UTC); err != nil {
 			t.Fatalf("alignNextReset: %v", err)

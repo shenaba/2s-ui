@@ -162,7 +162,7 @@
             :hint="$t('client.nextResetHint')"
             :mb="0"
           >
-            <DateTimeInput v-model="nextReset" />
+            <DateTimeInput v-model="nextReset" :empty-label="$t('client.nextResetAuto')" />
           </Field>
         </div>
 
@@ -490,10 +490,12 @@ const resetDays = computed({
   set: (v: number | string | null) => {
     const n = coerceResetDays(v)
     // 只有按天数时才补偿:这是"挪动当前这一期"的手段,而月结的边界由后端
-    // 按日历重算,挪它下一轮就被盖掉
+    // 按日历重算,挪它下一轮就被盖掉。
+    // 这里只挪显示用的副本,不算运营改过(不置 didEditNextReset):真正的平移由后端
+    // 拿库里最新的边界来做。抽屉打开时读到的边界可能已经被定时任务推过一期,拿它
+    // 加差值发回去,客户会在差值天数后再被重置一次
     if (!client.value.resetDayOfMonth && client.value.nextReset && client.value.nextReset > 0) {
       client.value.nextReset += (n - (client.value.resetDays ?? 0)) * 24 * 60 * 60
-      didEditNextReset.value = true
     }
     client.value.resetDays = n
   },
@@ -523,8 +525,8 @@ const percentColor = computed(() => {
 // minutes ago and roll back everything the stats job recorded meanwhile.
 const didReset = ref(false)
 // nextReset 同理:定时任务每到一个边界就把它往后推,抽屉开着跨过边界再保存,就会把
-// 打开时读到的旧日期写回去,下一分钟再重置一次。只有运营真的改了它(或改天数时
-// 顺带挪了它)才发;没发的话后端保留库里的值
+// 打开时读到的旧日期写回去,下一分钟再重置一次。只有运营直接改了这个日期才发;
+// 没发的话后端保留库里的值(改了天数的话,后端在库里的值上平移)
 const didEditNextReset = ref(false)
 const resetUsage = () => {
   client.value.totalUp = (client.value.totalUp ?? 0) + client.value.up
