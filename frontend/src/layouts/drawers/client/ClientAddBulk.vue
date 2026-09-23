@@ -68,7 +68,7 @@
       <DateTimeInput v-model="bulkData.expiry" />
     </Field>
 
-    <ResetCycleFields v-if="bulkData.autoReset" :data="bulkData" />
+    <ResetCycleFields v-if="bulkData.autoReset" :data="bulkData" style="--suffix-box-width: 70px;" />
 
     <Field :label="$t('client.inboundTags')">
       <div style="display: flex; flex-direction: column; gap: 8px;">

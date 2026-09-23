@@ -75,3 +75,17 @@ const days = computed({
   },
 })
 </script>
+
+<style scoped>
+/* The unit box beside the number. Each drawer styles its own GB box the same
+   way, but scoped, so none of those rules reach in here; the width comes from
+   --suffix-box-width so a drawer can line this one up with its own. */
+.suffix-box {
+  width: var(--suffix-box-width, 80px);
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-2);
+}
+</style>

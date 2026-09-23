@@ -40,7 +40,7 @@
       <div style="margin-bottom: 15px;">
         <SwitchLabel v-model="editData.autoReset" :label="$t('client.autoReset')" />
       </div>
-      <ResetCycleFields v-if="editData.autoReset" :data="editData" />
+      <ResetCycleFields v-if="editData.autoReset" :data="editData" style="--suffix-box-width: 64px;" />
       <MHint v-else>{{ $t('bulk.resetPolicyOffHint') }}</MHint>
     </template>
 
