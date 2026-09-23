@@ -423,7 +423,7 @@ export default {
     autoReset: "Авто сброс",
     resetDays: "Дней до сброса",
     nextReset: "Следующий сброс",
-    nextResetHint: "Сдвигает только этот период, цикл не меняется",
+    nextResetHint: "Сдвигает только этот период, цикл не меняется; пусто — по циклу",
     nextResetAuto: "Рассчитывается по циклу",
     resetCycle: "Цикл сброса",
     resetCycleDays: "Каждые N дней",

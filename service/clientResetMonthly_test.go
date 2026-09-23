@@ -197,15 +197,11 @@ func TestResetClientsNoRowStaysDelayed(t *testing.T) {
 }
 
 func TestAlignNextReset(t *testing.T) {
-	svc := newResetDB(t)
 	now := at(2026, time.September, 22, 14, 37).Unix()
-	db := database.GetDB()
 
 	t.Run("new monthly client gets a boundary immediately", func(t *testing.T) {
 		c := &model.Client{Name: "fresh", AutoReset: true, ResetDayOfMonth: 5}
-		if err := svc.alignNextReset(db, c, true, now, time.UTC); err != nil {
-			t.Fatalf("alignNextReset: %v", err)
-		}
+		alignNextReset(c, nil, now, time.UTC)
 		if want := at(2026, time.October, 5, 0, 0).Unix(); c.NextReset != want {
 			t.Errorf("next_reset = %d, want %d", c.NextReset, want)
 		}
@@ -213,9 +209,7 @@ func TestAlignNextReset(t *testing.T) {
 
 	t.Run("auto reset off clears the boundary", func(t *testing.T) {
 		c := &model.Client{Name: "off", AutoReset: false, NextReset: now - 86400}
-		if err := svc.alignNextReset(db, c, true, now, time.UTC); err != nil {
-			t.Fatalf("alignNextReset: %v", err)
-		}
+		alignNextReset(c, nil, now, time.UTC)
 		// A boundary left in the past would clear this client's counters on the
 		// first tick after auto-reset is switched back on, however much later.
 		if c.NextReset != 0 {
@@ -225,25 +219,20 @@ func TestAlignNextReset(t *testing.T) {
 
 	t.Run("delay start has no boundary yet", func(t *testing.T) {
 		c := &model.Client{Name: "later", AutoReset: true, DelayStart: true, ResetDayOfMonth: 5}
-		if err := svc.alignNextReset(db, c, true, now, time.UTC); err != nil {
-			t.Fatalf("alignNextReset: %v", err)
-		}
+		alignNextReset(c, nil, now, time.UTC)
 		if c.NextReset != 0 {
 			t.Errorf("next_reset = %d, want 0", c.NextReset)
 		}
 	})
 
 	t.Run("a changed day of month moves the boundary", func(t *testing.T) {
-		stored := &model.Client{
+		stored := model.Client{
 			Name: "moved", AutoReset: true, ResetDayOfMonth: 1,
 			NextReset: at(2026, time.October, 1, 0, 0).Unix(),
 		}
-		seedClient(t, stored)
-		edited := *stored
+		edited := stored
 		edited.ResetDayOfMonth = 20
-		if err := svc.alignNextReset(db, &edited, false, now, time.UTC); err != nil {
-			t.Fatalf("alignNextReset: %v", err)
-		}
+		alignNextReset(&edited, &stored, now, time.UTC)
 		// Without this the 20th would only take effect after the 1st came and
 		// went -- the new schedule would start a month late.
 		if want := at(2026, time.October, 20, 0, 0).Unix(); edited.NextReset != want {
@@ -252,20 +241,17 @@ func TestAlignNextReset(t *testing.T) {
 	})
 
 	t.Run("a changed period keeps the boundary it arrives with", func(t *testing.T) {
-		stored := &model.Client{
+		stored := model.Client{
 			Name: "shifted", AutoReset: true, ResetDays: 30,
 			NextReset: at(2026, time.October, 1, 0, 0).Unix(),
 		}
-		seedClient(t, stored)
-		edited := *stored
+		edited := stored
 		edited.ResetDays = 60
 		// Shifted by the difference, as normalizeResetSchedule does for a
 		// request without nextReset (or as the caller sent it); recomputing
 		// here would overrule either.
 		edited.NextReset = at(2026, time.October, 31, 0, 0).Unix()
-		if err := svc.alignNextReset(db, &edited, false, now, time.UTC); err != nil {
-			t.Fatalf("alignNextReset: %v", err)
-		}
+		alignNextReset(&edited, &stored, now, time.UTC)
 		if want := at(2026, time.October, 31, 0, 0).Unix(); edited.NextReset != want {
 			t.Errorf("next_reset = %d, want the submitted %d", edited.NextReset, want)
 		}
@@ -622,5 +608,36 @@ func TestSaveResetPolicyRejectsBadInput(t *testing.T) {
 				t.Error("want an error, got none")
 			}
 		})
+	}
+}
+
+// The monthly day is counted in the panel's timezone setting, on every platform:
+// the hint under the field sends the operator there. GetTimeLocation pins
+// Windows to the machine's zone, so this cannot go through it -- run on Windows,
+// this is the case that used to fail. A name that does not resolve falls back to
+// the panel default, as GetTimeLocation does.
+func TestPanelLocationFollowsTheSetting(t *testing.T) {
+	newResetDB(t)
+	db := database.GetDB()
+	set := func(v string) {
+		t.Helper()
+		if err := db.Where("key = ?", "timeLocation").Delete(&model.Setting{}).Error; err != nil {
+			t.Fatalf("clear setting: %v", err)
+		}
+		if err := db.Create(&model.Setting{Key: "timeLocation", Value: v}).Error; err != nil {
+			t.Fatalf("set timeLocation: %v", err)
+		}
+	}
+
+	set("Asia/Shanghai")
+	if got := panelLocation().String(); got != "Asia/Shanghai" {
+		t.Errorf("panelLocation() = %s, want the setting, Asia/Shanghai", got)
+	}
+	if panelLocation() != panelLocation() {
+		t.Error("the resolved location is not cached")
+	}
+	set("Mars/Olympus_Mons")
+	if got := panelLocation().String(); got != "Asia/Tehran" {
+		t.Errorf("panelLocation() = %s for an unknown zone, want the default, Asia/Tehran", got)
 	}
 }

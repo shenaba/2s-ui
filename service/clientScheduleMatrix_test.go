@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -18,16 +19,17 @@ import (
 // paths. A writer or shape added later belongs in these tables, not in a new
 // one-off test.
 
-// What each writer puts on the wire for an edit of row c.
-var matrixWriters = map[string]func(c model.Client) interface{}{
+// What each writer puts on the wire for an edit of row c, which it read as
+// opened.
+var matrixWriters = map[string]func(c, opened model.Client) interface{}{
 	// The Telegram bot and any JSON round-trip: every field.
-	"whole row": func(c model.Client) interface{} { return c },
+	"whole row": func(c, _ model.Client) interface{} { return c },
 
 	// The panel's client drawer.
-	"drawer": func(c model.Client) interface{} { return drawerPayload(c) },
+	"drawer": func(c, opened model.Client) interface{} { return drawerPayload(c, opened) },
 
 	// An integration typed against main: every field main had, none added here.
-	"typed against main": func(c model.Client) interface{} {
+	"typed against main": func(c, _ model.Client) interface{} {
 		return map[string]interface{}{
 			"id": c.Id, "enable": c.Enable, "name": c.Name, "config": c.Config,
 			"inbounds": c.Inbounds, "links": c.Links, "volume": c.Volume,
@@ -38,7 +40,7 @@ var matrixWriters = map[string]func(c model.Client) interface{}{
 	},
 
 	// An integration that sends only what it manages.
-	"minimal": func(c model.Client) interface{} {
+	"minimal": func(c, _ model.Client) interface{} {
 		return map[string]interface{}{
 			"id": c.Id, "enable": c.Enable, "name": c.Name, "config": c.Config,
 			"inbounds": c.Inbounds, "links": c.Links, "volume": c.Volume,
@@ -47,7 +49,7 @@ var matrixWriters = map[string]func(c model.Client) interface{}{
 	},
 
 	// The master's cluster push, as expectedClients builds it.
-	"cluster push": func(c model.Client) interface{} {
+	"cluster push": func(c, _ model.Client) interface{} {
 		return map[string]interface{}{
 			"id": c.Id, "name": c.Name, "enable": c.Enable, "config": c.Config,
 			"inbounds": c.Inbounds, "links": json.RawMessage("[]"), "volume": c.Volume,
@@ -56,10 +58,25 @@ var matrixWriters = map[string]func(c model.Client) interface{}{
 	},
 }
 
-// drawerPayload is what the client drawer sends for an edit: the whole row, less
-// the fields it sends only when the operator touched them -- the traffic
-// counters, and nextReset.
-func drawerPayload(c model.Client) map[string]interface{} {
+// drawerPayload is what the client drawer sends for an edit: the id and every
+// field that differs from the row it opened with. The traffic counters and
+// nextReset go only with an explicit reset or date edit, which no test using
+// this makes.
+func drawerPayload(edited, opened model.Client) map[string]interface{} {
+	now, before := jsonFields(edited), jsonFields(opened)
+	out := map[string]interface{}{"id": edited.Id}
+	for k, v := range now {
+		if !reflect.DeepEqual(v, before[k]) {
+			out[k] = v
+		}
+	}
+	for _, k := range []string{"up", "down", "totalUp", "totalDown", "nextReset"} {
+		delete(out, k)
+	}
+	return out
+}
+
+func jsonFields(c model.Client) map[string]interface{} {
 	raw, err := json.Marshal(c)
 	if err != nil {
 		panic(err)
@@ -67,9 +84,6 @@ func drawerPayload(c model.Client) map[string]interface{} {
 	var m map[string]interface{}
 	if err := json.Unmarshal(raw, &m); err != nil {
 		panic(err)
-	}
-	for _, k := range []string{"up", "down", "totalUp", "totalDown", "nextReset"} {
-		delete(m, k)
 	}
 	return m
 }
@@ -102,7 +116,7 @@ func TestEditMatrixKeepsTheSchedule(t *testing.T) {
 				}
 				edited := before
 				edited.Desc = "edited by " + writer
-				payload, err := json.Marshal(build(edited))
+				payload, err := json.Marshal(build(edited, before))
 				if err != nil {
 					t.Fatalf("marshal: %v", err)
 				}
@@ -431,15 +445,17 @@ func TestEditPeriodShiftsTheStoredBoundary(t *testing.T) {
 		want  int64 // 0: computed from now, want the new period from the save
 	}{
 		{"drawer, longer period", periodic, func(row model.Client) interface{} {
-			row.ResetDays = 31
-			return drawerPayload(row)
+			e := row
+			e.ResetDays = 31
+			return drawerPayload(e, row)
 		}, boundary + day},
 		{"drawer, shorter period", periodic, func(row model.Client) interface{} {
-			row.ResetDays = 25
-			return drawerPayload(row)
+			e := row
+			e.ResetDays = 25
+			return drawerPayload(e, row)
 		}, boundary - 5*day},
 		{"minimal writer", periodic, func(row model.Client) interface{} {
-			m := matrixWriters["minimal"](row).(map[string]interface{})
+			m := matrixWriters["minimal"](row, row).(map[string]interface{})
 			m["resetDays"] = 31
 			return m
 		}, boundary + day},
@@ -450,22 +466,24 @@ func TestEditPeriodShiftsTheStoredBoundary(t *testing.T) {
 		}, boundary + 3*day},
 		{"typed against main sends the old boundary", periodic, func(row model.Client) interface{} {
 			row.ResetDays = 31
-			return matrixWriters["typed against main"](row)
+			return matrixWriters["typed against main"](row, row)
 		}, boundary},
 		{"same period, nothing moves", periodic, func(row model.Client) interface{} {
-			return drawerPayload(row)
+			return drawerPayload(row, row)
 		}, boundary},
 		{"a day of the month has no period to shift",
 			model.Client{AutoReset: true, ResetDayOfMonth: 15, NextReset: boundary},
 			func(row model.Client) interface{} {
-				row.ResetDays = 7
-				return drawerPayload(row)
+				e := row
+				e.ResetDays = 7
+				return drawerPayload(e, row)
 			}, boundary},
 		{"auto reset switched on starts a period from now",
 			model.Client{},
 			func(row model.Client) interface{} {
-				row.AutoReset, row.ResetDays = true, 31
-				return drawerPayload(row)
+				e := row
+				e.AutoReset, e.ResetDays = true, 31
+				return drawerPayload(e, row)
 			}, 0},
 	}
 	for _, c := range cases {
@@ -539,7 +557,7 @@ func TestEditPeriodShiftStartsFromTheJobsBoundary(t *testing.T) {
 
 	edited := opened
 	edited.ResetDays = 31
-	payload, err := json.Marshal(drawerPayload(edited))
+	payload, err := json.Marshal(drawerPayload(edited, opened))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -560,5 +578,103 @@ func TestEditPeriodShiftStartsFromTheJobsBoundary(t *testing.T) {
 	}
 	if after.Up != 0 || after.Down != 0 {
 		t.Errorf("counters the drawer read were written back: %d/%d", after.Up, after.Down)
+	}
+}
+
+// An edit is decoded over the stored row: a request that names two fields
+// changes those two, and every other column keeps its stored value -- counters,
+// the Telegram binding, the quota and expiry, the schedule, the timestamps.
+func TestEditKeepsWhatTheRequestOmits(t *testing.T) {
+	svc := newResetDB(t)
+	db := database.GetDB()
+	now := time.Now().Unix()
+	seedClient(t, &model.Client{
+		Name: "full", Enable: true, Volume: 50 << 30, Expiry: now + 40*86400,
+		Up: 7, Down: 9, TotalUp: 70, TotalDown: 90, LimitIp: 3, Group: "g", Remark: "r",
+		TgId: 4242, CreatedAt: now - 86400, OnlineAt: now - 60,
+		AutoReset: true, ResetDayOfMonth: 15, NextReset: now + 5*86400,
+		Inbounds: json.RawMessage("[]"),
+	})
+	var before model.Client
+	if err := db.Where("name = ?", "full").First(&before).Error; err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	payload, err := json.Marshal(map[string]interface{}{"id": before.Id, "desc": "only this"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	tx := db.Begin()
+	if _, err := svc.Save(tx, "edit", payload, ""); err != nil {
+		tx.Rollback()
+		t.Fatalf("Save: %v", err)
+	}
+	tx.Commit()
+	var after model.Client
+	if err := db.Where("id = ?", before.Id).First(&after).Error; err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if after.Desc != "only this" {
+		t.Fatalf("desc = %q, the edit did not land", after.Desc)
+	}
+	// Links are regenerated from the inbounds on every save; everything else
+	// must be exactly as stored.
+	after.Desc, after.Links, before.Links = before.Desc, nil, nil
+	if !reflect.DeepEqual(jsonFields(after), jsonFields(before)) {
+		t.Errorf("an edit of the description moved other fields:\n  before %+v\n  after  %+v", before, after)
+	}
+}
+
+// The drawer opened on a delay-start client that makes its first connection
+// before the operator saves. The drawer sends only what the operator changed,
+// so the state the job wrote in between -- delay start cleared, the first
+// boundary set, the traffic -- survives the save. As a whole row it wrote
+// delay start back on, and the reset clock started over on the next tick.
+func TestEditAfterFirstConnectionKeepsWhatTheJobWrote(t *testing.T) {
+	svc := newResetDB(t)
+	db := database.GetDB()
+	seedClient(t, &model.Client{Name: "c", Enable: true, DelayStart: true, AutoReset: true, ResetDays: 30})
+	var opened model.Client
+	if err := db.Where("name = ?", "c").First(&opened).Error; err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	// First bytes arrive, and the job runs, while the drawer is open.
+	if err := db.Model(model.Client{}).Where("id = ?", opened.Id).
+		UpdateColumns(map[string]interface{}{"up": 100, "down": 200}).Error; err != nil {
+		t.Fatalf("add traffic: %v", err)
+	}
+	tx := db.Begin()
+	if _, _, _, err := svc.ResetClients(tx, time.Now().Unix(), time.UTC); err != nil {
+		tx.Rollback()
+		t.Fatalf("ResetClients: %v", err)
+	}
+	tx.Commit()
+	var started model.Client
+	if err := db.Where("id = ?", opened.Id).First(&started).Error; err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if started.DelayStart || started.NextReset == 0 {
+		t.Fatalf("setup: first use did not happen: %+v", started)
+	}
+
+	edited := opened
+	edited.Desc = "renamed plan"
+	payload, err := json.Marshal(drawerPayload(edited, opened))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	tx = db.Begin()
+	if _, err := svc.Save(tx, "edit", payload, ""); err != nil {
+		tx.Rollback()
+		t.Fatalf("Save: %v", err)
+	}
+	tx.Commit()
+	var after model.Client
+	if err := db.Where("id = ?", opened.Id).First(&after).Error; err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if after.DelayStart || after.NextReset != started.NextReset || after.Up != 100 || after.Down != 200 {
+		t.Errorf("the save wrote the drawer's stale state back: delayStart=%v nextReset=%d (want %d) up/down=%d/%d",
+			after.DelayStart, after.NextReset, started.NextReset, after.Up, after.Down)
 	}
 }

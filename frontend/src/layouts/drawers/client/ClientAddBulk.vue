@@ -68,32 +68,7 @@
       <DateTimeInput v-model="bulkData.expiry" />
     </Field>
 
-    <div v-if="bulkData.autoReset" class="grid2" style="margin-bottom: 15px;">
-      <Field :label="$t('client.resetCycle')" :mb="0">
-        <Select v-model="resetMode">
-          <option value="monthly">{{ $t('client.resetCycleMonthly') }}</option>
-          <option value="days">{{ $t('client.resetCycleDays') }}</option>
-        </Select>
-      </Field>
-      <Field
-        :label="resetMode === 'monthly' ? $t('client.resetDayOfMonth') : $t('client.resetDays')"
-        :hint="resetMode === 'monthly' ? $t('client.resetDayOfMonthHint') : ''"
-        :mb="0"
-      >
-        <div style="display: flex; gap: 8px;">
-          <input
-            v-if="resetMode === 'monthly'"
-            class="input mono"
-            type="number"
-            min="1"
-            max="31"
-            v-model.number="resetDayOfMonth"
-          />
-          <input v-else class="input mono" type="number" min="1" v-model.number="resetDays" />
-          <div class="input suffix-box">{{ resetMode === 'monthly' ? $t('date.dayOfMonth') : $t('date.d') }}</div>
-        </div>
-      </Field>
-    </div>
+    <ResetCycleFields v-if="bulkData.autoReset" :data="bulkData" />
 
     <Field :label="$t('client.inboundTags')">
       <div style="display: flex; flex-direction: column; gap: 8px;">
@@ -125,7 +100,7 @@ import { useI18n } from 'vue-i18n'
 import { push } from 'notivue'
 import Data from '@/store/modules/data'
 import RandomUtil from '@/plugins/randomUtil'
-import { Client, coerceResetDayOfMonth, coerceResetDays, createClient, randomConfigs } from '@/types/clients'
+import { Client, createClient, randomConfigs } from '@/types/clients'
 import MDrawer from '@/components/ui/MDrawer.vue'
 import Field from '@/components/ui/Field.vue'
 import Btn from '@/components/ui/Btn.vue'
@@ -134,7 +109,7 @@ import Chip from '@/components/ui/Chip.vue'
 import Check from '@/components/ui/Check.vue'
 import SwitchLabel from '@/components/ui/SwitchLabel.vue'
 import DateTimeInput from '@/components/ui/DateTimeInput.vue'
-import Select from '@/components/ui/Select.vue'
+import ResetCycleFields from './ResetCycleFields.vue'
 
 const props = defineProps<{
   visible: boolean
@@ -184,32 +159,6 @@ const autoReset = computed({
 const delayStart = computed({
   get: () => bulkData.value.delayStart,
   set: (v: boolean) => { bulkData.value.delayStart = v && bulkData.value.autoReset },
-})
-
-// 数字输入不能直接绑到 bulkData 上:v-model.number 在 parseFloat 失败时原样
-// 返回字符串,清空输入框得到的是 "" 而不是 0,提交后 Go 端的 int 字段解析失败,
-// 整批创建带着一条 json 错误中止
-const resetDays = computed({
-  get: () => bulkData.value.resetDays,
-  set: (v: number | string | null) => { bulkData.value.resetDays = coerceResetDays(v) },
-})
-const resetDayOfMonth = computed({
-  get: () => bulkData.value.resetDayOfMonth,
-  set: (v: number | string | null) => { bulkData.value.resetDayOfMonth = coerceResetDayOfMonth(v) },
-})
-
-// 和抽屉里同一套:两种周期共用一个数字输入,谁有值谁决定模式
-const resetMode = computed<'days' | 'monthly'>({
-  get: () => (bulkData.value.resetDayOfMonth > 0 ? 'monthly' : 'days'),
-  set: (m) => {
-    if (m === 'monthly') {
-      bulkData.value.resetDayOfMonth = bulkData.value.resetDayOfMonth || new Date().getDate()
-      bulkData.value.resetDays = 0
-    } else {
-      bulkData.value.resetDayOfMonth = 0
-      bulkData.value.resetDays = bulkData.value.resetDays || 30
-    }
-  },
 })
 
 const patterns = computed(() => ({

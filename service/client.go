@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"strings"
+	"sync"
 	"time"
+	// The monthly reset day is counted in the panel's timezone setting, which
+	// has to resolve on hosts without a zoneinfo database -- Windows above all.
+	_ "time/tzdata"
 
 	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/database/model"
@@ -90,8 +94,37 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 	switch act {
 	case "new", "edit":
 		var client model.Client
-		err = json.Unmarshal(data, &client)
-		if err != nil {
+		// An edit is decoded over the stored row, so it replaces only the fields
+		// the request carries and every other one keeps its stored value. Whole
+		// rows used to replace everything, and each writer that sends less --
+		// a minimal integration, the master's cluster push (which names its
+		// keys), the drawer (which sends only what the operator changed) -- had
+		// a field it omitted zeroed, or needed a restore added for that field.
+		// Fields the background jobs change while a form is open (traffic,
+		// next reset, delay start after the first connection) are exactly the
+		// ones a stale whole row writes back.
+		//
+		// stored is the row as it was, for the decisions that compare old and
+		// new. Scalars only: decoding into a json.RawMessage reuses its backing
+		// array, so sharing one with the decoded client would rewrite it too.
+		var stored *model.Client
+		if act == "edit" {
+			var ref struct {
+				Id uint `json:"id"`
+			}
+			if err = json.Unmarshal(data, &ref); err != nil {
+				return nil, err
+			}
+			if err = tx.Model(model.Client{}).Where("id = ?", ref.Id).First(&client).Error; err != nil {
+				return nil, err
+			}
+			stored = &model.Client{
+				Name: client.Name, CreatedAt: client.CreatedAt, OnlineAt: client.OnlineAt,
+				DelayStart: client.DelayStart, AutoReset: client.AutoReset, ResetDays: client.ResetDays,
+				ResetDayOfMonth: client.ResetDayOfMonth, NextReset: client.NextReset,
+			}
+		}
+		if err = json.Unmarshal(data, &client); err != nil {
 			return nil, err
 		}
 		// Before the rename check below, and not exempted for a cluster push:
@@ -100,14 +133,7 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 		if err = normalizeClientName(&client); err != nil {
 			return nil, err
 		}
-		has := payloadFields(data)
-		var stored *model.Client
-		if act == "edit" {
-			if stored, err = s.storedSchedule(tx, client.Id); err != nil {
-				return nil, err
-			}
-		}
-		normalizeResetSchedule(&client, has, stored)
+		normalizeResetSchedule(&client, payloadFields(data), stored)
 		if err = validateResetSchedule(&client); err != nil {
 			return nil, err
 		}
@@ -118,12 +144,7 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 			// Only a name actually changing is validated, so a duplicate that
 			// predates this check stays editable on its other fields — same
 			// stance as the node-name bracket rule.
-			var oldName string
-			if err = tx.Model(model.Client{}).Select("name").
-				Where("id = ?", client.Id).Scan(&oldName).Error; err != nil {
-				return nil, err
-			}
-			if oldName != client.Name {
+			if stored.Name != client.Name {
 				if err = s.ensureNameAvailable(tx, client.Name, client.Id); err != nil {
 					return nil, err
 				}
@@ -152,9 +173,11 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 			if err != nil {
 				return nil, err
 			}
-			if err = s.preserveServerManagedFields(tx, &client, payloadFields(data)); err != nil {
-				return nil, err
-			}
+			// The server's own, whatever the request says. The counters and
+			// tgId need nothing here: omitted they keep the stored value, and
+			// sent they are the change -- the drawer's per-client reset works
+			// by sending zeroed counters.
+			client.CreatedAt, client.OnlineAt = stored.CreatedAt, stored.OnlineAt
 		} else {
 			client.CreatedAt = time.Now().Unix()
 			err = json.Unmarshal(client.Inbounds, &inboundIds)
@@ -162,9 +185,7 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 				return nil, err
 			}
 		}
-		if err = s.alignNextReset(tx, &client, act == "new", time.Now().Unix(), panelLocation()); err != nil {
-			return nil, err
-		}
+		alignNextReset(&client, stored, time.Now().Unix(), panelLocation())
 		err = tx.Save(&client).Error
 		if err != nil {
 			return nil, err
@@ -214,10 +235,7 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 				return nil, err
 			}
 			client.CreatedAt = now
-			// isNew, so this reads no rows -- safe to call per client.
-			if err = s.alignNextReset(tx, client, true, now, loc); err != nil {
-				return nil, err
-			}
+			alignNextReset(client, nil, now, loc)
 			var ids []uint
 			if err = json.Unmarshal(client.Inbounds, &ids); err != nil {
 				return nil, err
@@ -291,9 +309,7 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 			if err = setConfigIdentity(client); err != nil {
 				return nil, err
 			}
-			// nil: the bulk payload is the list projection, so none of the
-			// counters it carries are authoritative — take them all from the row.
-			if err = s.preserveServerManagedFields(tx, client, nil); err != nil {
+			if err = s.preserveServerManagedFields(tx, client); err != nil {
 				return nil, err
 			}
 			if len(changedInboundIds) > 0 {
@@ -333,12 +349,9 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 			err = common.NewError("no clients selected")
 			return nil, err
 		}
-		if policy.ResetDayOfMonth < 0 || policy.ResetDayOfMonth > 31 {
-			err = common.NewErrorf("reset day of month out of range: %d", policy.ResetDayOfMonth)
-			return nil, err
-		}
-		if policy.ResetDays < 0 || policy.ResetDays > maxScheduleDays {
-			err = common.NewErrorf("reset days out of range: %d", policy.ResetDays)
+		if err = validateResetSchedule(&model.Client{
+			ResetDays: policy.ResetDays, ResetDayOfMonth: policy.ResetDayOfMonth,
+		}); err != nil {
 			return nil, err
 		}
 		// Refused rather than stored, unlike a single client save.
@@ -499,12 +512,9 @@ func normalizeClientName(client *model.Client) error {
 // forms always send both; an API caller creating a client has nothing to put in
 // links and no reason to guess it is mandatory.
 //
-// Create only, deliberately. On an edit these carry state nothing else can
-// recover: an absent inbounds would read as "remove from every inbound", and an
-// absent links would drop the external entries the payload is the only source of
-// (node-owned ones re-attach from the stored row, user-authored ones do not). An
-// explicit empty array is a different thing and still means what it says -- it
-// is two bytes, so it never reaches this.
+// Create only: an edit is decoded over the stored row, so absent fields there
+// keep their stored value. An explicit empty array is a different thing and
+// still means what it says -- it is two bytes, so it never reaches this.
 func defaultClientJSONFields(client *model.Client) {
 	if len(client.Links) == 0 {
 		client.Links = json.RawMessage("[]")
@@ -537,50 +547,31 @@ func (s *ClientService) ensureNameAvailable(tx *gorm.DB, name string, excludeId 
 	return nil
 }
 
-// preserveServerManagedFields restores columns the server owns from the stored
-// row. createdAt/onlineAt always; the traffic counters only when the request did
-// not carry them, which is what separates the two kinds of caller: a master's
-// node push omits them (they would unmarshal as zero and wipe the node's
-// totals), while the SPA sends them — and its per-client "Reset" button works by
-// sending zeroed ones, so overwriting those would silently undo the reset.
-// payloadHas nil means "carried nothing", i.e. preserve every counter.
-func (s *ClientService) preserveServerManagedFields(tx *gorm.DB, client *model.Client, payloadHas map[string]bool) error {
+// preserveServerManagedFields restores the columns the server owns from the
+// stored row, for the bulk edit. That path submits the client list projection:
+// its counters are a copy from whenever the list was loaded, and it has no
+// totals or Telegram binding at all, so none of these may come from the
+// request -- the zeroes would wipe the traffic history and unbind whoever was
+// watching their own usage through the bot.
+func (s *ClientService) preserveServerManagedFields(tx *gorm.DB, client *model.Client) error {
 	var existing model.Client
 	err := tx.Model(model.Client{}).Select("created_at", "online_at", "up", "down", "total_up", "total_down", "tg_id").
 		Where("id = ?", client.Id).First(&existing).Error
 	if err != nil {
 		// ErrRecordNotFound included, deliberately: failing open here would write
-		// the payload's zeroed counters and destroy the node's traffic history,
-		// and an edit whose row vanished has nothing to preserve onto anyway.
-		// Both callers load the row via findInboundsChanges first, so in practice
-		// this only fires on a concurrent delete.
+		// the projection's counters over the stored ones, and an edit whose row
+		// vanished has nothing to preserve onto anyway. findInboundsChanges loads
+		// the row first, so in practice this only fires on a concurrent delete.
 		return err
 	}
-	client.CreatedAt = existing.CreatedAt
-	client.OnlineAt = existing.OnlineAt
-	if !payloadHas["up"] {
-		client.Up = existing.Up
-	}
-	if !payloadHas["down"] {
-		client.Down = existing.Down
-	}
-	if !payloadHas["totalUp"] {
-		client.TotalUp = existing.TotalUp
-	}
-	if !payloadHas["totalDown"] {
-		client.TotalDown = existing.TotalDown
-	}
-	// The panel's client form has no field for the Telegram binding -- it is
-	// set through the bot -- so without this every save from the panel would
-	// silently unbind whoever was watching their own usage.
-	if !payloadHas["tgId"] {
-		client.TgId = existing.TgId
-	}
+	client.CreatedAt, client.OnlineAt = existing.CreatedAt, existing.OnlineAt
+	client.Up, client.Down = existing.Up, existing.Down
+	client.TotalUp, client.TotalDown = existing.TotalUp, existing.TotalDown
+	client.TgId = existing.TgId
 	return nil
 }
 
-// payloadFields reports which keys the request object actually carried, so an
-// omitted server-managed value is preserved rather than written as zero.
+// payloadFields reports which keys the request object actually carried.
 func payloadFields(data json.RawMessage) map[string]bool {
 	var raw map[string]json.RawMessage
 	if json.Unmarshal(data, &raw) != nil {
@@ -1209,7 +1200,8 @@ func nextResetAt(c *model.Client, dt int64, loc *time.Location) int64 {
 // normalizeResetSchedule brings an incoming client into the shape ResetClients
 // expects. Called on every write path that takes a whole client from outside --
 // new, edit, addbulk -- before validation, so validation judges what will
-// actually be stored.
+// actually be stored. stored is the schedule the row had before an edit, nil on
+// a create.
 //
 // Auto reset owns the whole schedule, and a client without it has none: no
 // period and no delayed start. Delay start only holds the reset clock until the
@@ -1220,69 +1212,26 @@ func nextResetAt(c *model.Client, dt int64, loc *time.Location) int64 {
 // a client with no time limit. main cleared the period whenever auto reset was
 // switched off in the drawer; this is the same rule, applied to every caller.
 //
-// On an edit, a schedule field the request does not mention keeps its stored
-// value -- the same stance preserveServerManagedFields takes for the counters --
-// with one adjustment: a kept NextReset moves with a changed N-day period.
-// Whole-row writers (the bot, a JSON round-trip) are unaffected, since they
-// mention everything; the drawer leaves out only nextReset, unless the operator
-// set it. The writers this is for do not: an integration typed against main has
-// no resetDayOfMonth to send and drops it on read, a minimal one sends only what
-// it changes, and the master's cluster push names its keys and none of these.
-// Zeroing what they omit wiped a day of the month (auto reset with no period,
-// which ResetClients skips: the client stopped resetting) or NextReset (the
-// periodic branch matched on the next tick and cleared the client's usage --
-// that one on main already).
+// An edit that changes the N-day period without sending nextReset moves the
+// stored boundary by the difference, which is how the panel has always let an
+// operator lengthen or shorten the current period without restarting it. It is
+// done here, from the stored boundary, and not by the caller: the drawer used to
+// shift the copy it read when it opened, so once the job had moved the boundary
+// on while the drawer stayed open, it sent the old boundary plus the difference
+// and the client reset again that much later -- a day, for 30 -> 31. N-day mode
+// on both sides only: a day of the month has no period to shift, and a switch of
+// mode or of auto reset gets a fresh boundary from alignNextReset.
 func normalizeResetSchedule(c *model.Client, has map[string]bool, stored *model.Client) {
-	if stored != nil {
-		if !has["delayStart"] {
-			c.DelayStart = stored.DelayStart
-		}
-		if !has["autoReset"] {
-			c.AutoReset = stored.AutoReset
-		}
-		if !has["resetDays"] {
-			c.ResetDays = stored.ResetDays
-		}
-		if !has["resetDayOfMonth"] {
-			c.ResetDayOfMonth = stored.ResetDayOfMonth
-		}
-		if !has["nextReset"] {
-			c.NextReset = stored.NextReset
-			// A changed period moves the boundary it produced by the same
-			// amount, which is how the panel has always let an operator
-			// lengthen or shorten the current period without restarting it.
-			// It is done here, from the stored boundary, and not by the caller:
-			// the drawer used to shift the copy it read when it opened, so once
-			// the job had moved the boundary on while the drawer stayed open, it
-			// sent the old boundary plus the difference and the client reset
-			// again that much later -- a day, for 30 -> 31. N-day mode on both
-			// sides only: a day of the month has no period to shift, and a
-			// switch of mode or of auto reset gets a fresh boundary from
-			// alignNextReset.
-			if c.AutoReset && stored.AutoReset &&
-				c.ResetDayOfMonth == 0 && stored.ResetDayOfMonth == 0 &&
-				c.ResetDays > 0 && stored.ResetDays > 0 && stored.NextReset > 0 {
-				c.NextReset += int64(c.ResetDays-stored.ResetDays) * 86400
-			}
-		}
+	if stored != nil && !has["nextReset"] &&
+		c.AutoReset && stored.AutoReset &&
+		c.ResetDayOfMonth == 0 && stored.ResetDayOfMonth == 0 &&
+		c.ResetDays > 0 && stored.ResetDays > 0 && stored.NextReset > 0 {
+		c.NextReset = stored.NextReset + int64(c.ResetDays-stored.ResetDays)*86400
 	}
 	if !c.AutoReset {
 		c.DelayStart = false
 		c.ResetDays, c.ResetDayOfMonth = 0, 0
 	}
-}
-
-// storedSchedule reads the reset-schedule columns of the row an edit is about
-// to overwrite, for normalizeResetSchedule to fall back on.
-func (s *ClientService) storedSchedule(tx *gorm.DB, id uint) (*model.Client, error) {
-	var stored model.Client
-	err := tx.Model(model.Client{}).
-		Select("delay_start", "auto_reset", "reset_days", "reset_day_of_month", "next_reset").
-		Where("id = ?", id).First(&stored).Error
-	if err != nil {
-		return nil, err
-	}
-	return &stored, nil
 }
 
 // maxScheduleDays bounds the reset period. It is not a policy -- a cap below what
@@ -1301,8 +1250,8 @@ const maxScheduleDays = 10_000_000
 // A day out of range is not dangerous in itself -- nextMonthlyReset clamps per
 // month, so 200 silently means "month end" and nothing loops -- but the drawer's
 // input carries max=31 and would show the stored number unchanged, so the panel
-// and the row disagree about what was configured. The bulk action refuses the
-// same range; without this the two write paths disagreed about a legal day.
+// and the row disagree about what was configured. The bulk action checks with
+// this too, so the two write paths agree about a legal day.
 //
 // Deliberately narrower than the bulk action's checks: a period of zero with
 // auto reset on stays writable here, because ResetClients leaves such a row
@@ -1317,9 +1266,26 @@ func validateResetSchedule(c *model.Client) error {
 	return nil
 }
 
-// panelLocation is the configured timezone, or the machine's own if the setting
-// cannot be read. Only the monthly mode consults it, and a timezone lookup is
-// not a reason to fail the write it is part of.
+// panelLoc caches what panelLocation resolved, keyed by the setting it came
+// from. DepleteJob asks every minute, a lookup reads the zoneinfo database each
+// time, and a name that does not resolve would otherwise be reported once a
+// minute rather than once.
+var panelLoc struct {
+	sync.Mutex
+	name string
+	loc  *time.Location
+}
+
+// panelLocation is the timezone the monthly reset day is counted in: the panel's
+// timezone setting, which the hint under the day-of-month field points to.
+//
+// It does not go through GetTimeLocation, which on Windows ignores the setting
+// for the machine's zone -- the hint would send an operator to a setting that
+// changes nothing. The zoneinfo database that made that necessary is embedded
+// (time/tzdata), so the setting resolves on every platform. A name that does not
+// resolve falls back to the panel's default zone, as GetTimeLocation does, and a
+// setting that cannot be read to the machine's zone; neither is a reason to fail
+// the write it is part of.
 //
 // The nil check is not defensive padding: the setting is read through the global
 // handle, which unit tests driving this service with their own gorm.DB never
@@ -1330,16 +1296,31 @@ func panelLocation() *time.Location {
 		return time.Local
 	}
 	var settingService SettingService
-	loc, err := settingService.GetTimeLocation()
+	name, err := settingService.getString("timeLocation")
 	if err != nil {
-		logger.Warning("get time location failed, falling back to local: ", err)
+		logger.Warning("cannot read the timezone setting, monthly resets use the machine's zone: ", err)
 		return time.Local
 	}
+	panelLoc.Lock()
+	defer panelLoc.Unlock()
+	if panelLoc.loc != nil && panelLoc.name == name {
+		return panelLoc.loc
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		fallback := defaultValueMap["timeLocation"]
+		logger.Warningf("timezone %q does not exist, monthly resets use %s", name, fallback)
+		if loc, err = time.LoadLocation(fallback); err != nil {
+			loc = time.Local
+		}
+	}
+	panelLoc.name, panelLoc.loc = name, loc
 	return loc
 }
 
 // alignNextReset decides NextReset for a client about to be stored: keep the one
-// submitted, or compute one from the schedule.
+// submitted, or compute one from the schedule. stored is the schedule the row
+// had before an edit, nil on a create.
 //
 // It computes when there is no usable boundary: a new client, a NextReset of 0,
 // a day of the month that changed (the old boundary belongs to the old day), or
@@ -1352,38 +1333,33 @@ func panelLocation() *time.Location {
 // Zero has to mean "compute", not "keep": with auto reset on, the periodic
 // branch in ResetClients matches `next_reset < now` on its next tick, so a
 // stored 0 clears the client's usage within a minute. The drawer's date field
-// has a clear button that writes exactly that, and shows "unlimited" while it
-// does -- the opposite of what storing it would do.
+// has a clear button that writes exactly that.
 //
 // Zeroing rather than leaving the old boundary when auto reset is off is not
 // cosmetic either: a stale PAST boundary would clear a client's counters on
 // the first tick after auto reset is switched back on, months later.
-func (s *ClientService) alignNextReset(tx *gorm.DB, client *model.Client, isNew bool, dt int64, loc *time.Location) error {
+func alignNextReset(client, stored *model.Client, dt int64, loc *time.Location) {
 	if !client.AutoReset || client.DelayStart {
 		// A delayed start has no boundary yet by design: ResetClients sets the
 		// first one when the client's first bytes arrive.
 		client.NextReset = 0
-		return nil
+		return
 	}
 	if client.ResetDays <= 0 && client.ResetDayOfMonth <= 0 {
 		// Misconfigured either way, and ResetClients skips such a row on
 		// purpose. Leave whatever came in rather than inventing a boundary.
-		return nil
+		return
 	}
-	recompute := client.NextReset <= 0 || (isNew && client.NextReset <= dt)
-	if !recompute && !isNew {
-		var old model.Client
-		if err := tx.Model(model.Client{}).Select("auto_reset", "reset_day_of_month").
-			Where("id = ?", client.Id).First(&old).Error; err != nil {
-			return err
-		}
-		recompute = old.ResetDayOfMonth != client.ResetDayOfMonth ||
-			(!old.AutoReset && client.NextReset <= dt)
+	recompute := client.NextReset <= 0
+	if stored == nil {
+		recompute = recompute || client.NextReset <= dt
+	} else {
+		recompute = recompute || stored.ResetDayOfMonth != client.ResetDayOfMonth ||
+			(!stored.AutoReset && client.NextReset <= dt)
 	}
 	if recompute {
 		client.NextReset = nextResetAt(client, dt, loc)
 	}
-	return nil
 }
 
 // ResetClients applies the per-client periodic reset. It returns the affected

@@ -422,7 +422,7 @@ export default {
     autoReset: "自動重置",
     resetDays: "重置天數",
     nextReset: "下次重置",
-    nextResetHint: "只挪動這一次,不改週期",
+    nextResetHint: "只挪動這一次,不改週期;留空表示按週期計算",
     nextResetAuto: "按週期計算",
     resetCycle: "重置週期",
     resetCycleDays: "每 N 天",

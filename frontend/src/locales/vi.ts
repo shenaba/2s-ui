@@ -422,7 +422,7 @@ export default {
     autoReset: "Tự động đặt lại",
     resetDays: "Số ngày đặt lại",
     nextReset: "Đặt lại lần sau",
-    nextResetHint: "Chỉ dời kỳ này, chu kỳ giữ nguyên",
+    nextResetHint: "Chỉ dời kỳ này, chu kỳ giữ nguyên; để trống để tính theo chu kỳ",
     nextResetAuto: "Tính theo chu kỳ",
     resetCycle: "Chu kỳ đặt lại",
     resetCycleDays: "Mỗi N ngày",

@@ -74,17 +74,37 @@ func TestCreateAcceptsOmittedLinksAndInbounds(t *testing.T) {
 		}
 	})
 
-	// An edit is deliberately NOT defaulted: an absent inbounds would read as
-	// "remove from every inbound" and an absent links would drop the external
-	// entries the payload is the only source of. Failing is the safe answer.
-	t.Run("edit is left alone", func(t *testing.T) {
+	// An edit is decoded over the stored row, so an absent inbounds or links
+	// keeps the stored value. Read as empty, it would have meant "remove from
+	// every inbound" and dropped the external entries the payload was the only
+	// source of; such an edit used to fail for that reason.
+	t.Run("edit keeps what it omits", func(t *testing.T) {
 		var stored model.Client
 		if err := db.Where("name = ?", "lean").First(&stored).Error; err != nil {
 			t.Fatalf("read back: %v", err)
 		}
+		external := `[{"type":"external","remark":"mine","uri":"vless://x@example.com:443"}]`
+		if err := db.Model(model.Client{}).Where("id = ?", stored.Id).
+			Update("links", json.RawMessage(external)).Error; err != nil {
+			t.Fatalf("seed links: %v", err)
+		}
 		data := json.RawMessage(`{"id":` + strconv.FormatUint(uint64(stored.Id), 10) + `,"name":"lean","config":{}}`)
-		if _, err := svc.Save(db, "edit", data, "example.com"); err == nil {
-			t.Error("edit silently accepted an omitted links/inbounds")
+		if _, err := svc.Save(db, "edit", data, "example.com"); err != nil {
+			t.Fatalf("edit without links/inbounds: %v", err)
+		}
+		var after model.Client
+		if err := db.Where("id = ?", stored.Id).First(&after).Error; err != nil {
+			t.Fatalf("read back: %v", err)
+		}
+		var links []map[string]interface{}
+		if err := json.Unmarshal(after.Links, &links); err != nil {
+			t.Fatalf("links %q: %v", after.Links, err)
+		}
+		if len(links) != 1 || links[0]["remark"] != "mine" {
+			t.Errorf("the external link did not survive an edit that omitted links: %s", after.Links)
+		}
+		if string(after.Inbounds) != string(stored.Inbounds) {
+			t.Errorf("inbounds = %s, want the stored %s", after.Inbounds, stored.Inbounds)
 		}
 	})
 }

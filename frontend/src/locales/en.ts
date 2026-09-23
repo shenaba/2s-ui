@@ -428,7 +428,7 @@ export default {
     autoReset: "Auto Reset",
     resetDays: "Reset Days",
     nextReset: "Next Reset",
-    nextResetHint: "Shifts this period only; the cycle stays",
+    nextResetHint: "Shifts this period only; the cycle stays. Leave empty to compute it from the cycle",
     nextResetAuto: "Computed from the cycle",
     resetCycle: "Reset Cycle",
     resetCycleDays: "Every N days",

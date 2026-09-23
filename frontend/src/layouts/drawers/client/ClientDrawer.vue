@@ -110,32 +110,7 @@
           <SwitchLabel v-model="autoReset" :label="$t('client.autoReset')" />
         </div>
 
-        <div v-if="client.autoReset" class="grid2" style="margin-bottom: 15px;">
-          <Field :label="$t('client.resetCycle')" :mb="0">
-            <Select v-model="resetMode">
-              <option value="monthly">{{ $t('client.resetCycleMonthly') }}</option>
-              <option value="days">{{ $t('client.resetCycleDays') }}</option>
-            </Select>
-          </Field>
-          <Field
-            :label="resetMode === 'monthly' ? $t('client.resetDayOfMonth') : $t('client.resetDays')"
-            :hint="resetMode === 'monthly' ? $t('client.resetDayOfMonthHint') : ''"
-            :mb="0"
-          >
-            <div style="display: flex; gap: 8px;">
-              <input
-                v-if="resetMode === 'monthly'"
-                class="input mono"
-                type="number"
-                min="1"
-                max="31"
-                v-model.number="resetDayOfMonth"
-              />
-              <input v-else class="input mono" type="number" min="1" v-model.number="resetDays" />
-              <div class="input suffix-box">{{ resetMode === 'monthly' ? $t('date.dayOfMonth') : $t('date.d') }}</div>
-            </div>
-          </Field>
-        </div>
+        <ResetCycleFields v-if="client.autoReset" :data="client" @period="shiftNextReset" />
 
         <div class="grid2" style="margin-bottom: 15px;">
           <Field :label="$t('ui.ipLimit')" :hint="$t('ui.unlimitedHint')" :mb="0">
@@ -282,7 +257,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Data from '@/store/modules/data'
-import { Client, Link, coerceResetDayOfMonth, coerceResetDays, createClient, randomConfigs, shuffleConfigs, updateConfigs } from '@/types/clients'
+import { Client, Link, createClient, randomConfigs, shuffleConfigs, updateConfigs } from '@/types/clients'
 import { HumanReadable } from '@/plugins/utils'
 import Drawer from '@/components/ui/Drawer.vue'
 import Tabs from '@/components/ui/Tabs.vue'
@@ -296,8 +271,8 @@ import SwitchLabel from '@/components/ui/SwitchLabel.vue'
 import SectionLabel from '@/components/ui/SectionLabel.vue'
 import KeyInput from '@/components/ui/KeyInput.vue'
 import DateTimeInput from '@/components/ui/DateTimeInput.vue'
-import Select from '@/components/ui/Select.vue'
 import BarMini from '@/components/charts/BarMini.vue'
+import ResetCycleFields from './ResetCycleFields.vue'
 import IconBtn from '@/components/ui/IconBtn.vue'
 import { copyToClipboard } from '@/plugins/clipboard'
 
@@ -437,45 +412,24 @@ const autoReset = computed({
       client.value.resetDayOfMonth = 0
       client.value.nextReset = 0
       client.value.delayStart = false
-    } else if (!client.value.resetDays && !client.value.resetDayOfMonth) {
-      client.value.resetDays = 30
-    }
-  },
-})
-const resetMode = computed<'days' | 'monthly'>({
-  get: () => ((client.value.resetDayOfMonth ?? 0) > 0 ? 'monthly' : 'days'),
-  set: (m) => {
-    if (m === 'monthly') {
-      // 默认今天:按购买日结算是最常见的用法,"从今天起每月同一天"
-      client.value.resetDayOfMonth = client.value.resetDayOfMonth || new Date().getDate()
-      client.value.resetDays = 0
     } else {
-      client.value.resetDayOfMonth = 0
-      client.value.resetDays = client.value.resetDays || 30
+      if (!client.value.resetDays && !client.value.resetDayOfMonth) client.value.resetDays = 30
+      // 重新打开时下次重置已经被上面清空,界面上是空的(fa 显示"按周期计算"),那就真的
+      // 按周期重算:明确发 0。不发的话后端会拿库里的旧边界按天数差平移
+      client.value.nextReset = 0
+      didEditNextReset.value = true
     }
   },
 })
-const resetDayOfMonth = computed({
-  get: () => client.value.resetDayOfMonth ?? 1,
-  set: (v: number | string | null) => {
-    client.value.resetDayOfMonth = coerceResetDayOfMonth(v)
-  },
-})
-const resetDays = computed({
-  get: () => client.value.resetDays ?? 1,
-  set: (v: number | string | null) => {
-    const n = coerceResetDays(v)
-    // 只有按天数时才补偿:这是"挪动当前这一期"的手段,而月结的边界由后端
-    // 按日历重算,挪它下一轮就被盖掉。
-    // 这里只挪显示用的副本,不算运营改过(不置 didEditNextReset):真正的平移由后端
-    // 拿库里最新的边界来做。抽屉打开时读到的边界可能已经被定时任务推过一期,拿它
-    // 加差值发回去,客户会在差值天数后再被重置一次
-    if (!client.value.resetDayOfMonth && client.value.nextReset && client.value.nextReset > 0) {
-      client.value.nextReset += (n - (client.value.resetDays ?? 0)) * 24 * 60 * 60
-    }
-    client.value.resetDays = n
-  },
-})
+// 改天数时挪下次重置:这是"挪动当前这一期"的手段,只在按天数时做,月结的边界由后端
+// 按日历重算。只挪显示用的副本,不算运营改过(不置 didEditNextReset):真正的平移由
+// 后端拿库里最新的边界来做。抽屉打开时读到的边界可能已经被定时任务推过一期,拿它加
+// 差值发回去,客户会在差值天数后再被重置一次
+const shiftNextReset = (to: number, from: number) => {
+  if (!client.value.resetDayOfMonth && client.value.nextReset && client.value.nextReset > 0) {
+    client.value.nextReset += (to - from) * 24 * 60 * 60
+  }
+}
 const nextReset = computed({
   get: () => client.value.nextReset ?? 0,
   set: (v: number) => {
@@ -504,6 +458,8 @@ const didReset = ref(false)
 // 打开时读到的旧日期写回去,下一分钟再重置一次。只有运营直接改了这个日期才发;
 // 没发的话后端保留库里的值(改了天数的话,后端在库里的值上平移)
 const didEditNextReset = ref(false)
+// 打开时读到的那一行,保存编辑时拿来比较,只发改过的字段
+const opened = ref<Record<string, unknown> | null>(null)
 const resetUsage = () => {
   client.value.totalUp = (client.value.totalUp ?? 0) + client.value.up
   client.value.totalDown = (client.value.totalDown ?? 0) + client.value.down
@@ -517,10 +473,12 @@ const updateData = async (id: number) => {
   tab.value = 'general'
   didReset.value = false
   didEditNextReset.value = false
+  opened.value = null
   if (id > 0) {
     loading.value = true
     const newData = await Data().loadClients(id)
     client.value = createClient(newData)
+    opened.value = JSON.parse(JSON.stringify(client.value))
     clientConfig.value = client.value.config
     loading.value = false
   } else {
@@ -550,13 +508,22 @@ const saveChanges = async () => {
     ...subLinks.value.filter((l) => l.uri != ''),
   ]
   const payload: any = { ...client.value }
-  if (!didReset.value) {
-    delete payload.up
-    delete payload.down
-    delete payload.totalUp
-    delete payload.totalDown
+  if (opened.value) {
+    // 编辑只发运营改过的字段:后端把请求盖在库里最新的那一行上,没发的字段保持库里的值。
+    // 抽屉开着的时候后台任务会改一些字段——首次连接清掉延迟启动、到点推进下次重置、
+    // 流量一直在涨——整行发回去就会把打开时读到的旧值写回去
+    for (const k of Object.keys(payload)) {
+      if (k !== 'id' && JSON.stringify(payload[k]) === JSON.stringify(opened.value[k])) delete payload[k]
+    }
   }
-  if (!didEditNextReset.value) delete payload.nextReset
+  // 流量计数和下次重置按"运营有没有操作过"决定发不发,不看值变没变:值恰好和打开时
+  // 一样(比如本来就是 0)的时候,重置或清空的意图也得送到
+  for (const k of ['up', 'down', 'totalUp', 'totalDown'] as const) {
+    if (didReset.value) payload[k] = client.value[k]
+    else delete payload[k]
+  }
+  if (didEditNextReset.value) payload.nextReset = client.value.nextReset
+  else delete payload.nextReset
   const success = await Data().save('clients', props.id == 0 ? 'new' : 'edit', payload)
   if (success) emit('close')
   loading.value = false
