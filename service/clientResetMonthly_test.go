@@ -449,9 +449,12 @@ func TestSaveClearsExpiryOnlyUnderAPlanLength(t *testing.T) {
 func TestSaveLetsAMigratedClientGoUnlimited(t *testing.T) {
 	svc := newResetDB(t)
 	db := database.GetDB()
-	// What migratePlanDays leaves for a delay-start client that has not started.
+	// A delay-start client that has not started, with the old plan length still
+	// in reset_days as well -- what the migration left before it cleared it.
+	// The explicit 0 below must win even then: the request sends planDays, so it
+	// is not the legacy shape, whatever reset_days holds.
 	seedClient(t, &model.Client{Name: "migrated", Enable: true,
-		DelayStart: true, AutoReset: false, PlanDays: 30})
+		DelayStart: true, AutoReset: false, PlanDays: 30, ResetDays: 30})
 
 	var row model.Client
 	if err := db.Where("name = ?", "migrated").First(&row).Error; err != nil {

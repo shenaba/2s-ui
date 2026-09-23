@@ -427,7 +427,7 @@ export default {
     resetCycleDays: "هر N روز",
     resetCycleMonthly: "روز ثابت هر ماه",
     resetDayOfMonth: "روز بازنشانی",
-    resetDayOfMonthHint: "در ماه‌های کوتاه به آخرین روز ماه می‌افتد",
+    resetDayOfMonthHint: "نیمه‌شب به وقت منطقه زمانی پنل (پیکربندی ← منطقه زمانی)؛ در ماه‌های کوتاه آخرین روز ماه",
     validDays: "روزهای اعتبار",
     validDaysHint: "از نخستین اتصال شمرده می‌شود؛ ۰ یعنی بدون محدودیت زمانی",
   },

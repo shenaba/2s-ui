@@ -433,7 +433,7 @@ export default {
     resetCycleDays: "Every N days",
     resetCycleMonthly: "Day of month",
     resetDayOfMonth: "Reset Day",
-    resetDayOfMonthHint: "Short months fall back to their last day",
+    resetDayOfMonthHint: "Midnight in the panel timezone (Settings → Timezone Location); short months use their last day",
     validDays: "Valid Days",
     validDaysHint: "Counted from the first connection; 0 means no time limit",
   },

@@ -427,7 +427,7 @@ export default {
     resetCycleDays: "Mỗi N ngày",
     resetCycleMonthly: "Ngày cố định hàng tháng",
     resetDayOfMonth: "Ngày đặt lại",
-    resetDayOfMonthHint: "Tháng ngắn tự lùi về ngày cuối tháng",
+    resetDayOfMonthHint: "0 giờ theo múi giờ của bảng (Cài đặt → Vị trí múi giờ); tháng ngắn dùng ngày cuối tháng",
     validDays: "Số ngày hiệu lực",
     validDaysHint: "Tính từ lần kết nối đầu tiên; 0 là không giới hạn thời gian",
   },

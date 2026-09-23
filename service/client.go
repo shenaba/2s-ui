@@ -100,7 +100,14 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 		if err = normalizeClientName(&client); err != nil {
 			return nil, err
 		}
-		normalizeResetSchedule(&client)
+		has := payloadFields(data)
+		var stored *model.Client
+		if act == "edit" {
+			if stored, err = s.storedSchedule(tx, client.Id); err != nil {
+				return nil, err
+			}
+		}
+		normalizeResetSchedule(&client, has, stored)
 		if err = validateResetSchedule(&client); err != nil {
 			return nil, err
 		}
@@ -176,11 +183,16 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 		// the batch, which the table cannot show: none of them are committed yet.
 		names := make([]string, 0, len(clients))
 		seen := make(map[string]bool, len(clients))
-		for _, client := range clients {
+		hasList := payloadFieldsList(data)
+		for i, client := range clients {
 			if err = normalizeClientName(client); err != nil {
 				return nil, err
 			}
-			normalizeResetSchedule(client)
+			var has map[string]bool
+			if i < len(hasList) {
+				has = hasList[i]
+			}
+			normalizeResetSchedule(client, has, nil)
 			if err = validateResetSchedule(client); err != nil {
 				return nil, err
 			}
@@ -558,6 +570,21 @@ func (s *ClientService) preserveServerManagedFields(tx *gorm.DB, client *model.C
 
 // payloadFields reports which keys the request object actually carried, so an
 // omitted server-managed value is preserved rather than written as zero.
+// payloadFieldsList is payloadFields for a request whose data is an array of
+// objects, one key set per element. A malformed element yields nil, which reads
+// as "mentions nothing" -- the same as an absent key.
+func payloadFieldsList(data json.RawMessage) []map[string]bool {
+	var raws []json.RawMessage
+	if json.Unmarshal(data, &raws) != nil {
+		return nil
+	}
+	out := make([]map[string]bool, len(raws))
+	for i, raw := range raws {
+		out[i] = payloadFields(raw)
+	}
+	return out
+}
+
 func payloadFields(data json.RawMessage) map[string]bool {
 	var raw map[string]json.RawMessage
 	if json.Unmarshal(data, &raw) != nil {
@@ -1224,18 +1251,75 @@ func nextResetAt(c *model.Client, dt int64, loc *time.Location) int64 {
 // length in reset_days after first use, with both toggles off and the field
 // hidden. main cleared the period whenever auto reset was switched off, so
 // this is the same rule, applied to every caller.
-func normalizeResetSchedule(c *model.Client) {
-	if c.DelayStart {
-		if !c.AutoReset && c.PlanDays == 0 && c.ResetDays > 0 {
+//
+// On an edit, a schedule field the request does not mention keeps its stored
+// value -- the same stance preserveServerManagedFields takes for the counters.
+// Whole-row writers (the drawer, the bot, a JSON round-trip) are unaffected,
+// since they mention everything. The writers this is for do not: an
+// integration typed against main has no planDays or resetDayOfMonth to send
+// and drops them on read, a minimal one sends only what it changes, and the
+// master's cluster push names its keys and none of these. Zeroing what they
+// omit wiped a plan length (the client stopped expiring), a day of the month
+// (auto reset with no period, which ResetClients skips: the client stopped
+// resetting), or NextReset (the periodic branch matched on the next tick and
+// cleared the client's usage -- that one on main already).
+//
+// The same key-presence test is what identifies the legacy request shape. A
+// caller that sends planDays, even as 0, speaks the new contract and means it;
+// only one that does not know the field can have meant its plan length in
+// resetDays. Keying the translation on "planDays is 0" instead is how an
+// operator's explicit "no time limit" got the old value moved back in.
+//
+// Order matters in one place: stored values are filled in before the
+// translation reads resetDays. That is safe because a stored row never has a
+// period without auto reset, so a stored resetDays cannot pass for a legacy
+// plan length -- unless this very request switches auto reset off, and then
+// reading the period as the plan length is exactly what the old contract meant.
+func normalizeResetSchedule(c *model.Client, has map[string]bool, stored *model.Client) {
+	planOmitted := !has["planDays"]
+	if stored != nil {
+		if !has["delayStart"] {
+			c.DelayStart = stored.DelayStart
+		}
+		if !has["autoReset"] {
+			c.AutoReset = stored.AutoReset
+		}
+		if !has["resetDays"] {
+			c.ResetDays = stored.ResetDays
+		}
+		if !has["resetDayOfMonth"] {
+			c.ResetDayOfMonth = stored.ResetDayOfMonth
+		}
+		if !has["nextReset"] {
+			c.NextReset = stored.NextReset
+		}
+	}
+	if planOmitted {
+		if c.DelayStart && !c.AutoReset && c.ResetDays > 0 {
 			c.PlanDays, c.ResetDays = c.ResetDays, 0
+		} else if stored != nil {
+			c.PlanDays = stored.PlanDays
 		}
-		if c.PlanDays > 0 {
-			c.Expiry = 0
-		}
+	}
+	if c.DelayStart && c.PlanDays > 0 {
+		c.Expiry = 0
 	}
 	if !c.AutoReset {
 		c.ResetDays, c.ResetDayOfMonth = 0, 0
 	}
+}
+
+// storedSchedule reads the reset-schedule columns of the row an edit is about
+// to overwrite, for normalizeResetSchedule to fall back on.
+func (s *ClientService) storedSchedule(tx *gorm.DB, id uint) (*model.Client, error) {
+	var stored model.Client
+	err := tx.Model(model.Client{}).
+		Select("delay_start", "auto_reset", "plan_days", "reset_days", "reset_day_of_month", "next_reset").
+		Where("id = ?", id).First(&stored).Error
+	if err != nil {
+		return nil, err
+	}
+	return &stored, nil
 }
 
 // maxScheduleDays bounds both day counts. It is not a policy: operators on main

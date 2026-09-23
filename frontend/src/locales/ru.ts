@@ -428,7 +428,7 @@ export default {
     resetCycleDays: "Каждые N дней",
     resetCycleMonthly: "День месяца",
     resetDayOfMonth: "День сброса",
-    resetDayOfMonthHint: "В коротких месяцах — последний день месяца",
+    resetDayOfMonthHint: "Полночь по часовому поясу панели (Настройки → Часовой пояс); в коротких месяцах — последний день",
     validDays: "Срок действия",
     validDaysHint: "Отсчёт с первого подключения; 0 — без ограничения срока",
   },
