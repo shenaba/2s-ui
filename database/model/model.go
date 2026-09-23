@@ -86,7 +86,21 @@ type Client struct {
 	// Delay start and periodic reset
 	DelayStart bool `json:"delayStart" form:"delayStart" gorm:"default:false;not null"`
 	AutoReset  bool `json:"autoReset" form:"autoReset" gorm:"default:false;not null"`
-	ResetDays  int  `json:"resetDays" form:"resetDays" gorm:"default:0;not null"`
+
+	// How long the plan runs from the client's first bytes, in days. Only the
+	// delay-start-without-auto-reset combination reads it: ResetClients sets
+	// Expiry from it once traffic appears, and nothing else touches it.
+	//
+	// Split out of ResetDays, which used to mean this on such a row and the
+	// reset period on every other one. Sharing a column meant every way of
+	// clearing a period had to remember it might be clearing a plan length
+	// instead -- four separate places forgot, in both directions, and each fix
+	// only closed the one path it was written for.
+	PlanDays int `json:"planDays" form:"planDays" gorm:"default:0;not null"`
+
+	// Days between periodic resets, or zero when ResetDayOfMonth supplies the
+	// schedule instead.
+	ResetDays int `json:"resetDays" form:"resetDays" gorm:"default:0;not null"`
 
 	// Day of the month the periodic reset lands on, 1-31; 0 keeps the plain
 	// ResetDays period. It is stored rather than derived from NextReset because

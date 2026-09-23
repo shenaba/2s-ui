@@ -307,18 +307,11 @@ func TestSaveResetPolicy(t *testing.T) {
 		if err := db.Where("name = ?", name).First(&c).Error; err != nil {
 			t.Fatalf("read back %s: %v", name, err)
 		}
-		if !c.AutoReset || c.ResetDayOfMonth != 15 {
-			t.Errorf("%s: autoReset=%v dom=%d, want true/15", name, c.AutoReset, c.ResetDayOfMonth)
-		}
-		// "c" is the delay-start row, where reset_days is the plan length and
-		// not this action's to touch; the other two take the monthly schedule
-		// and have no period left in that column.
-		wantDays := 0
-		if name == "c" {
-			wantDays = 30
-		}
-		if c.ResetDays != wantDays {
-			t.Errorf("%s: reset_days = %d, want %d", name, c.ResetDays, wantDays)
+		// reset_days now means one thing on every row -- the period -- so the
+		// monthly schedule empties it uniformly, delay-start or not.
+		if !c.AutoReset || c.ResetDayOfMonth != 15 || c.ResetDays != 0 {
+			t.Errorf("%s: autoReset=%v resetDays=%d dom=%d, want true/0/15",
+				name, c.AutoReset, c.ResetDays, c.ResetDayOfMonth)
 		}
 		// Timezone-independent: the panel's configured location decides the
 		// exact instant, so only the shape is asserted here.
@@ -341,67 +334,19 @@ func TestSaveResetPolicy(t *testing.T) {
 	}
 }
 
-// Switching auto reset off must not wipe reset_days on a delay-start row: there
-// the same column is the plan length, and ResetClients' first branch needs it
-// above zero to ever write Expiry.
-func TestSaveResetPolicyKeepsDelayStartPlanLength(t *testing.T) {
+// A delay-start client's plan length lives in its own column now, so no reset
+// schedule change can reach it. This used to be reset_days on such a row, which
+// made every way of clearing a period a way of destroying a plan length -- four
+// separate call sites got that wrong, in both directions, before the split.
+//
+// Both routes that used to break it are walked here: switching auto reset off
+// (which sends resetDays 0), and setting a monthly day (which also sends
+// resetDays 0, but with auto reset ON so the first guard did not apply).
+func TestSaveResetPolicyCannotTouchPlanDays(t *testing.T) {
 	svc := newResetDB(t)
 	db := database.GetDB()
 
-	seedClient(t, &model.Client{Name: "delayed", Enable: true, DelayStart: true, AutoReset: true, ResetDays: 30})
-	seedClient(t, &model.Client{Name: "plain", Enable: true, AutoReset: true, ResetDays: 7})
-
-	var ids []uint
-	for _, name := range []string{"delayed", "plain"} {
-		var c model.Client
-		if err := db.Where("name = ?", name).First(&c).Error; err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		ids = append(ids, c.Id)
-	}
-
-	payload, err := json.Marshal(map[string]interface{}{
-		"ids": ids, "autoReset": false, "resetDays": 0, "resetDayOfMonth": 0,
-	})
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	tx := db.Begin()
-	if _, err := svc.Save(tx, "resetpolicy", payload, ""); err != nil {
-		tx.Rollback()
-		t.Fatalf("Save resetpolicy: %v", err)
-	}
-	tx.Commit()
-
-	var delayed, plain model.Client
-	if err := db.Where("name = ?", "delayed").First(&delayed).Error; err != nil {
-		t.Fatalf("read back delayed: %v", err)
-	}
-	if err := db.Where("name = ?", "plain").First(&plain).Error; err != nil {
-		t.Fatalf("read back plain: %v", err)
-	}
-	if delayed.AutoReset || plain.AutoReset {
-		t.Error("auto_reset should be off on both")
-	}
-	if delayed.ResetDays != 30 {
-		t.Errorf("delayed reset_days = %d, want the plan length 30 kept", delayed.ResetDays)
-	}
-	// Nothing to protect on a row that is not delay-start, but the column is
-	// left alone there too -- the action simply stops writing it.
-	if plain.ResetDays != 7 {
-		t.Errorf("plain reset_days = %d, want 7 untouched", plain.ResetDays)
-	}
-}
-
-// The two-step route to the same place: set a monthly day (which sends
-// resetDays 0 with auto reset ON, so the guard above does not apply), then
-// switch auto reset off. Guarding only the second step left the plan length
-// already zeroed by the first.
-func TestSaveResetPolicyMonthlyKeepsDelayStartPlanLength(t *testing.T) {
-	svc := newResetDB(t)
-	db := database.GetDB()
-
-	seedClient(t, &model.Client{Name: "delayed", Enable: true, DelayStart: true, ResetDays: 30})
+	seedClient(t, &model.Client{Name: "delayed", Enable: true, DelayStart: true, PlanDays: 30})
 	seedClient(t, &model.Client{Name: "plain", Enable: true, AutoReset: true, ResetDays: 7})
 
 	var ids []uint
@@ -435,27 +380,58 @@ func TestSaveResetPolicyMonthlyKeepsDelayStartPlanLength(t *testing.T) {
 		return c
 	}
 
-	// Step one: everyone onto the 15th.
 	apply(map[string]interface{}{"autoReset": true, "resetDays": 0, "resetDayOfMonth": 15})
-	if d := read("delayed"); d.ResetDays != 30 {
-		t.Fatalf("after the monthly switch: delayed reset_days = %d, want 30", d.ResetDays)
+	if d := read("delayed"); d.PlanDays != 30 {
+		t.Fatalf("after the monthly switch: plan_days = %d, want 30", d.PlanDays)
 	}
-	if p := read("plain"); p.ResetDays != 0 || p.ResetDayOfMonth != 15 {
-		t.Fatalf("plain should have taken the monthly schedule: reset_days=%d dom=%d",
-			p.ResetDays, p.ResetDayOfMonth)
-	}
-
-	// Step two: changed our mind, stop resetting.
 	apply(map[string]interface{}{"autoReset": false, "resetDays": 0, "resetDayOfMonth": 0})
+
 	delayed := read("delayed")
-	if delayed.ResetDays != 30 {
-		t.Errorf("delayed reset_days = %d, want the plan length still 30", delayed.ResetDays)
+	if delayed.PlanDays != 30 {
+		t.Errorf("plan_days = %d, want 30 after both routes", delayed.PlanDays)
 	}
-	// What the plan length is for: with it above zero the delay-start branch
-	// still matches, so Expiry gets written on the client's first bytes.
+	// What the plan length is for: the delay-start branch still matches, so
+	// Expiry gets written on the client's first bytes.
 	if !delayed.DelayStart || delayed.AutoReset {
 		t.Errorf("delayed: delay_start=%v auto_reset=%v, want true/false",
 			delayed.DelayStart, delayed.AutoReset)
+	}
+	if plain := read("plain"); plain.PlanDays != 0 {
+		t.Errorf("plain picked up a plan length it never had: %d", plain.PlanDays)
+	}
+}
+
+// The delay-start branch reads plan_days, and writing Expiry is the whole
+// reason it exists.
+func TestResetClientsSetsExpiryFromPlanDays(t *testing.T) {
+	svc := newResetDB(t)
+	now := at(2026, time.September, 22, 14, 37).Unix()
+
+	seedClient(t, &model.Client{
+		Enable: true, Name: "delayed",
+		DelayStart: true, AutoReset: false, PlanDays: 30,
+		// A period in the other column must not stand in for a plan length.
+		ResetDays: 0,
+		Up:        1, Down: 1,
+	})
+
+	db := database.GetDB()
+	tx := db.Begin()
+	if _, _, _, err := svc.ResetClients(tx, now, time.UTC); err != nil {
+		tx.Rollback()
+		t.Fatalf("ResetClients: %v", err)
+	}
+	tx.Commit()
+
+	var c model.Client
+	if err := db.Where("name = ?", "delayed").First(&c).Error; err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if c.DelayStart {
+		t.Error("delay_start should be cleared once the client has traffic")
+	}
+	if want := now + 30*86400; c.Expiry != want {
+		t.Errorf("expiry = %d, want %d", c.Expiry, want)
 	}
 }
 

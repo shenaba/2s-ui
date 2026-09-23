@@ -22,6 +22,7 @@ export interface Client {
   limitIp?: number
   delayStart?: boolean
   autoReset?: boolean
+  planDays?: number
   resetDays?: number
   resetDayOfMonth?: number
   nextReset?: number
@@ -44,6 +45,7 @@ const defaultClient: Client = {
   limitIp: 0,
   delayStart: false,
   autoReset: false,
+  planDays: 0,
   resetDays: 0,
   resetDayOfMonth: 0,
   nextReset: 0,
@@ -191,6 +193,9 @@ export function randomConfigs(user: string): Config {
 // 清空得到的是 "" 而不是 0。这些值会直接进 JSON 提交给 Go 端的 int 字段,空字符串
 // 让整个请求以一条 "cannot unmarshal string into Go struct field" 失败——批量创建
 // 会整批中止。每个绑定点都要经过这里收敛。
+// 同一个收敛规则给套餐时长用:它和重置周期是两列,但输入框的坑一样
+export const coercePlanDays = (v: unknown): number => coerceResetDays(v)
+
 export function coerceResetDays(v: unknown): number {
   const n = Math.floor(Number(v))
   return Number.isFinite(n) && n > 0 ? n : 1

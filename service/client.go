@@ -326,8 +326,8 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 			err = common.NewErrorf("reset day of month out of range: %d", policy.ResetDayOfMonth)
 			return nil, err
 		}
-		if policy.ResetDays < 0 {
-			err = common.NewErrorf("reset days cannot be negative: %d", policy.ResetDays)
+		if policy.ResetDays < 0 || policy.ResetDays > maxScheduleDays {
+			err = common.NewErrorf("reset days out of range: %d", policy.ResetDays)
 			return nil, err
 		}
 		// Refused rather than stored, unlike a single client save.
@@ -351,35 +351,19 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 				ResetDayOfMonth: policy.ResetDayOfMonth,
 			}, now, panelLocation())
 		}
+		// plan_days is absent on purpose: the plan length of a delay-start
+		// client is not a reset schedule and nothing here should touch it.
+		// While the two shared a column this needed a CASE to protect, which is
+		// what the split removed.
 		cols := map[string]interface{}{
 			"auto_reset":         policy.AutoReset,
+			"reset_days":         policy.ResetDays,
 			"reset_day_of_month": policy.ResetDayOfMonth,
 			// A delayed start has no boundary until its first bytes arrive,
 			// and ResetClients only scans rows with delay_start = false --
 			// so writing one here would put a date in the drawer that
 			// nothing ever acts on.
 			"next_reset": gorm.Expr("CASE WHEN delay_start THEN 0 ELSE ? END", next),
-		}
-		// reset_days means two different things depending on the row, so the
-		// line is drawn by which row it is, not by what this request is doing.
-		//
-		// On a delay-start row it is the plan length: ResetClients' first branch
-		// computes Expiry from it and needs it above zero. Everywhere else it is
-		// the reset period, which is what this action sets. Writing the incoming
-		// value over a delay-start row leaves it at zero in both directions a
-		// caller can reach -- switching auto reset off sends 0, and so does
-		// picking a day of the month -- and such a row then matches no branch at
-		// all: delay_start never cleared, Expiry never written, the client never
-		// expires. Guarding only the first of those two was not enough, since
-		// setting a monthly day and later switching auto reset off reaches the
-		// same state in two steps.
-		//
-		// The cost is that a delay-start client's period cannot be changed from
-		// here; that edit goes through the client drawer, which knows which of
-		// the two meanings it is showing. reset_day_of_month needs no such care:
-		// the delay-start branch does not read it.
-		if policy.AutoReset {
-			cols["reset_days"] = gorm.Expr("CASE WHEN delay_start THEN reset_days ELSE ? END", policy.ResetDays)
 		}
 		res := tx.Model(model.Client{}).Where("id IN ?", policy.Ids).UpdateColumns(cols)
 		if res.Error != nil {
@@ -1204,9 +1188,22 @@ func nextResetAt(c *model.Client, dt int64, loc *time.Location) int64 {
 // Deliberately narrower than the bulk action's checks: a period of zero with
 // auto reset on stays writable here, because ResetClients leaves such a row
 // alone on purpose and older rows already carry that combination.
+// maxScheduleDays caps both day counts at roughly a century. The point is not
+// the policy but the arithmetic: nextResetAt computes dt + days*86400 in int64,
+// which wraps negative somewhere above 1e14 days and lands NextReset in the
+// past -- ResetClients scans for `next_reset < now`, so such a client would be
+// reset every single minute and never reach its quota.
+const maxScheduleDays = 36500
+
 func validateResetSchedule(c *model.Client) error {
 	if c.ResetDayOfMonth < 0 || c.ResetDayOfMonth > 31 {
 		return common.NewErrorf("reset day of month out of range: %d", c.ResetDayOfMonth)
+	}
+	if c.ResetDays < 0 || c.ResetDays > maxScheduleDays {
+		return common.NewErrorf("reset days out of range: %d", c.ResetDays)
+	}
+	if c.PlanDays < 0 || c.PlanDays > maxScheduleDays {
+		return common.NewErrorf("plan days out of range: %d", c.PlanDays)
 	}
 	return nil
 }
@@ -1288,27 +1285,21 @@ func (s *ClientService) ResetClients(tx *gorm.DB, dt int64, loc *time.Location) 
 	var changes []model.Changes
 	var inboundIds []uint
 	var reenabled []string
-	// A period has to be one of the two: reset_days above zero, or a day of the
-	// month to land on. With neither, the date each block computes collapses to
+	// Each block needs a period above zero, or the date it computes collapses to
 	// dt itself -- the first would set Expiry to right now (a client dead the
 	// instant it sends a byte) and the third would set NextReset to dt, which
 	// matches again on the very next tick, clearing the counters every minute so
 	// the volume quota is never reached. A row like that is misconfigured either
 	// way; leaving it untouched keeps it visible rather than quietly breaking it.
-	// The panel forms cannot produce one (the toggle writes 1 and the input has
-	// min=1), but apiv2 and older rows can.
-	//
-	// The first block is the odd one out: it writes Expiry, which is how long
-	// the plan runs from first use, not when the counters clear -- so a day of
-	// the month means nothing to it and reset_days stays its only period.
+	// The panel forms cannot produce one, but apiv2 and older rows can.
 	// Set delay start without periodic reset
 	err = tx.Model(model.Client{}).
-		Where("enable = true AND delay_start = true AND auto_reset = false AND reset_days > 0 AND (Up + Down) > 0").Find(&resetClients).Error
+		Where("enable = true AND delay_start = true AND auto_reset = false AND plan_days > 0 AND (Up + Down) > 0").Find(&resetClients).Error
 	if err != nil {
 		return nil, nil, false, err
 	}
 	for _, client := range resetClients {
-		client.Expiry = dt + (int64(client.ResetDays) * 86400)
+		client.Expiry = dt + (int64(client.PlanDays) * 86400)
 		client.DelayStart = false
 		changes = append(changes, model.Changes{
 			DateTime: dt,
@@ -1466,6 +1457,7 @@ func (s *ClientService) findInboundsChanges(tx *gorm.DB, client *model.Client, f
 		client.Links = oldClient.Links
 		client.Config = oldClient.Config
 		client.AutoReset = oldClient.AutoReset
+		client.PlanDays = oldClient.PlanDays
 		client.ResetDays = oldClient.ResetDays
 		client.ResetDayOfMonth = oldClient.ResetDayOfMonth
 		client.NextReset = oldClient.NextReset

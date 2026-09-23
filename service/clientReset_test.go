@@ -87,15 +87,15 @@ func TestResetClientsIgnoresAZeroPeriod(t *testing.T) {
 	}
 }
 
-// A delay-start client with no period had its expiry set to the moment it sent
-// its first byte, killing it outright.
+// A delay-start client with no plan length had its expiry set to the moment it
+// sent its first byte, killing it outright.
 func TestResetClientsDoesNotExpireAZeroPeriodDelayStart(t *testing.T) {
 	svc := newResetDB(t)
 	now := time.Now().Unix()
 
 	seedClient(t, &model.Client{
 		Enable: true, Name: "delayed",
-		DelayStart: true, AutoReset: false, ResetDays: 0,
+		DelayStart: true, AutoReset: false, PlanDays: 0,
 		Up: 1, Down: 1,
 	})
 

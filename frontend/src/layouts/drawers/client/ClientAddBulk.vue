@@ -97,7 +97,7 @@
     </div>
     <Field v-else-if="bulkData.delayStart" :label="$t('client.validDays')" :hint="$t('client.validDaysHint')">
       <div style="display: flex; gap: 8px;">
-        <input class="input mono" type="number" min="1" v-model.number="resetDays" />
+        <input class="input mono" type="number" min="1" v-model.number="planDays" />
         <div class="input suffix-box">{{ $t('date.d') }}</div>
       </div>
     </Field>
@@ -132,7 +132,7 @@ import { useI18n } from 'vue-i18n'
 import { push } from 'notivue'
 import Data from '@/store/modules/data'
 import RandomUtil from '@/plugins/randomUtil'
-import { Client, coerceResetDayOfMonth, coerceResetDays, createClient, randomConfigs } from '@/types/clients'
+import { Client, coercePlanDays, coerceResetDayOfMonth, coerceResetDays, createClient, randomConfigs } from '@/types/clients'
 import MDrawer from '@/components/ui/MDrawer.vue'
 import Field from '@/components/ui/Field.vue'
 import Btn from '@/components/ui/Btn.vue'
@@ -167,44 +167,37 @@ const bulkData = ref({
   limitIp: 0,
   delayStart: false,
   autoReset: false,
+  planDays: 0,
   resetDays: 0,
   resetDayOfMonth: 0,
 })
 const textInput = ref({ name: '', desc: '' })
 
-// 开关走 computed 而不是裸 v-model,规则和单客户抽屉里的 syncResetPeriod 一样:
-// 两个开关共用同一对周期字段,任一开着就必须留下一个非零周期,都关了才清空。
-// 裸绑定时打开自动重置会留下两个周期都是 0 的一行,后端当"没有周期"跳过,这批
-// 客户静默地永不重置;而关闭时无条件清零又会连带废掉延迟启动那一支——它靠
-// reset_days 写到期日,清成 0 就永不过期
-const syncResetPeriod = () => {
-  const b = bulkData.value
-  if (!b.autoReset && !b.delayStart) {
-    b.resetDays = 0
-    b.resetDayOfMonth = 0
-    return
-  }
-  // 只开延迟启动时后端走的是写 Expiry 那一支,它只读 reset_days —— 重置日
-  // 对它没有意义,所以这里不能拿 dom 当"已经有周期了"
-  if (b.delayStart && !b.autoReset) {
-    if (!b.resetDays) b.resetDays = 30
-    return
-  }
-  if (!b.resetDays && !b.resetDayOfMonth) b.resetDays = 30
-}
+// 开关走 computed 而不是裸 v-model:裸绑定时打开一个模式会留下值为 0 的一行,
+// 后端当"没配置"跳过,这批客户静默地既不重置也不过期。两个开关各管各的列,
+// 所以不需要跨开关联动
 const autoReset = computed({
   get: () => bulkData.value.autoReset,
   set: (v: boolean) => {
     bulkData.value.autoReset = v
-    syncResetPeriod()
+    if (!v) {
+      bulkData.value.resetDays = 0
+      bulkData.value.resetDayOfMonth = 0
+    } else if (!bulkData.value.resetDays && !bulkData.value.resetDayOfMonth) {
+      bulkData.value.resetDays = 30
+    }
   },
 })
 const delayStart = computed({
   get: () => bulkData.value.delayStart,
   set: (v: boolean) => {
     bulkData.value.delayStart = v
-    syncResetPeriod()
+    if (v && !bulkData.value.planDays) bulkData.value.planDays = 30
   },
+})
+const planDays = computed({
+  get: () => bulkData.value.planDays,
+  set: (v: number | string | null) => { bulkData.value.planDays = coercePlanDays(v) },
 })
 
 // 数字输入不能直接绑到 bulkData 上:v-model.number 在 parseFloat 失败时原样
@@ -279,6 +272,7 @@ const resetData = () => {
     limitIp: 0,
     delayStart: false,
     autoReset: false,
+    planDays: 0,
     resetDays: 0,
     resetDayOfMonth: 0,
   }
@@ -332,6 +326,7 @@ const saveChanges = async () => {
       group: bulkData.value.group,
       delayStart: bulkData.value.delayStart,
       autoReset: bulkData.value.autoReset,
+      planDays: bulkData.value.planDays,
       resetDays: bulkData.value.resetDays,
       resetDayOfMonth: bulkData.value.resetDayOfMonth,
     }))

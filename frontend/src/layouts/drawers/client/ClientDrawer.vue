@@ -146,7 +146,7 @@
         <div v-else-if="client.delayStart" class="grid2" style="margin-bottom: 15px;">
           <Field :label="$t('client.validDays')" :hint="$t('client.validDaysHint')" :mb="0">
             <div style="display: flex; gap: 8px;">
-              <input class="input mono" type="number" min="1" v-model.number="resetDays" />
+              <input class="input mono" type="number" min="1" v-model.number="planDays" />
               <div class="input suffix-box">{{ $t('date.d') }}</div>
             </div>
           </Field>
@@ -297,7 +297,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Data from '@/store/modules/data'
-import { Client, Link, coerceResetDayOfMonth, coerceResetDays, createClient, randomConfigs, shuffleConfigs, updateConfigs } from '@/types/clients'
+import { Client, Link, coercePlanDays, coerceResetDayOfMonth, coerceResetDays, createClient, randomConfigs, shuffleConfigs, updateConfigs } from '@/types/clients'
 import { HumanReadable } from '@/plugins/utils'
 import Drawer from '@/components/ui/Drawer.vue'
 import Tabs from '@/components/ui/Tabs.vue'
@@ -434,32 +434,14 @@ const limitIp = computed({
     client.value.limitIp = n > 0 ? n : 0
   },
 })
-// 两个开关共用这两个周期字段,所以周期归谁清、谁补只能有一处判断。
-//
-// 延迟启动那一支写的是 Expiry,后端要求 reset_days > 0 才认;自动重置那一支
-// 要 reset_days 或 reset_day_of_month 至少有一个非零。任何一个开关还开着就
-// 必须留下一个非零周期,否则那一行在 ResetClients 里匹配不上任何分支——延迟
-// 启动的客户会永远停在 delay_start、到期日永不写入,也就是永不过期。
-const syncResetPeriod = () => {
-  const c = client.value
-  if (!c.autoReset && !c.delayStart) {
-    c.resetDays = 0
-    c.resetDayOfMonth = 0
-    return
-  }
-  // 只开延迟启动时后端走的是写 Expiry 那一支,它只读 reset_days —— 重置日
-  // 对它没有意义,所以这里不能拿 dom 当"已经有周期了"
-  if (c.delayStart && !c.autoReset) {
-    if (!c.resetDays) c.resetDays = 30
-    return
-  }
-  if (!c.resetDays && !c.resetDayOfMonth) c.resetDays = 30
-}
+// 两个开关各管各的列了(planDays vs resetDays/resetDayOfMonth),所以这里不再
+// 需要跨开关的联动——只剩一条:打开的那个模式必须有个非零的值,否则后端会把
+// 这一行当"没配置"跳过,客户静默地既不重置也不过期
 const delayStart = computed({
   get: () => client.value.delayStart ?? false,
   set: (v: boolean) => {
     client.value.delayStart = v
-    syncResetPeriod()
+    if (v && !client.value.planDays) client.value.planDays = 30
     if (v && !autoReset.value) client.value.expiry = 0
   },
 })
@@ -467,9 +449,20 @@ const autoReset = computed({
   get: () => client.value.autoReset ?? false,
   set: (v: boolean) => {
     client.value.autoReset = v
-    // 不重置了,下次重置时间就没有意义;后端 alignNextReset 也会写 0
-    if (!v) client.value.nextReset = 0
-    syncResetPeriod()
+    if (!v) {
+      // 不重置了,周期和下次重置时间都没有意义;后端 alignNextReset 也会写 0
+      client.value.resetDays = 0
+      client.value.resetDayOfMonth = 0
+      client.value.nextReset = 0
+    } else if (!client.value.resetDays && !client.value.resetDayOfMonth) {
+      client.value.resetDays = 30
+    }
+  },
+})
+const planDays = computed({
+  get: () => client.value.planDays ?? 1,
+  set: (v: number | string | null) => {
+    client.value.planDays = coercePlanDays(v)
   },
 })
 const resetMode = computed<'days' | 'monthly'>({
