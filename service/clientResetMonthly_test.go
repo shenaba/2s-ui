@@ -442,6 +442,142 @@ func TestSaveClearsExpiryOnlyUnderAPlanLength(t *testing.T) {
 	}
 }
 
+// Delay start no longer comes with a plan length pre-filled, so on the save side
+// the question is only what an explicit 0 does: it must stay 0. A migrated
+// client could not be set to "no time limit" while its old plan length sat in
+// reset_days, because the save boundary read that back as the legacy shape.
+func TestSaveLetsAMigratedClientGoUnlimited(t *testing.T) {
+	svc := newResetDB(t)
+	db := database.GetDB()
+	// What migratePlanDays leaves for a delay-start client that has not started.
+	seedClient(t, &model.Client{Name: "migrated", Enable: true,
+		DelayStart: true, AutoReset: false, PlanDays: 30})
+
+	var row model.Client
+	if err := db.Where("name = ?", "migrated").First(&row).Error; err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	row.PlanDays = 0
+	payload, err := json.Marshal(row)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	tx := db.Begin()
+	if _, err := svc.Save(tx, "edit", payload, ""); err != nil {
+		tx.Rollback()
+		t.Fatalf("Save: %v", err)
+	}
+	tx.Commit()
+	if err := db.Where("name = ?", "migrated").First(&row).Error; err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if row.PlanDays != 0 {
+		t.Errorf("planDays = %d after saving 0, want 0", row.PlanDays)
+	}
+}
+
+// No period without auto reset, on every write. The row that made this matter:
+// a client that started on main keeps its plan length in reset_days, the
+// drawer hides the field with both toggles off, and the whole row goes back on
+// save -- so a leftover 99999 failed validation on an edit of the description.
+func TestSaveClearsThePeriodWithoutAutoReset(t *testing.T) {
+	svc := newResetDB(t)
+	db := database.GetDB()
+	seedClient(t, &model.Client{Name: "started-lifetime", Enable: true,
+		ResetDays: 99999, Expiry: time.Now().Unix() + 99999*86400})
+
+	var row model.Client
+	if err := db.Where("name = ?", "started-lifetime").First(&row).Error; err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	row.Desc = "only the description changed"
+	payload, err := json.Marshal(row)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	tx := db.Begin()
+	if _, err := svc.Save(tx, "edit", payload, ""); err != nil {
+		tx.Rollback()
+		t.Fatalf("an edit that never touched the period failed: %v", err)
+	}
+	tx.Commit()
+	if err := db.Where("name = ?", "started-lifetime").First(&row).Error; err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if row.ResetDays != 0 || row.ResetDayOfMonth != 0 {
+		t.Errorf("period survived without auto reset: resetDays=%d dom=%d", row.ResetDays, row.ResetDayOfMonth)
+	}
+	// The expiry the client started with is its time limit; it must survive.
+	if row.Expiry == 0 {
+		t.Error("expiry was cleared on a client with no plan length")
+	}
+}
+
+// The cap exists for the arithmetic, not as policy: values operators actually
+// used on main for "lifetime" must still save.
+func TestSaveAcceptsLifetimeStyleDayCounts(t *testing.T) {
+	svc := newResetDB(t)
+	db := database.GetDB()
+	for _, c := range []struct {
+		name string
+		body map[string]interface{}
+		ok   bool
+	}{
+		{"period-99999", map[string]interface{}{"autoReset": true, "resetDays": 99999}, true},
+		{"plan-99999", map[string]interface{}{"delayStart": true, "planDays": 99999}, true},
+		{"period-too-far", map[string]interface{}{"autoReset": true, "resetDays": 20_000_000}, false},
+		{"plan-too-far", map[string]interface{}{"delayStart": true, "planDays": 20_000_000}, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			c.body["name"], c.body["enable"] = c.name, true
+			c.body["config"], c.body["inbounds"], c.body["links"] = map[string]interface{}{}, []uint{}, []interface{}{}
+			payload, err := json.Marshal(c.body)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			tx := db.Begin()
+			_, err = svc.Save(tx, "new", payload, "")
+			tx.Rollback()
+			if c.ok && err != nil {
+				t.Errorf("rejected: %v", err)
+			}
+			if !c.ok && err == nil {
+				t.Error("accepted a value past the bound")
+			}
+		})
+	}
+}
+
+// The bulk action keeps the same invariant as a single save.
+func TestSaveResetPolicyClearsThePeriodWhenOff(t *testing.T) {
+	svc := newResetDB(t)
+	db := database.GetDB()
+	seedClient(t, &model.Client{Name: "a", Enable: true, AutoReset: true, ResetDays: 30})
+	var c model.Client
+	if err := db.Where("name = ?", "a").First(&c).Error; err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	// An apiv2 caller switching auto reset off but still sending a period.
+	payload, err := json.Marshal(map[string]interface{}{
+		"ids": []uint{c.Id}, "autoReset": false, "resetDays": 30, "resetDayOfMonth": 15,
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	tx := db.Begin()
+	if _, err := svc.Save(tx, "resetpolicy", payload, ""); err != nil {
+		tx.Rollback()
+		t.Fatalf("Save resetpolicy: %v", err)
+	}
+	tx.Commit()
+	if err := db.Where("name = ?", "a").First(&c).Error; err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if c.AutoReset || c.ResetDays != 0 || c.ResetDayOfMonth != 0 {
+		t.Errorf("autoReset=%v resetDays=%d dom=%d, want false/0/0", c.AutoReset, c.ResetDays, c.ResetDayOfMonth)
+	}
+}
+
 // The bulk schedule change exists because editbulk structurally cannot make it:
 // findInboundsChanges restores every reset column from the stored row.
 func TestSaveResetPolicy(t *testing.T) {

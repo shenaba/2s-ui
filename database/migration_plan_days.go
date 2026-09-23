@@ -28,6 +28,18 @@ const migratedKeyPlanDays = "migratedPlanDays"
 // plan_days = 0 in the condition keeps a re-run from overwriting a value set
 // since, should the flag ever be lost.
 //
+// Then every row that does not auto-reset has its period cleared. reset_days
+// means only the period now, and such a row has none; what was left there was
+// a plan length -- copied just above for a client that has not started yet,
+// and left behind on every one that has, since the old first-use step cleared
+// delay_start but never reset_days. Kept, it did harm twice over: the save
+// boundary reads a period on a delay-start row with no plan length as the
+// legacy request shape, so "no time limit" could not be saved for a migrated
+// client, and a large leftover (99999 was a common way to write "lifetime")
+// failed validation on edits that never touched it, from a field the drawer
+// does not even show. normalizeResetSchedule keeps the same invariant for
+// every write from here on.
+//
 // Run after AutoMigrate, not from cmd/migration: those repairs assume the
 // pre-AutoMigrate schema, where plan_days does not exist yet.
 func migratePlanDays() error {
@@ -50,10 +62,13 @@ func migratePlanDays() error {
 		if res.RowsAffected > 0 {
 			log.Printf("clients: moved the plan length of %d delay-start client(s) into plan_days", res.RowsAffected)
 		}
-		// reset_days is deliberately left as it was. Zeroing it would be a
-		// second, destructive write for no gain: ResetClients no longer reads
-		// it on these rows, and leaving the old value costs nothing while
-		// making the migration re-runnable if its flag were ever lost.
+		// After the copy above, never before it: this clears the very column
+		// that copy reads from.
+		if err := tx.Model(model.Client{}).
+			Where("auto_reset = ? AND (reset_days <> 0 OR reset_day_of_month <> 0)", false).
+			UpdateColumns(map[string]interface{}{"reset_days": 0, "reset_day_of_month": 0}).Error; err != nil {
+			return err
+		}
 		return tx.Create(&model.Setting{Key: migratedKeyPlanDays, Value: "true"}).Error
 	})
 }

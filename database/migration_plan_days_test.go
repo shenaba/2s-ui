@@ -40,6 +40,10 @@ func TestMigratePlanDays(t *testing.T) {
 		{Name: "zero", DelayStart: true, AutoReset: false, ResetDays: 0},
 		// Set since the split: a re-run must not overwrite it with reset_days.
 		{Name: "already-set", DelayStart: true, AutoReset: false, ResetDays: 30, PlanDays: 45},
+		// Started on main: the old first-use step cleared delay_start but left
+		// the plan length behind in reset_days. 99999 was a common way to
+		// write "lifetime", and the drawer hides the field on such a row.
+		{Name: "started-lifetime", DelayStart: false, AutoReset: false, ResetDays: 99999},
 	}
 	for _, c := range rows {
 		c.Config = []byte(`{}`)
@@ -54,14 +58,26 @@ func TestMigratePlanDays(t *testing.T) {
 		t.Fatalf("migratePlanDays: %v", err)
 	}
 
-	want := map[string]int{"plan": 30, "delayed-periodic": 0, "periodic": 0, "zero": 0, "already-set": 45}
-	for name, wantPlan := range want {
+	// A row that does not auto-reset has no period afterwards, whatever it
+	// held: left in place, a plan length in reset_days read back as the legacy
+	// request shape and a hidden 99999 failed validation on unrelated edits.
+	// Rows that auto-reset keep theirs.
+	want := map[string]struct{ plan, period int }{
+		"plan":             {30, 0},
+		"delayed-periodic": {0, 7},
+		"periodic":         {0, 14},
+		"zero":             {0, 0},
+		"already-set":      {45, 0},
+		"started-lifetime": {0, 0},
+	}
+	for name, w := range want {
 		var c model.Client
 		if err := db.Where("name = ?", name).First(&c).Error; err != nil {
 			t.Fatalf("read back %s: %v", name, err)
 		}
-		if c.PlanDays != wantPlan {
-			t.Errorf("%s: plan_days = %d, want %d", name, c.PlanDays, wantPlan)
+		if c.PlanDays != w.plan || c.ResetDays != w.period {
+			t.Errorf("%s: plan_days=%d reset_days=%d, want %d/%d",
+				name, c.PlanDays, c.ResetDays, w.plan, w.period)
 		}
 	}
 

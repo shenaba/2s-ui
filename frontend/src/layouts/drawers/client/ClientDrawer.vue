@@ -434,14 +434,16 @@ const limitIp = computed({
     client.value.limitIp = n > 0 ? n : 0
   },
 })
-// 两个开关各管各的列了(planDays vs resetDays/resetDayOfMonth),所以这里不再
-// 需要跨开关的联动——只剩一条:打开的那个模式必须有个非零的值,否则后端会把
-// 这一行当"没配置"跳过,客户静默地既不重置也不过期
+// 两个开关各管各的列,互不联动。
+//
+// 延迟启动不再预填套餐时长:planDays 为 0 是合法值,意思是"不限时长",输入框旁有
+// 提示。预填 30 会改变最常见的那条操作路径——新建客户端默认开着自动重置,再打开延迟
+// 启动,在 main 上得到的是"首次连接起按周期重置、永不过期";预填之后同样的点击变成
+// 首次连接 30 天后停用,而唯一的迹象只是多出来一个值为 30 的字段
 const delayStart = computed({
   get: () => client.value.delayStart ?? false,
   set: (v: boolean) => {
     client.value.delayStart = v
-    if (v && !client.value.planDays) client.value.planDays = 30
   },
 })
 const autoReset = computed({
@@ -449,7 +451,7 @@ const autoReset = computed({
   set: (v: boolean) => {
     client.value.autoReset = v
     if (!v) {
-      // 不重置了,周期和下次重置时间都没有意义;后端 alignNextReset 也会写 0
+      // 不重置了,周期和下次重置时间都没有意义;后端保存时也会清(没开自动重置就没有周期)
       client.value.resetDays = 0
       client.value.resetDayOfMonth = 0
       client.value.nextReset = 0

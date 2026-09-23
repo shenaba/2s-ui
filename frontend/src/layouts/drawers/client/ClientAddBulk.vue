@@ -58,7 +58,7 @@
     </Field>
 
     <div class="grid2" style="margin-bottom: 15px;">
-      <SwitchLabel v-model="delayStart" :label="$t('client.delayStart')" />
+      <SwitchLabel v-model="bulkData.delayStart" :label="$t('client.delayStart')" />
       <SwitchLabel v-model="autoReset" :label="$t('client.autoReset')" />
     </div>
 
@@ -173,9 +173,9 @@ const bulkData = ref({
 })
 const textInput = ref({ name: '', desc: '' })
 
-// 开关走 computed 而不是裸 v-model:裸绑定时打开一个模式会留下值为 0 的一行,
-// 后端当"没配置"跳过,这批客户静默地既不重置也不过期。两个开关各管各的列,
-// 所以不需要跨开关联动
+// 自动重置走 computed 而不是裸 v-model:打开时两个周期都是 0 的话,后端会把这一行
+// 当"没有周期"跳过,这批客户静默地永不重置,所以要预填一个周期。延迟启动不需要:
+// 套餐时长 0 是合法值("不限时长"),见单客户抽屉里同一处的说明
 const autoReset = computed({
   get: () => bulkData.value.autoReset,
   set: (v: boolean) => {
@@ -186,13 +186,6 @@ const autoReset = computed({
     } else if (!bulkData.value.resetDays && !bulkData.value.resetDayOfMonth) {
       bulkData.value.resetDays = 30
     }
-  },
-})
-const delayStart = computed({
-  get: () => bulkData.value.delayStart,
-  set: (v: boolean) => {
-    bulkData.value.delayStart = v
-    if (v && !bulkData.value.planDays) bulkData.value.planDays = 30
   },
 })
 const planDays = computed({

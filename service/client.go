@@ -100,7 +100,7 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 		if err = normalizeClientName(&client); err != nil {
 			return nil, err
 		}
-		normalizeDelayStart(&client)
+		normalizeResetSchedule(&client)
 		if err = validateResetSchedule(&client); err != nil {
 			return nil, err
 		}
@@ -180,7 +180,7 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 			if err = normalizeClientName(client); err != nil {
 				return nil, err
 			}
-			normalizeDelayStart(client)
+			normalizeResetSchedule(client)
 			if err = validateResetSchedule(client); err != nil {
 				return nil, err
 			}
@@ -343,6 +343,10 @@ func (s *ClientService) Save(tx *gorm.DB, act string, data json.RawMessage, host
 		if policy.AutoReset && policy.ResetDays == 0 && policy.ResetDayOfMonth == 0 {
 			err = common.NewError("auto reset needs a period: set reset days or a day of the month")
 			return nil, err
+		}
+		// Same invariant as a single save: no period without auto reset.
+		if !policy.AutoReset {
+			policy.ResetDays, policy.ResetDayOfMonth = 0, 0
 		}
 		// One boundary for the whole selection: same schedule, same instant.
 		now := time.Now().Unix()
@@ -1190,10 +1194,10 @@ func nextResetAt(c *model.Client, dt int64, loc *time.Location) int64 {
 // Deliberately narrower than the bulk action's checks: a period of zero with
 // auto reset on stays writable here, because ResetClients leaves such a row
 // alone on purpose and older rows already carry that combination.
-// normalizeDelayStart brings an incoming client into the shape the first-use
-// step in ResetClients expects. Called on every write path that takes a whole
-// client from outside -- new, edit, addbulk -- before validation, so the stored
-// row is always the translated one.
+// normalizeResetSchedule brings an incoming client into the shape ResetClients
+// expects. Called on every write path that takes a whole client from outside --
+// new, edit, addbulk -- before validation, so the stored row is always the
+// translated one and validation judges what will actually be stored.
 //
 // The request contract changed when the plan length moved out of reset_days:
 // a delay-start client without auto reset used to carry its plan length there.
@@ -1209,24 +1213,41 @@ func nextResetAt(c *model.Client, dt int64, loc *time.Location) int64 {
 // DepleteClients disables on `expiry < now` and a stale date would disable the
 // client before it ever connected. The drawer has always cleared it for that
 // reason; doing it here holds for every caller.
-func normalizeDelayStart(c *model.Client) {
-	if !c.DelayStart {
-		return
+//
+// Last, a client that does not auto-reset has no period, and the columns are
+// cleared to say so. This is an invariant rather than tidiness, and the
+// translation above is why: a period left on such a row is indistinguishable
+// from a legacy plan length the moment planDays is 0, so an operator setting a
+// migrated client to "no time limit" had the old value moved straight back
+// into plan_days. It also stops a leftover the drawer never shows from failing
+// validation on an unrelated edit -- main left a delay-start client's plan
+// length in reset_days after first use, with both toggles off and the field
+// hidden. main cleared the period whenever auto reset was switched off, so
+// this is the same rule, applied to every caller.
+func normalizeResetSchedule(c *model.Client) {
+	if c.DelayStart {
+		if !c.AutoReset && c.PlanDays == 0 && c.ResetDays > 0 {
+			c.PlanDays, c.ResetDays = c.ResetDays, 0
+		}
+		if c.PlanDays > 0 {
+			c.Expiry = 0
+		}
 	}
-	if !c.AutoReset && c.PlanDays == 0 && c.ResetDays > 0 {
-		c.PlanDays, c.ResetDays = c.ResetDays, 0
-	}
-	if c.PlanDays > 0 {
-		c.Expiry = 0
+	if !c.AutoReset {
+		c.ResetDays, c.ResetDayOfMonth = 0, 0
 	}
 }
 
-// maxScheduleDays caps both day counts at roughly a century. The point is not
-// the policy but the arithmetic: nextResetAt computes dt + days*86400 in int64,
-// which wraps negative somewhere above 1e14 days and lands NextReset in the
-// past -- ResetClients scans for `next_reset < now`, so such a client would be
-// reset every single minute and never reach its quota.
-const maxScheduleDays = 36500
+// maxScheduleDays bounds both day counts. It is not a policy: operators on main
+// stored numbers like 99999 to mean "lifetime", and a cap that rejects them
+// turns every later edit of such a client into an error. What it protects is
+// the arithmetic on either side. In Go, dt + days*86400 is int64 and wraps
+// negative somewhere above 1e14 days, landing NextReset in the past -- and
+// ResetClients scans for `next_reset < now`, so such a client would be reset
+// every minute and never reach its quota. In the panel, Expiry and NextReset
+// become JavaScript Dates, which end 1e8 days after the epoch; ten million
+// days from any plausible now stays well inside both.
+const maxScheduleDays = 10_000_000
 
 func validateResetSchedule(c *model.Client) error {
 	if c.ResetDayOfMonth < 0 || c.ResetDayOfMonth > 31 {
