@@ -69,7 +69,7 @@ func (s *PanelDataService) OnlinesPayload() (map[string]interface{}, error) {
 // config-cache hit that discarded scan was the only query the call ran.
 func (s *PanelDataService) onlinesHalf() (map[string]interface{}, error) {
 	data := make(map[string]interface{})
-	onlines, err := s.StatsService.GetOnlines()
+	onlines, err := s.StatsService.GetClusterOnlines()
 
 	// Ask the core directly rather than via GetSingboxInfo: that one opens with
 	// a stop-the-world runtime.ReadMemStats, and sing-box runs in-process, so
@@ -89,6 +89,7 @@ func (s *PanelDataService) onlinesHalf() (map[string]interface{}, error) {
 	// so omitting it once nobody is over their limit would leave the last
 	// non-empty counts on screen forever.
 	data["ipCounts"] = GetIPCounts()
+	data["clusterIpActive"] = ClusterIPActive()
 	// Rides the live payload for the same reason client up/down does: it moves
 	// with traffic, not with config, so carrying it on the config half would
 	// freeze it until the next save.

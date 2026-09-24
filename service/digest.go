@@ -52,7 +52,7 @@ func StatusDigest(lang string) string {
 		logger.Warning("digest: enabled count: ", err)
 	}
 	online := 0
-	if o, err := statsService.GetOnlines(); err == nil {
+	if o, err := statsService.GetClusterOnlines(); err == nil {
 		online = len(o.User)
 	}
 	b.WriteString(fmt.Sprintf("\n%s %d (%d %s, %d %s)",

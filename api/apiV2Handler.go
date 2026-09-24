@@ -91,6 +91,8 @@ func (a *APIv2Handler) postHandler(c *gin.Context) {
 		a.ApiService.ImportDb(c)
 	case "getCertPing":
 		a.ApiService.GetCertPing(c)
+	case "clusterBans":
+		a.ApiService.ApplyClusterBans(c)
 	default:
 		jsonMsg(c, "failed", common.NewError("unknown action: ", action))
 	}
@@ -120,6 +122,8 @@ func (a *APIv2Handler) getHandler(c *gin.Context) {
 		a.ApiService.GetOnlines(c)
 	case "onlineIps":
 		a.ApiService.GetOnlineIps(c)
+	case "clusterIps":
+		a.ApiService.GetClusterIps(c)
 	case "logs":
 		a.ApiService.GetLogs(c)
 	case "changes":

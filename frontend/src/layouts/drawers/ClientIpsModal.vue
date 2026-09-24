@@ -20,7 +20,7 @@
           <span class="mono" dir="ltr" style="font-size: 13px; font-weight: 600;">{{ ip.ip }}</span>
           <Chip v-if="ip.idle" color="amber">{{ $t('ui.ipIdle') }}</Chip>
           <div style="flex: 1;" />
-          <span style="font-size: 11.5px; color: var(--text-3);">
+          <span v-if="ip.since > 0" style="font-size: 11.5px; color: var(--text-3);">
             {{ $t('ui.ipSince') }} {{ formatSince(ip.since) }}
           </span>
         </div>

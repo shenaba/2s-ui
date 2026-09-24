@@ -291,7 +291,7 @@ func nodesText() string {
 
 func onlineText() string {
 	var statsService service.StatsService
-	o, err := statsService.GetOnlines()
+	o, err := statsService.GetClusterOnlines()
 	if err != nil {
 		return t("err.read", p("detail", err.Error()))
 	}

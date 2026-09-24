@@ -6,14 +6,122 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/op/go-logging"
 	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/database/model"
+	"github.com/shenaba/2s-ui/logger"
 )
+
+func TestNodeOnlyClientAppearsOnlineOnMaster(t *testing.T) {
+	logger.InitLogger(logging.CRITICAL)
+	if err := database.InitDB(filepath.Join(t.TempDir(), "node-onlines.db")); err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.CloseDBForTest(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	})
+
+	onlineMu.RLock()
+	previousOnlines := *onlineResources
+	onlineMu.RUnlock()
+	nodeStatusMu.Lock()
+	previousStatuses := nodeStatuses
+	nodeStatuses = map[uint]NodeStatus{}
+	nodeStatusMu.Unlock()
+	t.Cleanup(func() {
+		setOnlines(previousOnlines)
+		nodeStatusMu.Lock()
+		nodeStatuses = previousStatuses
+		nodeStatusMu.Unlock()
+	})
+	setOnlines(onlines{User: []string{"local"}})
+
+	db := database.GetDB()
+	for _, name := range []string{"local", "alice"} {
+		if err := db.Create(&model.Client{Name: name}).Error; err != nil {
+			t.Fatalf("seed client %s: %v", name, err)
+		}
+	}
+
+	var coreRunning atomic.Bool
+	coreRunning.Store(true)
+	var onlineRequestFails atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/apiv2/status":
+			if coreRunning.Load() {
+				w.Write([]byte(`{"success":true,"obj":{"sbd":{"running":true}}}`))
+			} else {
+				w.Write([]byte(`{"success":true,"obj":{"sbd":{"running":false}}}`))
+			}
+		case "/app/apiv2/onlines":
+			if onlineRequestFails.Load() {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.Write([]byte(`{"success":true,"obj":{"user":["alice","local","stranger","alice"]}}`))
+		default:
+			t.Errorf("unexpected node request: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	node := model.Node{Name: "node", BaseUrl: srv.URL, WebPath: "/app/", Token: "token", Enable: true}
+	if err := db.Create(&node).Error; err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+	var nodes NodeService
+	var stats StatsService
+	check := func(want []string) {
+		t.Helper()
+		nodes.RefreshAll()
+		got, err := stats.GetClusterOnlines()
+		if err != nil {
+			t.Fatalf("get onlines: %v", err)
+		}
+		if !reflect.DeepEqual(got.User, want) {
+			t.Errorf("online users = %v, want %v", got.User, want)
+		}
+	}
+
+	check([]string{"local", "alice"})
+	localOnly, err := stats.GetOnlines()
+	if err != nil || !reflect.DeepEqual(localOnly.User, []string{"local"}) {
+		t.Fatalf("node apiv2/onlines source = %v, %v; want local only", localOnly.User, err)
+	}
+	nodeStatusMu.Lock()
+	stale := nodeStatuses[node.Id]
+	stale.onlineCheckedAt = time.Now().Add(-nodeOnlineTTL - time.Second).Unix()
+	nodeStatuses[node.Id] = stale
+	nodeStatusMu.Unlock()
+	staleOnline, err := stats.GetClusterOnlines()
+	if err != nil || !reflect.DeepEqual(staleOnline.User, []string{"local"}) {
+		t.Fatalf("stale node snapshot stayed online: %v, %v", staleOnline.User, err)
+	}
+	check([]string{"local", "alice"})
+	coreRunning.Store(false)
+	check([]string{"local"})
+	coreRunning.Store(true)
+	onlineRequestFails.Store(true)
+	check([]string{"local"})
+	if got := nodes.GetStatuses()[node.Id].State; got != "online" {
+		t.Errorf("node state after failed onlines request = %q, want online", got)
+	}
+	onlineRequestFails.Store(false)
+	check([]string{"local", "alice"})
+	if err := db.Model(&node).Update("enable", false).Error; err != nil {
+		t.Fatalf("disable node: %v", err)
+	}
+	check([]string{"local"})
+}
 
 // TestBuildNodeHTTPClientBoundsIdleConns pins the backstop: a custom Transport
 // inherits none of http.DefaultTransport's pool settings, and a zero

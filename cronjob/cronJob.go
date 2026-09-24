@@ -64,6 +64,7 @@ func (c *CronJob) Start(loc *time.Location, trafficAge int, statsBucketSeconds i
 	addJob("@every 10s", NewStatsJob(trafficAge > 0, statsBucketSeconds), "stats job")
 	// Enforce per-client IP limits (no-op unless some client sets one)
 	addJob("@every 10s", NewIpLimitJob(), "ip limit job")
+	addJob("@every 10s", NewClusterIPLimitJob(), "cluster IP limit job")
 	addJob("@every 1m", NewDepleteJob(), "deplete job")
 	// Periodic global traffic reset, only when a valid cron spec is configured
 	if globalReset != "" && globalReset != "off" {

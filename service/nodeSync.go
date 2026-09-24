@@ -34,7 +34,7 @@ const (
 	// needs no tombstones for deletes.
 	clusterGroup = "@cluster"
 
-	nodePushTimeout = 15 * time.Second // node hot-restarts inbounds on save
+	nodePushTimeout  = 15 * time.Second // node hot-restarts inbounds on save
 	reconcileBackoff = 30 * time.Second
 )
 
@@ -566,11 +566,8 @@ func (s *NodeSyncService) expectedClients(nodeId uint, tagToId map[string]uint) 
 			"expiry": c.Expiry, // absolute; node self-expires consistently
 			"group":  clusterGroup,
 			"desc":   c.Desc,
-			// Copied verbatim, unlike volume. A quota is additive, so replicating
-			// 100 GB to three nodes would hand out 300 GB; an IP cap is not --
-			// "at most two devices" means two per node, and since nothing
-			// aggregates IPs across the cluster, replicating the number is both
-			// the correct reading and strictly stricter than a global count.
+			// Keep the local cap as a fallback when cluster coordination cannot
+			// reach the node. The master also applies the same cap across nodes.
 			"limitIp": c.LimitIp,
 		}
 	}

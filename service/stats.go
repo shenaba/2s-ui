@@ -1,6 +1,7 @@
 package service
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -416,6 +417,56 @@ func (s *StatsService) GetOnlines() (onlines, error) {
 	onlineMu.RLock()
 	defer onlineMu.RUnlock()
 	return *onlineResources, nil
+}
+
+const nodeOnlineTTL = 20 * time.Second
+
+// GetClusterOnlines adds recent node snapshots to the local stats window.
+// A node's apiv2/onlines still uses GetOnlines, so it never returns an
+// already-aggregated list to its own master.
+func (s *StatsService) GetClusterOnlines() (onlines, error) {
+	result, err := s.GetOnlines()
+	if err != nil {
+		return onlines{}, err
+	}
+
+	nodeStatusMu.RLock()
+	var nodeUsers []string
+	now := time.Now().Unix()
+	for _, status := range nodeStatuses {
+		if status.State == "online" && status.onlineCheckedAt > 0 &&
+			now-status.onlineCheckedAt <= int64(nodeOnlineTTL.Seconds()) {
+			nodeUsers = append(nodeUsers, status.onlineUsers...)
+		}
+	}
+	nodeStatusMu.RUnlock()
+	if len(nodeUsers) == 0 {
+		return result, nil
+	}
+	sort.Strings(nodeUsers)
+
+	// Nodes may also host their own clients. Only names owned by this panel
+	// belong in its online count.
+	var names []string
+	if err := database.GetDB().Model(model.Client{}).Pluck("name", &names).Error; err != nil {
+		return onlines{}, err
+	}
+	known := make(map[string]bool, len(names))
+	for _, name := range names {
+		known[name] = true
+	}
+	seen := make(map[string]bool, len(result.User))
+	result.User = append([]string(nil), result.User...)
+	for _, name := range result.User {
+		seen[name] = true
+	}
+	for _, name := range nodeUsers {
+		if known[name] && !seen[name] {
+			result.User = append(result.User, name)
+			seen[name] = true
+		}
+	}
+	return result, nil
 }
 
 // delOldStatsChunk caps how many rows one DELETE removes, so the write lock is

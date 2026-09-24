@@ -34,15 +34,17 @@ type NodeMem struct {
 }
 
 type NodeStatus struct {
-	State       string  `json:"state"` // online | offline | core-stopped
-	Latency     int64   `json:"latency"`
-	Cpu         float64 `json:"cpu"`
-	Mem         NodeMem `json:"mem"`
-	AppVersion  string  `json:"appVersion"`
-	CoreVersion string  `json:"coreVersion"`
-	Error       string  `json:"error,omitempty"`
-	CheckedAt   int64   `json:"checkedAt"`
-	LastOnline  int64   `json:"lastOnline"`
+	State           string  `json:"state"` // online | offline | core-stopped
+	Latency         int64   `json:"latency"`
+	Cpu             float64 `json:"cpu"`
+	Mem             NodeMem `json:"mem"`
+	AppVersion      string  `json:"appVersion"`
+	CoreVersion     string  `json:"coreVersion"`
+	Error           string  `json:"error,omitempty"`
+	CheckedAt       int64   `json:"checkedAt"`
+	LastOnline      int64   `json:"lastOnline"`
+	onlineUsers     []string
+	onlineCheckedAt int64
 }
 
 var (
@@ -261,6 +263,18 @@ func (s *NodeService) probe(n *model.Node, client *http.Client) NodeStatus {
 	status.CoreVersion = payload.Sbd.Version
 	if payload.Sbd.Running {
 		status.State = "online"
+		obj, err := s.nodeGet(n, client, "onlines", nil)
+		if err != nil {
+			logger.Warning("nodes: get onlines from ", n.Name, ": ", err)
+			return status
+		}
+		var online onlines
+		if err := json.Unmarshal(obj, &online); err != nil {
+			logger.Warning("nodes: decode onlines from ", n.Name, ": ", err)
+			return status
+		}
+		status.onlineUsers = online.User
+		status.onlineCheckedAt = time.Now().Unix()
 	} else {
 		status.State = "core-stopped"
 	}

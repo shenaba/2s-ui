@@ -248,12 +248,36 @@ func (a *ApiService) GetOnlines(c *gin.Context) {
 	jsonObj(c, onlines, err)
 }
 
+func (a *ApiService) GetClusterOnlines(c *gin.Context) {
+	onlines, err := a.StatsService.GetClusterOnlines()
+	jsonObj(c, onlines, err)
+}
+
 // GetOnlineIps lists one client's live source IPs. Kept apart from GetOnlines
 // rather than added to it as a query parameter: that endpoint returns three tag
 // lists, and switching its shape on a parameter would break every caller that
 // does not pass one.
 func (a *ApiService) GetOnlineIps(c *gin.Context) {
-	jsonObj(c, gin.H{"ips": service.OnlineIPsOf(c.Query("name"))}, nil)
+	name := c.Query("name")
+	if ips, ok := service.ClusterOnlineIPsOf(name); ok {
+		jsonObj(c, gin.H{"ips": ips}, nil)
+		return
+	}
+	jsonObj(c, gin.H{"ips": service.OnlineIPsOf(name)}, nil)
+}
+
+func (a *ApiService) GetClusterIps(c *gin.Context) {
+	ips, err := service.ClusterIPSnapshot()
+	jsonObj(c, ips, err)
+}
+
+func (a *ApiService) ApplyClusterBans(c *gin.Context) {
+	var bans map[string][]string
+	if err := json.Unmarshal([]byte(c.PostForm("data")), &bans); err != nil {
+		jsonMsg(c, "clusterBans", err)
+		return
+	}
+	jsonMsg(c, "clusterBans", service.ApplyClusterBans(bans))
 }
 
 func (a *ApiService) GetLogs(c *gin.Context) {

@@ -98,6 +98,11 @@ type banScope struct {
 type ipLimiter struct {
 	mu   sync.RWMutex
 	bans map[ipBanKey]ipBan
+	// Replaced by the master every cluster scan. A short expiry lets a node
+	// return to its local limit if the master becomes unreachable.
+	clusterBans       map[ipBanKey]int64
+	clusterManaged    map[string]bool
+	clusterLeaseUntil int64
 
 	// client -> IP -> what that IP is owed. Seniority is remembered rather than
 	// re-derived from live connections: an IP whose oldest connection just
@@ -121,13 +126,25 @@ var ipLimits = &ipLimiter{
 func (l *ipLimiter) allow(user string, source netip.Addr) bool {
 	l.mu.RLock()
 	ban, banned := l.bans[ipBanKey{user: user, ip: source}]
+	clusterUntil := l.clusterBans[ipBanKey{user: user, ip: source}]
+	managed := l.clusterManaged[user] && l.clusterLeaseUntil > time.Now().Unix()
 	l.mu.RUnlock()
+	if managed {
+		return clusterUntil <= time.Now().Unix()
+	}
+	if !banned && clusterUntil == 0 {
+		return true
+	}
+	now := time.Now().Unix()
+	if clusterUntil > now {
+		return false
+	}
 	if !banned {
 		return true
 	}
 	// Expiry is checked here as well as in sweep so a ban never outlives its TTL
 	// just because no scan has run since.
-	return time.Now().Unix() >= ban.until
+	return now >= ban.until
 }
 
 func (l *ipLimiter) ban(user string, ips []netip.Addr, nowUnix int64, generation uint64) {
@@ -378,6 +395,9 @@ func setIPCounts(counts map[string]int) {
 }
 
 func GetIPCounts() map[string]int {
+	if cluster, active := clusterIPCountSnapshot(); active {
+		return cluster
+	}
 	ipCountMu.RLock()
 	defer ipCountMu.RUnlock()
 	out := make(map[string]int, len(ipCountsValue))
@@ -393,13 +413,21 @@ func GetIPCounts() map[string]int {
 // client's cap and republishes the per-client counts. A deployment that uses no
 // limits pays one indexed query per run and nothing else.
 func EnforceIPLimits() {
-	limits, err := loadIPLimits()
+	limits, managed, err := loadIPLimits()
 	if err != nil {
 		logger.Warning("ip limit: read limits:", err)
 		return
 	}
 	// Gates the per-packet timestamping in core; see core.SetIPLimitActive.
 	core.SetIPLimitActive(len(limits) > 0)
+	ipLimits.mu.RLock()
+	clusterLeaseActive := ipLimits.clusterLeaseUntil > time.Now().Unix()
+	ipLimits.mu.RUnlock()
+	if clusterLeaseActive {
+		for name := range managed {
+			delete(limits, name)
+		}
+	}
 	nowUnix := time.Now().Unix()
 	if len(limits) == 0 {
 		setIPCounts(nil)
@@ -469,23 +497,28 @@ func EnforceIPLimits() {
 	ipLimits.sweep(nowUnix, &banScope{generation: generation, capped: capped})
 }
 
-func loadIPLimits() (map[string]int, error) {
+func loadIPLimits() (map[string]int, map[string]bool, error) {
 	var rows []struct {
 		Name    string
 		LimitIp int
+		Group   string
 	}
 	err := database.GetDB().Model(model.Client{}).
-		Select("`name`, `limit_ip`").
+		Select("`name`, `limit_ip`, `group`").
 		Where("limit_ip > 0 AND enable = ?", true).
 		Scan(&rows).Error
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	limits := make(map[string]int, len(rows))
+	managed := make(map[string]bool)
 	for _, row := range rows {
 		limits[row.Name] = row.LimitIp
+		if row.Group == clusterGroup {
+			managed[row.Name] = true
+		}
 	}
-	return limits, nil
+	return limits, managed, nil
 }
 
 // liveConnTracker returns the running core's tracker, or nil. GetInstance can

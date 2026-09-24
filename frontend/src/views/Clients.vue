@@ -448,12 +448,10 @@ const showStats = (tag: string) => {
 // Only clients holding at least one admitted IP are pushed, so an absent name
 // means zero rather than unknown.
 const ipCount = (c: any): number => dataStore.ipCounts?.[c.name] ?? 0
-// The number needs two caveats spelled out, because neither is guessable from
-// "1/2": idle sessions are excluded (so it can read lower than the popup's
-// list), and in a cluster it covers this panel only — each node enforces and
-// counts its own, and nothing aggregates them.
 const ipCountTitle = computed(() =>
-  (dataStore.nodes?.length ?? 0) > 0 ? t('ui.ipCountLocalHint') : t('ui.ipCountHint'),
+  (dataStore.nodes?.length ?? 0) > 0 && !dataStore.clusterIpActive
+    ? t('ui.ipCountLocalHint')
+    : t('ui.ipCountHint'),
 )
 // Two states only. The count is how many IPs the scan admitted, and it never
 // admits more than the limit, so "over quota" is not a state this number can

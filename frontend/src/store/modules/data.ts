@@ -33,6 +33,7 @@ const Data = defineStore('Data', {
     // client name -> currently admitted source IP count. Only clients with a
     // limit and at least one live IP appear; readers fall back to 0.
     ipCounts: <Record<string, number>>{},
+    clusterIpActive: false,
     // inbound tag -> total traffic through it, both directions summed. Measured
     // per inbound by the core, so it is NOT the sum of its clients' totals: a
     // client on several inbounds carries one figure across all of them.
@@ -75,6 +76,7 @@ const Data = defineStore('Data', {
       if (obj.onlines) this.onlines = obj.onlines
       if (Object.hasOwn(obj, 'nodesStatus')) this.nodesStatus = obj.nodesStatus ?? {}
       if (Object.hasOwn(obj, 'ipCounts')) this.ipCounts = obj.ipCounts ?? {}
+      if (Object.hasOwn(obj, 'clusterIpActive')) this.clusterIpActive = !!obj.clusterIpActive
       if (Object.hasOwn(obj, 'inboundTraffic')) this.inboundTraffic = obj.inboundTraffic ?? {}
       // Client traffic is rewritten every stats flush without marking a config
       // change, so the client list rides the live payload too -- waiting for the
