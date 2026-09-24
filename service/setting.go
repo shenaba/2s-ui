@@ -26,6 +26,7 @@ var defaultConfig = `{
     "level": "info"
   },
   "dns": {
+    "strategy": "prefer_ipv4",
     "servers": [],
     "rules": []
   },

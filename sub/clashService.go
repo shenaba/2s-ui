@@ -40,14 +40,18 @@ dns:
     - 8.8.8.8
     - 1.1.1.1
   nameserver:
-    - https://doh.pub/dns-query
     - https://1.0.0.1/dns-query
+    - https://8.8.8.8/dns-query
+    - https://doh.pub/dns-query
   fallback:
     - tcp://9.9.9.9:53
   fake-ip-filter:
     - "*.lan"
     - localhost
     - "*.local"
+    - "*.stun.*"
+    - "stun.*"
+    - "*.turn.*"
 rules:
   - GEOIP,Private,DIRECT
   - MATCH,Proxy
@@ -342,8 +346,12 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 				proxy["reality-opts"] = reality_opts
 			}
 			if utls, ok := tls["utls"].(map[string]interface{}); ok {
-				if enabled, ok := utls["enabled"].(bool); ok && enabled {
-					if fp, ok := utls["fingerprint"].(string); ok {
+				enabled := true
+				if e, ok := utls["enabled"]; ok {
+					enabled = util.AsBool(e)
+				}
+				if enabled {
+					if fp, ok := utls["fingerprint"].(string); ok && fp != "" {
 						proxy["client-fingerprint"] = fp
 					}
 				}

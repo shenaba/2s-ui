@@ -52,3 +52,25 @@ func TestStartErrorNamesTheProblem(t *testing.T) {
 		t.Errorf("error = %q, want it to say the config could not be read", err)
 	}
 }
+
+func TestStartAcceptsPreferIPv4DNS(t *testing.T) {
+	config := `{
+		"dns": {
+			"strategy": "prefer_ipv4",
+			"servers": [],
+			"rules": []
+		},
+		"outbounds": [
+			{"type": "direct", "tag": "direct"}
+		]
+	}`
+	c := NewCore()
+	err := c.Start([]byte(config))
+	if err != nil {
+		t.Fatalf("Start failed with prefer_ipv4 DNS: %v", err)
+	}
+	defer c.Stop()
+	if !c.IsRunning() {
+		t.Error("expected core to be running")
+	}
+}
