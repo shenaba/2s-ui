@@ -82,7 +82,7 @@ type entry struct {
 // in this package refuses anything. They decide whose transport to close, and
 // whether a removed user was connected at all.
 type Registry struct {
-	access sync.Mutex
+	access sync.RWMutex
 	// sources holds the sessions with a closer, keyed by the source address of
 	// the one connection that carries them. Bounded by live sessions: every
 	// entry is created by Track or BindAndTrack and removed by the Untrack its
@@ -136,6 +136,18 @@ func (r *Registry) Bind(user string, source string) {
 	if user == "" {
 		return
 	}
+	r.access.RLock()
+	if e, tracked := r.sources[source]; tracked {
+		if e.user == user {
+			r.access.RUnlock()
+			return
+		}
+	} else if _, seen := r.seen[user]; seen {
+		r.access.RUnlock()
+		return
+	}
+	r.access.RUnlock()
+
 	r.access.Lock()
 	defer r.access.Unlock()
 	if e, tracked := r.sources[source]; tracked {

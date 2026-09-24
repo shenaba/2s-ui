@@ -183,6 +183,14 @@ func TestClashKeepsGoShapedFieldsOfExternalLinks(t *testing.T) {
 			key:  "alterId",
 			want: 64,
 		},
+		{
+			// utls fingerprint survives into client-fingerprint
+			name: "client-fingerprint",
+			link: "vless://11111111-1111-1111-1111-111111111111@e.com:443" +
+				"?security=tls&sni=x.com&fp=chrome&type=tcp#node",
+			key:  "client-fingerprint",
+			want: "chrome",
+		},
 	}
 
 	for _, tt := range tests {
