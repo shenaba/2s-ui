@@ -6,8 +6,8 @@ require (
 	github.com/anytls/sing-anytls v0.0.13
 	github.com/caddyserver/certmagic v0.25.4
 	github.com/coder/websocket v1.8.15
-	github.com/gin-contrib/gzip v1.2.7
-	github.com/gin-contrib/sessions v1.1.1
+	github.com/gin-contrib/gzip v1.2.8
+	github.com/gin-contrib/sessions v1.1.2
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-telegram/bot v1.27.0
@@ -17,9 +17,9 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sagernet/sing v0.9.5
 	github.com/sagernet/sing-box v1.14.1
-	github.com/sagernet/sing-mux v0.3.7
+	github.com/sagernet/sing-mux v0.3.8
 	github.com/sagernet/sing-quic v0.7.0
-	github.com/sagernet/sing-tun v0.9.4
+	github.com/sagernet/sing-tun v0.9.5
 	github.com/sagernet/sing-vmess v0.2.8
 	github.com/shirou/gopsutil/v4 v4.26.8
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
