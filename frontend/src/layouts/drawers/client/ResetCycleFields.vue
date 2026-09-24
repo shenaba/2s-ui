@@ -38,17 +38,14 @@ import Select from '@/components/ui/Select.vue'
 // add and bulk edit; like the other form parts it edits the fields of `data` in
 // place.
 const props = defineProps<{ data: { resetDays?: number; resetDayOfMonth?: number } }>()
-// A period typed into the days field, emitted before it is written: the client
-// drawer moves the next reset it displays by the difference.
-const emit = defineEmits<{ period: [to: number, from: number] }>()
 
 const mode = computed<'days' | 'monthly'>({
   get: () => ((props.data.resetDayOfMonth ?? 0) > 0 ? 'monthly' : 'days'),
   set: (m) => {
     if (m === 'monthly') {
-      // Today by default: "the same day every month, starting now" is the
-      // usual way a plan is billed.
-      props.data.resetDayOfMonth = props.data.resetDayOfMonth || new Date().getDate()
+      // The panel timezone may differ from the browser's, so use a stable
+      // default instead of the browser's current day.
+      props.data.resetDayOfMonth = props.data.resetDayOfMonth || 1
       props.data.resetDays = 0
     } else {
       props.data.resetDayOfMonth = 0
@@ -69,9 +66,7 @@ const dayOfMonth = computed({
 const days = computed({
   get: () => props.data.resetDays ?? 1,
   set: (v: number | string | null) => {
-    const n = coerceResetDays(v)
-    emit('period', n, props.data.resetDays ?? 0)
-    props.data.resetDays = n
+    props.data.resetDays = coerceResetDays(v)
   },
 })
 </script>

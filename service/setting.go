@@ -738,6 +738,20 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 	for key, value := range settings {
 		settings[key] = strings.TrimSpace(value)
 	}
+	newZone, hasZone := settings["timeLocation"]
+	var oldZone string
+	if hasZone {
+		var current model.Setting
+		err := tx.Where("key = ?", "timeLocation").First(&current).Error
+		if err != nil && err != gorm.ErrRecordNotFound {
+			return err
+		}
+		if err == gorm.ErrRecordNotFound {
+			oldZone = defaultValueMap["timeLocation"]
+		} else {
+			oldZone = current.Value
+		}
+	}
 
 	// When ACME auto-cert is enabled the manual cert/key paths are unused (and
 	// may be stale/deleted), so skip their file-existence check below.
@@ -807,6 +821,9 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 		if err != nil {
 			return err
 		}
+	}
+	if hasZone && newZone != oldZone {
+		return rebaseMonthlyResets(tx, oldZone, newZone, time.Now().Unix())
 	}
 	return err
 }

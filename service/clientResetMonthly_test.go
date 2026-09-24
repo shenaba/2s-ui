@@ -641,3 +641,125 @@ func TestPanelLocationFollowsTheSetting(t *testing.T) {
 		t.Errorf("panelLocation() = %s for an unknown zone, want the default, Asia/Tehran", got)
 	}
 }
+
+func TestRebaseMonthlyResetsPreservesManualAndDueBoundaries(t *testing.T) {
+	newResetDB(t)
+	db := database.GetDB()
+	now := at(2026, time.September, 24, 12, 0).Unix()
+	oldLoc, _ := time.LoadLocation("Asia/Shanghai")
+	oldBoundary := nextMonthlyReset(time.Unix(now, 0).In(oldLoc), 1).Unix()
+	newBoundary := nextMonthlyReset(time.Unix(now, 0).UTC(), 1).Unix()
+	for _, c := range []model.Client{
+		{Name: "generated", AutoReset: true, ResetDayOfMonth: 1, NextReset: oldBoundary},
+		{Name: "manual", AutoReset: true, ResetDayOfMonth: 1, NextReset: oldBoundary + 3600},
+		{Name: "due", AutoReset: true, ResetDayOfMonth: 1, NextReset: now - 60},
+		{Name: "delayed", AutoReset: true, DelayStart: true, ResetDayOfMonth: 1},
+		{Name: "days", AutoReset: true, ResetDays: 30, NextReset: oldBoundary},
+	} {
+		seedClient(t, &c)
+	}
+	tx := db.Begin()
+	if err := rebaseMonthlyResets(tx, "Asia/Shanghai", "UTC", now); err != nil {
+		tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit().Error; err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]int64{
+		"generated": newBoundary,
+		"manual":    oldBoundary + 3600,
+		"due":       now - 60,
+		"delayed":   0,
+		"days":      oldBoundary,
+	} {
+		var c model.Client
+		if err := db.Where("name = ?", name).First(&c).Error; err != nil {
+			t.Fatal(err)
+		}
+		if c.NextReset != want {
+			t.Errorf("%s: next reset = %d, want %d", name, c.NextReset, want)
+		}
+	}
+}
+
+func TestRebaseMonthlyResetsAcrossMidnightDoesNotSkipOrDoubleReset(t *testing.T) {
+	for _, tc := range []struct {
+		name, oldZone, newZone string
+		now                    int64
+		wantDueNow             bool
+	}{
+		{
+			name:    "new-zone midnight has passed but old-zone midnight has not",
+			oldZone: "America/Los_Angeles", newZone: "Asia/Shanghai",
+			now: at(2026, time.September, 30, 18, 0).Unix(), wantDueNow: true,
+		},
+		{
+			name:    "old-zone midnight already ran but new-zone midnight has not",
+			oldZone: "Asia/Shanghai", newZone: "UTC",
+			now: at(2026, time.September, 30, 18, 0).Unix(),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			newResetDB(t)
+			db := database.GetDB()
+			oldLoc, _ := time.LoadLocation(tc.oldZone)
+			oldBoundary := nextMonthlyReset(time.Unix(tc.now, 0).In(oldLoc), 1).Unix()
+			seedClient(t, &model.Client{Name: "monthly", AutoReset: true, ResetDayOfMonth: 1, NextReset: oldBoundary})
+			tx := db.Begin()
+			if err := rebaseMonthlyResets(tx, tc.oldZone, tc.newZone, tc.now); err != nil {
+				tx.Rollback()
+				t.Fatal(err)
+			}
+			if err := tx.Commit().Error; err != nil {
+				t.Fatal(err)
+			}
+			var c model.Client
+			if err := db.Where("name = ?", "monthly").First(&c).Error; err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantDueNow {
+				if c.NextReset != tc.now-1 {
+					t.Errorf("next reset = %d, want immediately due at %d", c.NextReset, tc.now-1)
+				}
+			} else {
+				want := at(2026, time.November, 1, 0, 0).Unix()
+				if c.NextReset != want {
+					t.Errorf("next reset = %d, want November boundary %d", c.NextReset, want)
+				}
+			}
+		})
+	}
+}
+
+func TestSaveTimezoneRebasesMonthlyReset(t *testing.T) {
+	newResetDB(t)
+	db := database.GetDB()
+	if err := db.Create(&model.Setting{Key: "timeLocation", Value: "Asia/Shanghai"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	oldLoc, _ := time.LoadLocation("Asia/Shanghai")
+	dom := now.In(oldLoc).AddDate(0, 0, 10).Day()
+	oldBoundary := nextMonthlyReset(now.In(oldLoc), dom).Unix()
+	newBoundary := nextMonthlyReset(now.UTC(), dom).Unix()
+	seedClient(t, &model.Client{Name: "monthly", AutoReset: true, ResetDayOfMonth: dom, NextReset: oldBoundary})
+
+	data, _ := json.Marshal(map[string]string{"timeLocation": "UTC"})
+	var settings SettingService
+	tx := db.Begin()
+	if err := settings.Save(tx, data); err != nil {
+		tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit().Error; err != nil {
+		t.Fatal(err)
+	}
+	var c model.Client
+	if err := db.Where("name = ?", "monthly").First(&c).Error; err != nil {
+		t.Fatal(err)
+	}
+	if c.NextReset != newBoundary {
+		t.Errorf("next reset = %d, want %d after timezone save", c.NextReset, newBoundary)
+	}
+}
