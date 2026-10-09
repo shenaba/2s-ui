@@ -196,12 +196,24 @@ const clone = async (id: number) => {
     const inbound = (await Data().loadInbounds([id]))[0]
     if (!inbound) return
     const newPort = freePort()
+    // A hysteria port-hopping range is forwarded (iptables, outside the panel)
+    // to the original's listen port, so the copy's clients would hop straight
+    // onto the original. There is no range to move it to that the panel could
+    // know, so the copy starts without hopping and dials its own port until
+    // the operator forwards a range for it.
+    const out_json = inbound.out_json ? { ...inbound.out_json } : inbound.out_json
+    if (out_json) {
+      delete out_json.server_ports
+      delete out_json.hop_interval
+      delete out_json.hop_interval_max
+    }
     const newInbound = createInbound(inbound.type, {
       ...inbound,
       id: 0,
       tag: freeTag(inbound.type),
       listen_port: newPort,
       addrs: followListenPort(inbound.addrs, inbound.listen_port, newPort),
+      out_json,
     })
     await Data().save('inbounds', 'new', newInbound)
   } finally {
