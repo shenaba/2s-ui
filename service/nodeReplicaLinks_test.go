@@ -67,6 +67,36 @@ func TestGenNodeReplicaLinksSurvivesANullAddressRow(t *testing.T) {
 	}
 }
 
+// Issue #218: an address row with its own tls block (the shape the panel's
+// address editor stores -- enabled + server_name only) used to replace the
+// snapshot's tls outright, so a Reality inbound lost pbk/sid/fp and the master
+// served security=tls. The row overrides field by field instead.
+func TestGenNodeReplicaLinksKeepsRealityUnderAnAddressTlsOverride(t *testing.T) {
+	logger.InitLogger(logging.CRITICAL)
+
+	nodeId := uint(7)
+	replica := &model.Inbound{
+		Type: "vless", Tag: "R-CN", NodeId: &nodeId,
+		Options: json.RawMessage(`{"listen_port":8443}`),
+		OutJson: json.RawMessage(`{"type":"vless","tag":"R-CN","server":"127.0.0.1","server_port":8443,` +
+			`"tls":{"enabled":true,"server_name":"www.cloudflare.com",` +
+			`"reality":{"enabled":true,"public_key":"PBK","short_id":"SID"},` +
+			`"utls":{"enabled":true,"fingerprint":"chrome"}}}`),
+		Addrs: json.RawMessage(`[{"remark":"-01","server":"203.0.113.1","server_port":8443,` +
+			`"tls":{"enabled":true,"server_name":"override.example"}}]`),
+	}
+
+	links := genNodeReplicaLinks(replica, replicaClient())
+	if len(links) != 1 {
+		t.Fatalf("got %d links %v, want 1", len(links), links)
+	}
+	for _, want := range []string{"security=reality", "pbk=PBK", "sid=SID", "fp=chrome", "sni=override.example", "203.0.113.1:8443"} {
+		if !strings.Contains(links[0], want) {
+			t.Errorf("link %q is missing %q", links[0], want)
+		}
+	}
+}
+
 // The counterpart that keeps the above honest: an address book with no nulls in
 // it still produces one link per row.
 func TestGenNodeReplicaLinksUsesEveryAddressRow(t *testing.T) {

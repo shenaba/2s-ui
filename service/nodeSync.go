@@ -730,9 +730,25 @@ func genNodeReplicaLinks(replica *model.Inbound, c *model.Client) (links []strin
 		if _, ok := a["server_port"]; !ok {
 			a["server_port"] = base["server_port"]
 		}
-		if _, ok := a["tls"]; !ok {
-			if tls, ok := base["tls"]; ok {
-				a["tls"] = tls
+		// An address's tls is an override on top of the inbound's, not a
+		// replacement: the panel's own address editor stores only the fields
+		// the operator touched (typically enabled + server_name), and
+		// util.LinkGenerator layers it over the Tls record the same way. Taking
+		// it wholesale here dropped everything it didn't mention -- reality's
+		// public_key/short_id and the utls fingerprint -- so a Reality inbound
+		// came out of the master as a plain tls link (issue #218).
+		if baseTls, ok := base["tls"].(map[string]interface{}); ok {
+			if _, present := a["tls"]; !present {
+				a["tls"] = baseTls
+			} else if addrTls, ok := a["tls"].(map[string]interface{}); ok {
+				merged := make(map[string]interface{}, len(baseTls)+len(addrTls))
+				for k, v := range baseTls {
+					merged[k] = v
+				}
+				for k, v := range addrTls {
+					merged[k] = v
+				}
+				a["tls"] = merged
 			}
 		}
 		addrs = append(addrs, a)
