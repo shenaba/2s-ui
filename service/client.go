@@ -1510,7 +1510,13 @@ func (s *ClientService) ResetClients(tx *gorm.DB, dt int64, loc *time.Location) 
 // the global periodic traffic reset and api/resetTraffic. Returns the inbounds
 // of the clients it re-enabled -- the only user lists that changed -- for the
 // caller to update in the running core.
-func (s *ClientService) ResetAllClientsTraffic() ([]uint, error) {
+//
+// within, when not nil, runs inside the same transaction after the reset, and
+// its error rolls the reset back. The scheduled reset records its next boundary
+// there: written apart, a failed write left the boundary in the past, and the
+// job, polled every minute, reset everyone again on each tick until one
+// succeeded.
+func (s *ClientService) ResetAllClientsTraffic(within func(tx *gorm.DB) error) ([]uint, error) {
 	db := database.GetDB()
 	dt := time.Now().Unix()
 	var inboundIds []uint
@@ -1541,22 +1547,26 @@ func (s *ClientService) ResetAllClientsTraffic() ([]uint, error) {
 		if result.Error != nil {
 			return result.Error
 		}
-		if result.RowsAffected == 0 {
-			return nil
+		if result.RowsAffected > 0 {
+			if err := tx.Create(&model.Changes{
+				DateTime: dt,
+				Actor:    "ResetTrafficJob",
+				Key:      "clients",
+				Action:   "reset",
+				Obj:      json.RawMessage("\"all\""),
+			}).Error; err != nil {
+				return err
+			}
+			marked = true
 		}
-		if err := tx.Create(&model.Changes{
-			DateTime: dt,
-			Actor:    "ResetTrafficJob",
-			Key:      "clients",
-			Action:   "reset",
-			Obj:      json.RawMessage("\"all\""),
-		}).Error; err != nil {
-			return err
+		// Even when nothing needed resetting: the boundary still has to move.
+		if within != nil {
+			return within(tx)
 		}
-		marked = true
 		return nil
 	})
 	if err != nil {
+		// marked may be set by a transaction that then rolled back.
 		return nil, err
 	}
 	// After the commit, never inside it: the mark invalidates the config cache,

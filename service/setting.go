@@ -59,12 +59,14 @@ var defaultConfig = `{
 //
 // secret keys the session cookie store, config is the sing-box base config that
 // the "config" object owns (and which restarts the core when it changes), and
-// version and globalResetLast are bookkeeping the panel advances itself.
+// version, globalResetLast and globalResetArmed are bookkeeping the panel
+// advances itself.
 var protectedSettings = map[string]bool{
-	"secret":          true,
-	"config":          true,
-	"version":         true,
-	"globalResetLast": true,
+	"secret":           true,
+	"config":           true,
+	"version":          true,
+	"globalResetLast":  true,
+	"globalResetArmed": true,
 	// Not seeded with the others, but GetAllSetting reads the whole table, so
 	// the row reaches the settings form as soon as the switch has been used
 	// once -- and the form posts back what it was given. maintenance has an
@@ -115,6 +117,7 @@ var defaultValueMap = map[string]string{
 	"subClashUdp":        "false",
 	"globalReset":        "",
 	"globalResetLast":    "0",
+	"globalResetArmed":   "",
 	"config":             defaultConfig,
 	"version":            config.GetVersion(),
 
@@ -649,18 +652,55 @@ func (s *SettingService) GetGlobalReset() (string, error) {
 	return s.getString("globalReset")
 }
 
-// GetGlobalResetLast returns the unix time of the next armed global traffic
-// reset -- despite the name -- or 0 when no boundary is armed yet.
-func (s *SettingService) GetGlobalResetLast() (int64, error) {
+// GetGlobalResetArmed returns the next armed global traffic reset as a unix
+// time (globalResetLast, despite its name), and the schedule it was armed for
+// (globalResetArmed): the spec and the zone, as GlobalResetArmedFor builds it.
+//
+// The boundary only means something under the schedule that produced it, and
+// carrying that schedule is what lets the reset job notice a change by itself.
+// A boundary cleared on save instead would race the job: one tick that read
+// the old spec just before the save committed would arm the old schedule
+// again, and nothing would ever clear it.
+func (s *SettingService) GetGlobalResetArmed() (int64, string, error) {
 	str, err := s.getString("globalResetLast")
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
-	return strconv.ParseInt(str, 10, 64)
+	next, err := strconv.ParseInt(str, 10, 64)
+	if err != nil {
+		return 0, "", err
+	}
+	armedFor, err := s.getString("globalResetArmed")
+	if err != nil {
+		return 0, "", err
+	}
+	return next, armedFor, nil
 }
 
-func (s *SettingService) SetGlobalResetLast(value int64) error {
-	return s.setString("globalResetLast", strconv.FormatInt(value, 10))
+// GlobalResetArmedFor identifies a schedule as the reset job reads it. The
+// zone is part of it: an armed boundary is a wall-clock time in one zone, and
+// midnight there is not midnight anywhere else.
+func GlobalResetArmedFor(spec string, loc *time.Location) string {
+	return spec + "|" + loc.String()
+}
+
+// ArmGlobalReset records the next boundary and the schedule it belongs to, in
+// tx so that the scheduled reset can commit it together with the reset itself.
+func (s *SettingService) ArmGlobalReset(tx *gorm.DB, next int64, armedFor string) error {
+	if err := upsertSetting(tx, "globalResetLast", strconv.FormatInt(next, 10)); err != nil {
+		return err
+	}
+	return upsertSetting(tx, "globalResetArmed", armedFor)
+}
+
+// upsertSetting is saveSetting inside a caller's transaction. A row that was
+// never seeded falls back to its default on read, so it may not exist yet.
+func upsertSetting(tx *gorm.DB, key, value string) error {
+	result := tx.Model(model.Setting{}).Where("key = ?", key).Update("value", value)
+	if result.Error != nil || result.RowsAffected > 0 {
+		return result.Error
+	}
+	return tx.Create(&model.Setting{Key: key, Value: value}).Error
 }
 
 func (s *SettingService) GetFinalSubURI(host string) (string, error) {
@@ -818,21 +858,12 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 		}
 
 		// A bad spec used to be accepted here and only logged at the next panel
-		// start, so the reset silently never ran.
+		// start, so the reset silently never ran. Nothing else to do on a
+		// change: ResetTrafficJob sees that the armed boundary belongs to
+		// another schedule and re-arms (see GetGlobalResetArmed).
 		if key == "globalReset" && obj != "" && obj != "off" {
 			if _, err = CronParser.Parse(obj); err != nil {
 				return common.NewError("invalid cron spec <", obj, ">: ", err)
-			}
-		}
-		if key == "globalReset" {
-			var old model.Setting
-			if err = tx.Where("key = ?", key).Limit(1).Find(&old).Error; err != nil {
-				return err
-			}
-			if old.Value != obj {
-				if err = disarmGlobalReset(tx); err != nil {
-					return err
-				}
 			}
 		}
 
@@ -852,22 +883,9 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 		}
 	}
 	if hasZone && newZone != oldZone {
-		// The armed boundary is a wall-clock time in the old zone; midnight
-		// there is not midnight here.
-		if err = disarmGlobalReset(tx); err != nil {
-			return err
-		}
 		return rebaseMonthlyResets(tx, oldZone, newZone, time.Now().Unix())
 	}
 	return err
-}
-
-// disarmGlobalReset clears the armed boundary so ResetTrafficJob arms one from
-// the current schedule and zone on its next tick. Left alone, the boundary of
-// the old schedule stands: a monthly-to-daily switch did nothing for up to a
-// month, with nothing anywhere saying why.
-func disarmGlobalReset(tx *gorm.DB) error {
-	return tx.Model(model.Setting{}).Where("key = ?", "globalResetLast").Update("value", "0").Error
 }
 
 func (s *SettingService) GetSubJsonExt() (string, error) {

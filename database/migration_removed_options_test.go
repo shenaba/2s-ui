@@ -2,6 +2,7 @@ package database
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/shenaba/2s-ui/database/model"
@@ -85,9 +86,23 @@ func TestMigrateRemovedOptionsLeavesCleanObjects(t *testing.T) {
 // The first ECH cleanup cleared only tls.client. The same options on tls.server
 // make sing-box refuse the inbound, and the panel had copied them into the
 // stored out_json too -- including on rows with no tls_id, such as node
-// replicas.
+// replicas. A user outbound and a DNS server in the base config are client TLS
+// blocks just the same.
 func TestMigrateRemovedServerECH(t *testing.T) {
 	openHysteriaTestDB(t)
+	if err := db.AutoMigrate(&model.Endpoint{}, &model.Service{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Outbound{Type: "vless", Tag: "out",
+		Options: json.RawMessage(`{"server":"a.example","server_port":443,"tls":{"enabled":true,"ech":{"enabled":true,"pq_signature_schemes_enabled":true}}}`),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Setting{Key: "config",
+		Value: `{"dns":{"servers":[{"type":"tls","tag":"d","server":"1.1.1.1","tls":{"ech":{"enabled":true,"dynamic_record_sizing_disabled":true}}}]},"route":{"x":9007199254740993}}`,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Create(&model.Tls{
 		Name:   "site",
 		Server: json.RawMessage(`{"enabled":true,"ech":{"enabled":true,"key":["k"],"pq_signature_schemes_enabled":true,"dynamic_record_sizing_disabled":false}}`),
@@ -150,6 +165,27 @@ func TestMigrateRemovedServerECH(t *testing.T) {
 	db.Where("tag = ?", "clean").First(&clean)
 	if string(clean.OutJson) != `{"type":"vless","tls":{"enabled":true}}` {
 		t.Errorf("a clean out_json must not be rewritten, got %s", clean.OutJson)
+	}
+
+	var out model.Outbound
+	if err := db.Where("tag = ?", "out").First(&out).Error; err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out.Options), "pq_signature_schemes_enabled") ||
+		!strings.Contains(string(out.Options), `"server_port":443`) {
+		t.Errorf("outbound: want only the legacy option gone, got %s", out.Options)
+	}
+
+	var config model.Setting
+	if err := db.Where("key = ?", "config").First(&config).Error; err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(config.Value, "dynamic_record_sizing_disabled") {
+		t.Errorf("config: the DNS server's legacy option must go, got %s", config.Value)
+	}
+	// Past 2^53: a round trip through float64 would have rounded it.
+	if !strings.Contains(config.Value, "9007199254740993") {
+		t.Errorf("config: unrelated values must survive verbatim, got %s", config.Value)
 	}
 
 	// One-shot: the flag row stops a second run.

@@ -3,9 +3,9 @@ package service
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/shenaba/2s-ui/database"
-	"github.com/shenaba/2s-ui/database/model"
 )
 
 func newSettingDB(t *testing.T) {
@@ -36,14 +36,6 @@ func saveSettings(t *testing.T, body string) error {
 	return tx.Commit().Error
 }
 
-func globalResetLast(t *testing.T) int64 {
-	t.Helper()
-	v, err := (&SettingService{}).GetGlobalResetLast()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return v
-}
 
 // A bad spec used to be stored and only logged at the next panel start, after
 // which the reset silently never ran.
@@ -59,48 +51,42 @@ func TestSaveRejectsInvalidGlobalReset(t *testing.T) {
 	}
 }
 
-// globalResetLast holds the next boundary of the schedule that armed it.
-// Changing the schedule -- or the zone it is read in -- must clear it, or a
-// monthly-to-daily switch does nothing for up to a month. Saving the form with
-// the schedule unchanged must not, or every unrelated settings save would push
-// the reset back.
-func TestSaveDisarmsGlobalResetOnChange(t *testing.T) {
-	newSettingDB(t)
+// The armed boundary carries the schedule it was armed for, and both are
+// written together -- also on a panel whose rows were never seeded, where
+// they only exist as defaults until the first write.
+func TestArmGlobalReset(t *testing.T) {
+	if err := database.InitDB(filepath.Join(t.TempDir(), "arm.db")); err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	t.Cleanup(func() { _ = database.CloseDBForTest() })
 	svc := &SettingService{}
-	if err := saveSettings(t, `{"globalReset":"@monthly"}`); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.SetGlobalResetLast(1234); err != nil {
-		t.Fatal(err)
-	}
 
-	if err := saveSettings(t, `{"globalReset":"@monthly","subShowInfo":"true"}`); err != nil {
-		t.Fatal(err)
+	next, armedFor, err := svc.GetGlobalResetArmed()
+	if err != nil || next != 0 || armedFor != "" {
+		t.Fatalf("unseeded: want 0 and no schedule, got %d %q %v", next, armedFor, err)
 	}
-	if got := globalResetLast(t); got != 1234 {
-		t.Errorf("unchanged schedule: want the armed boundary kept, got %d", got)
+	want := GlobalResetArmedFor("@daily", time.UTC)
+	for _, at := range []int64{1234, 5678} {
+		if err := svc.ArmGlobalReset(database.GetDB(), at, want); err != nil {
+			t.Fatal(err)
+		}
+		next, armedFor, err = svc.GetGlobalResetArmed()
+		if err != nil || next != at || armedFor != want {
+			t.Errorf("want %d %q, got %d %q %v", at, want, next, armedFor, err)
+		}
 	}
+	if GlobalResetArmedFor("@daily", time.UTC) == GlobalResetArmedFor("@daily", time.FixedZone("x", 3600)) {
+		t.Error("a zone change must read as a different schedule")
+	}
+}
 
-	if err := saveSettings(t, `{"globalReset":"@daily"}`); err != nil {
-		t.Fatal(err)
-	}
-	if got := globalResetLast(t); got != 0 {
-		t.Errorf("changed schedule: want the boundary cleared, got %d", got)
-	}
-
-	if err := svc.SetGlobalResetLast(1234); err != nil {
-		t.Fatal(err)
-	}
-	var zone model.Setting
-	database.GetDB().Where("key = ?", "timeLocation").First(&zone)
-	other := "Asia/Shanghai"
-	if zone.Value == other {
-		other = "Europe/Berlin"
-	}
-	if err := saveSettings(t, `{"timeLocation":"`+other+`"}`); err != nil {
-		t.Fatal(err)
-	}
-	if got := globalResetLast(t); got != 0 {
-		t.Errorf("changed zone: want the boundary cleared, got %d", got)
+// Both halves are bookkeeping: a settings save carrying either one is refused,
+// or a form posting back a stale boundary could re-arm an old schedule.
+func TestSaveRefusesGlobalResetBookkeeping(t *testing.T) {
+	newSettingDB(t)
+	for _, key := range []string{"globalResetLast", "globalResetArmed"} {
+		if err := saveSettings(t, `{"`+key+`":"1"}`); err == nil {
+			t.Errorf("%s was writable through the settings endpoint", key)
+		}
 	}
 }

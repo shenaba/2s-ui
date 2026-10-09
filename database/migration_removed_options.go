@@ -1,6 +1,7 @@
 package database
 
 import (
+	"bytes"
 	"encoding/json"
 	"log"
 
@@ -155,13 +156,14 @@ const migratedKeyRemovedServerECH = "migratedRemovedServerECH"
 
 // migrateRemovedServerECH finishes what migrateRemovedOptions started for the
 // ECH options sing-box removed in 1.13.0. That step cleared only the client
-// side of each TLS config, but the options existed on the server side too, and
-// the panel copied them from there into every generated client outbound.
+// side of each TLS config, but the options could sit anywhere a TLS block does:
+// the server side, the out_json the panel copied them into, a user outbound,
+// and the DNS servers and http clients of the base config.
 //
 // Unlike the tun option, these are not inert: sing-box refuses a TLS config
 // with either one set to true, on the inbound and on the client alike, so a
-// stale true here kept the inbound from starting and broke every subscription
-// it fed.
+// stale true kept the core from starting or broke every subscription it fed.
+// Hence everywhere rather than the places the panel's own forms wrote them.
 func migrateRemovedServerECH() error {
 	var flag model.Setting
 	err := db.Where("key = ?", migratedKeyRemovedServerECH).First(&flag).Error
@@ -173,15 +175,19 @@ func migrateRemovedServerECH() error {
 	}
 
 	return db.Transaction(func(tx *gorm.DB) error {
-		changed, err := clearServerECHOptions(tx)
+		changed := 0
+		for _, column := range legacyECHColumns {
+			n, err := clearLegacyECHColumn(tx, column.model, column.name)
+			if err != nil {
+				return err
+			}
+			changed += n
+		}
+		n, err := clearLegacyECHConfig(tx)
 		if err != nil {
 			return err
 		}
-		outChanged, err := clearOutJsonECHOptions(tx)
-		if err != nil {
-			return err
-		}
-		changed += outChanged
+		changed += n
 		if changed > 0 {
 			log.Printf("removed options: cleared legacy ECH options from %d object(s)", changed)
 		}
@@ -189,22 +195,39 @@ func migrateRemovedServerECH() error {
 	})
 }
 
-func clearServerECHOptions(tx *gorm.DB) (int, error) {
-	var configs []model.Tls
-	if err := tx.Find(&configs).Error; err != nil {
+// Every stored JSON column that can hold a TLS block. Every inbound row, not
+// only those with a tls_id: a node replica has its tls_id dropped at adoption
+// but keeps the out_json it was given.
+var legacyECHColumns = []struct {
+	model any
+	name  string
+}{
+	{&model.Tls{}, "server"},
+	{&model.Tls{}, "client"},
+	{&model.Inbound{}, "out_json"},
+	{&model.Outbound{}, "options"},
+	{&model.Endpoint{}, "options"},
+	{&model.Service{}, "options"},
+}
+
+func clearLegacyECHColumn(tx *gorm.DB, table any, column string) (int, error) {
+	var rows []struct {
+		Id    uint
+		Value json.RawMessage
+	}
+	if err := tx.Model(table).Select("id, " + column + " AS value").Scan(&rows).Error; err != nil {
 		return 0, err
 	}
 	changed := 0
-	for _, tlsConfig := range configs {
-		server, ok, err := deleteNestedJSONFields(tlsConfig.Server, "ech", removedECHOptions)
+	for _, row := range rows {
+		cleaned, ok, err := stripLegacyECH(row.Value)
 		if err != nil {
 			return 0, err
 		}
 		if !ok {
 			continue
 		}
-		if err = tx.Model(&model.Tls{}).Where("id = ?", tlsConfig.Id).
-			Update("server", server).Error; err != nil {
+		if err = tx.Model(table).Where("id = ?", row.Id).Update(column, cleaned).Error; err != nil {
 			return 0, err
 		}
 		changed++
@@ -212,54 +235,80 @@ func clearServerECHOptions(tx *gorm.DB) (int, error) {
 	return changed, nil
 }
 
-// The client outbound each inbound hands to subscriptions is stored, so what
-// the panel already copied there stays until the inbound is saved again. Every
-// row, not only those with a tls_id: a node replica has its tls_id dropped at
-// adoption but keeps the out_json it was given.
-func clearOutJsonECHOptions(tx *gorm.DB) (int, error) {
-	var inbounds []model.Inbound
-	if err := tx.Select("id", "out_json").Find(&inbounds).Error; err != nil {
+// clearLegacyECHConfig covers the base config: DNS servers and http clients
+// carry TLS blocks of their own.
+func clearLegacyECHConfig(tx *gorm.DB) (int, error) {
+	var setting model.Setting
+	err := tx.Where("key = ?", "config").First(&setting).Error
+	if err == gorm.ErrRecordNotFound {
+		return 0, nil
+	}
+	if err != nil {
 		return 0, err
 	}
-	changed := 0
-	for _, inbound := range inbounds {
-		outJson, ok, err := deleteOutJsonECHOptions(inbound.OutJson)
-		if err != nil {
-			return 0, err
-		}
-		if !ok {
-			continue
-		}
-		if err = tx.Model(&model.Inbound{}).Where("id = ?", inbound.Id).
-			Update("out_json", outJson).Error; err != nil {
-			return 0, err
-		}
-		changed++
+	var root any
+	if !decodeJSON([]byte(setting.Value), &root) || !stripLegacyECHIn(root) {
+		return 0, nil
 	}
-	return changed, nil
+	encoded, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return 0, err
+	}
+	setting.Value = string(encoded)
+	if err = tx.Save(&setting).Error; err != nil {
+		return 0, err
+	}
+	return 1, nil
 }
 
-// deleteOutJsonECHOptions clears the options from tls.ech inside an out_json.
-func deleteOutJsonECHOptions(raw json.RawMessage) (json.RawMessage, bool, error) {
+// stripLegacyECH clears the removed options from every "ech" object anywhere
+// in raw. Unparseable JSON is left alone, the same as deleteJSONFields does.
+func stripLegacyECH(raw json.RawMessage) (json.RawMessage, bool, error) {
 	if len(raw) == 0 {
 		return raw, false, nil
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
+	var value any
+	if !decodeJSON(raw, &value) || !stripLegacyECHIn(value) {
 		return raw, false, nil
 	}
-	tls, ok := fields["tls"]
-	if !ok {
-		return raw, false, nil
-	}
-	cleaned, changed, err := deleteNestedJSONFields(tls, "ech", removedECHOptions)
-	if err != nil || !changed {
-		return raw, false, err
-	}
-	fields["tls"] = cleaned
-	encoded, err := json.Marshal(fields)
+	encoded, err := json.Marshal(value)
 	if err != nil {
 		return raw, false, err
 	}
 	return encoded, true, nil
+}
+
+// decodeJSON keeps numbers as json.Number: a round trip through float64 would
+// rewrite a large integer option it never meant to touch.
+func decodeJSON(raw []byte, value *any) bool {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	return decoder.Decode(value) == nil
+}
+
+func stripLegacyECHIn(value any) bool {
+	changed := false
+	switch v := value.(type) {
+	case map[string]any:
+		for key, nested := range v {
+			if ech, ok := nested.(map[string]any); ok && key == "ech" {
+				for _, name := range removedECHOptions {
+					if _, present := ech[name]; present {
+						delete(ech, name)
+						changed = true
+					}
+				}
+			}
+			if stripLegacyECHIn(nested) {
+				changed = true
+			}
+		}
+	case []any:
+		for _, nested := range v {
+			if stripLegacyECHIn(nested) {
+				changed = true
+			}
+		}
+	}
+	return changed
 }

@@ -2,12 +2,15 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/database/model"
+
+	"gorm.io/gorm"
 )
 
 func newResetDB(t *testing.T) *ClientService {
@@ -161,7 +164,7 @@ func TestResetAllClientsTrafficReturnsReenabledInbounds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ids, err := svc.ResetAllClientsTraffic()
+	ids, err := svc.ResetAllClientsTraffic(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +191,7 @@ func TestResetAllClientsTrafficIdle(t *testing.T) {
 	svc := newResetDB(t)
 	seedClient(t, &model.Client{Enable: true, Name: "idle", Inbounds: json.RawMessage(`[1]`)})
 
-	ids, err := svc.ResetAllClientsTraffic()
+	ids, err := svc.ResetAllClientsTraffic(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,5 +202,49 @@ func TestResetAllClientsTrafficIdle(t *testing.T) {
 	database.GetDB().Model(model.Changes{}).Count(&n)
 	if n != 0 {
 		t.Errorf("want no change row for an idle reset, got %d", n)
+	}
+}
+
+// The scheduled reset commits its next boundary through within. A failure
+// there has to take the reset back with it: committed apart, the boundary
+// stayed in the past and the job, polled every minute, reset everyone again on
+// every tick.
+func TestResetAllClientsTrafficRollsBackWithWithin(t *testing.T) {
+	svc := newResetDB(t)
+	seedClient(t, &model.Client{Enable: true, Name: "used", Up: 7, Down: 3, Inbounds: json.RawMessage(`[1]`)})
+
+	if _, err := svc.ResetAllClientsTraffic(func(tx *gorm.DB) error {
+		return errors.New("boundary write failed")
+	}); err == nil {
+		t.Fatal("want the within error returned")
+	}
+	var stored model.Client
+	if err := database.GetDB().Where("name = ?", "used").First(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Up != 7 || stored.Down != 3 || stored.TotalUp != 0 {
+		t.Errorf("the reset must roll back, got up=%d down=%d totalUp=%d", stored.Up, stored.Down, stored.TotalUp)
+	}
+	var n int64
+	database.GetDB().Model(model.Changes{}).Count(&n)
+	if n != 0 {
+		t.Errorf("want no change row for a rolled-back reset, got %d", n)
+	}
+}
+
+// within runs even when no client needed resetting: the boundary still moves.
+func TestResetAllClientsTrafficRunsWithinWhenIdle(t *testing.T) {
+	svc := newResetDB(t)
+	seedClient(t, &model.Client{Enable: true, Name: "idle", Inbounds: json.RawMessage(`[1]`)})
+
+	ran := false
+	if _, err := svc.ResetAllClientsTraffic(func(tx *gorm.DB) error {
+		ran = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !ran {
+		t.Error("within must run on an idle reset")
 	}
 }
