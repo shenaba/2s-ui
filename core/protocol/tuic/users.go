@@ -1,9 +1,11 @@
 package tuic
 
 import (
+	"github.com/shenaba/2s-ui/core/quicgrace"
 	"github.com/shenaba/2s-ui/core/usersession"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 
@@ -55,4 +57,15 @@ func withUserSessions(router adapter.ConnectionRouterEx) adapter.ConnectionRoute
 // otherwise turn every hook here into a silent no-op.
 func (h *Inbound) sessions() *usersession.Registry {
 	return h.router.(*usersession.RouterEx).Registry()
+}
+
+// gracefulTLS hands the service a TLS config that listens exactly as sing-quic
+// would on its own, except that closing the inbound sends every client a
+// CONNECTION_CLOSE instead of leaving it to its idle timeout. Close therefore
+// closes the service before the listener: the packet goes out over the socket
+// the listener owns. See core/quicgrace.
+//
+// Empty options: this service listens through plain qtls.Listen/ListenEarly.
+func gracefulTLS(config tls.ServerConfig) tls.ServerConfig {
+	return quicgrace.Wrap(config, quicgrace.Options{})
 }

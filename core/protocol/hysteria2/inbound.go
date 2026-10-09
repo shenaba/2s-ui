@@ -216,7 +216,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		GeckoPassword:      geckoPassword,
 		GeckoMinPacketSize: geckoMinPacketSize,
 		GeckoMaxPacketSize: geckoMaxPacketSize,
-		TLSConfig:          tlsConfig,
+		TLSConfig:          gracefulTLS(tlsConfig, salamanderPassword != "" || geckoPassword != ""),
 		QUICOptions: qtls.QUICOptions{
 			IdleTimeout:             options.IdleTimeout.Build(),
 			KeepAlivePeriod:         options.KeepAlivePeriod.Build(),
@@ -312,8 +312,8 @@ func (h *Inbound) InterfaceUpdated(ctx context.Context) {
 
 func (h *Inbound) Close() error {
 	return common.Close(
+		common.PtrOrNil(h.service),
 		h.listener,
 		h.tlsConfig,
-		common.PtrOrNil(h.service),
 	)
 }

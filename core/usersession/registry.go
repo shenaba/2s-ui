@@ -48,7 +48,9 @@
 // CloseUsers cuts every session it holds a transport for, and reports the rest
 // as Unclosable. The QUIC inbounds turn that into ErrRestartRequired and the
 // caller rebuilds the inbound, which destroys every QUIC session on it, the
-// removed user's included. Everyone on that inbound reconnects once.
+// removed user's included. Everyone on that inbound reconnects once -- at once,
+// because core/quicgrace sends each of them a CONNECTION_CLOSE as the inbound
+// closes; without it they each sat out their idle timeout first.
 //
 // Being wrong here is one-sided on purpose: a user who connected and then left
 // for good is still in the seen set, so removing them costs one restart that

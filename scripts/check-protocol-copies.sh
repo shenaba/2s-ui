@@ -34,7 +34,7 @@ LOCAL_ONLY="users.go"
 # Lines each copy is expected to differ by, beyond the shared header comment,
 # keyed by "<protocol>/<file>". These are not a tolerance: each is the exact
 # size of changes we made on purpose, so a bump that alters the file anywhere
-# else still shows up. Two changes make them up.
+# else still shows up. Three changes make them up.
 #
 # 1. The six user-carrying protocols key their service by user name rather than
 #    by list position (Service[string], not Service[int]) -- see the header of
@@ -52,17 +52,23 @@ LOCAL_ONLY="users.go"
 #    3 instead of 1: its session is held in NewConnection, which the router
 #    never sees, so that one call is redirected through users.go as well.
 #
-# Re-copying after a sing-box bump will change these. Re-apply both changes,
+# 3. The three QUIC copies (hysteria, hysteria2, tuic) close their sessions
+#    gracefully -- see core/quicgrace. That is 4 lines in each: the service's
+#    TLSConfig goes through gracefulTLS (defined in users.go), and Close puts
+#    the service first, ahead of the listener whose socket the CONNECTION_CLOSE
+#    has to go out on. Both are a changed line rather than a new one.
+#
+# Re-copying after a sing-box bump will change these. Re-apply all three,
 # then put the new counts here -- and read the diff first rather than just
 # pasting the number the script printed, which is how a real upstream change
 # gets rubber-stamped into the expected total.
 expect_diff() {
   case "$1" in
     anytls/inbound.go) echo 3 ;;
-    hysteria/inbound.go) echo 29 ;;
-    hysteria2/inbound.go) echo 29 ;;
+    hysteria/inbound.go) echo 33 ;;
+    hysteria2/inbound.go) echo 33 ;;
     trojan/inbound.go) echo 26 ;;
-    tuic/inbound.go) echo 27 ;;
+    tuic/inbound.go) echo 31 ;;
     vless/inbound.go) echo 30 ;;
     vmess/inbound.go) echo 28 ;;
     *) echo 0 ;;

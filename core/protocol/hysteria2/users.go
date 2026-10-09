@@ -1,9 +1,11 @@
 package hysteria2
 
 import (
+	"github.com/shenaba/2s-ui/core/quicgrace"
 	"github.com/shenaba/2s-ui/core/usersession"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/option"
 )
 
@@ -30,4 +32,20 @@ func withUserSessions(router adapter.Router) adapter.Router {
 
 func (h *Inbound) sessions() *usersession.Registry {
 	return h.router.(*usersession.Router).Registry()
+}
+
+// gracefulTLS hands the service a TLS config that listens exactly as sing-quic
+// would on its own, except that closing the inbound sends every client a
+// CONNECTION_CLOSE instead of leaving it to its idle timeout. Close therefore
+// closes the service before the listener: the packet goes out over the socket
+// the listener owns. See core/quicgrace.
+//
+// The options are the ones the service passes to qtls.ListenWithOptions itself,
+// which turn on with obfuscation: an obfuscated listener must not answer with
+// a version negotiation or stateless reset packet in the clear.
+func gracefulTLS(config tls.ServerConfig, obfs bool) tls.ServerConfig {
+	return quicgrace.Wrap(config, quicgrace.Options{
+		DisableVersionNegotiationPackets: obfs,
+		StatelessReset:                   !obfs,
+	})
 }

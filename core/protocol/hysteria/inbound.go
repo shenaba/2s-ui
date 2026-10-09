@@ -101,7 +101,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		SendBPS:       sendBps,
 		ReceiveBPS:    receiveBps,
 		XPlusPassword: options.Obfs,
-		TLSConfig:     tlsConfig,
+		TLSConfig:     gracefulTLS(tlsConfig),
 		QUICOptions:   buildInboundQUICOptions(options),
 		UDPTimeout:    udpTimeout,
 		Handler:       inbound,
@@ -187,8 +187,8 @@ func (h *Inbound) Start(stage adapter.StartStage) error {
 
 func (h *Inbound) Close() error {
 	return common.Close(
+		common.PtrOrNil(h.service),
 		h.listener,
 		h.tlsConfig,
-		common.PtrOrNil(h.service),
 	)
 }
