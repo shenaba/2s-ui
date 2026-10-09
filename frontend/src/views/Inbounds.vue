@@ -174,11 +174,21 @@ const clone = async (id: number) => {
   const inboundArray = await Data().loadInbounds([id])
   const inbound = inboundArray[0]
   const newTag = inbound.type + '-' + RandomUtil.randomSeq(3)
+  const newPort = RandomUtil.randomIntRange(10000, 60000)
+  // A Multi Domain row on the old listen port pointed straight at this
+  // listener, so it follows the port to the copy (#216). A row on any other
+  // port is fronted by something else -- a CDN, a NAT forward -- and is the
+  // operator's to change.
+  const addrs = Array.isArray(inbound.addrs)
+    ? inbound.addrs.map((a: any) =>
+        a && inbound.listen_port && a.server_port == inbound.listen_port ? { ...a, server_port: newPort } : a)
+    : inbound.addrs
   const newInbound = createInbound(inbound.type, {
     ...inbound,
     id: 0,
     tag: newTag,
-    listen_port: RandomUtil.randomIntRange(10000, 60000),
+    listen_port: newPort,
+    addrs,
   })
   await Data().save('inbounds', 'new', newInbound)
   cloning.value = false
