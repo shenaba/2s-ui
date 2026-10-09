@@ -24,19 +24,29 @@ type SessionsResult struct {
 // LocalSessions lists this panel's own live routed connections, narrowed to
 // one user, inbound or outbound (an empty tag means all of them). Newest first,
 // so a connection that was just opened is at the top.
+//
+// resource is checked whether or not a tag came with it: a misspelt one with no
+// tag would otherwise read as "everything" and hand out every user's list.
 func LocalSessions(resource string, tag string) ([]core.SessionInfo, error) {
+	var field func(info *core.ConnectionInfo) string
+	switch resource {
+	case "user":
+		field = func(info *core.ConnectionInfo) string { return info.User }
+	case "inbound":
+		field = func(info *core.ConnectionInfo) string { return info.Inbound }
+	case "outbound":
+		field = func(info *core.ConnectionInfo) string { return info.Outbound }
+	case "":
+		// Everything, which only makes sense without a tag to narrow it by.
+		if tag != "" {
+			return nil, common.NewError("tag needs a resource")
+		}
+	default:
+		return nil, common.NewError("unknown resource: ", resource)
+	}
 	var want func(info *core.ConnectionInfo) bool
 	if tag != "" {
-		switch resource {
-		case "user":
-			want = func(info *core.ConnectionInfo) bool { return info.User == tag }
-		case "inbound":
-			want = func(info *core.ConnectionInfo) bool { return info.Inbound == tag }
-		case "outbound":
-			want = func(info *core.ConnectionInfo) bool { return info.Outbound == tag }
-		default:
-			return nil, common.NewError("unknown resource: ", resource)
-		}
+		want = func(info *core.ConnectionInfo) bool { return field(info) == tag }
 	}
 	tracker := liveConnTracker()
 	if tracker == nil {
@@ -80,35 +90,52 @@ func ClusterUserSessions(user string) (SessionsResult, error) {
 		return result, nil
 	}
 
-	var (
-		wg sync.WaitGroup
-		mu sync.Mutex
-	)
 	var ns NodeService
 	q := url.Values{"resource": {"user"}, "tag": {user}}
-	for _, n := range nodes {
-		wg.Add(1)
-		go func(n *model.Node) {
-			defer wg.Done()
-			sessions, err := fetchNodeSessions(&ns, n, q)
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil {
-				if result.Errors == nil {
-					result.Errors = map[string]string{}
-				}
-				result.Errors[n.Name] = err.Error()
-				return
-			}
+	result.Errors = eachNode(nodes,
+		func(n *model.Node) ([]core.SessionInfo, error) { return fetchNodeSessions(&ns, n, q) },
+		func(n *model.Node, sessions []core.SessionInfo) {
 			for i := range sessions {
 				sessions[i].Node = n.Name
 			}
 			result.Sessions = append(result.Sessions, sessions...)
+		})
+	sortSessions(result.Sessions)
+	return result, nil
+}
+
+// eachNode runs call against every node, at most nodeProbeParallel at a time,
+// and hands each answer to merge. merge runs under a lock, so it may write to
+// shared state without one of its own. The result names the nodes that failed,
+// and is nil when none did -- what the omitempty Errors fields want.
+func eachNode[T any](nodes []*model.Node, call func(n *model.Node) (T, error), merge func(n *model.Node, v T)) map[string]string {
+	var (
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		errs map[string]string
+	)
+	sem := make(chan struct{}, nodeProbeParallel)
+	for _, n := range nodes {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(n *model.Node) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			v, err := call(n)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				if errs == nil {
+					errs = map[string]string{}
+				}
+				errs[n.Name] = err.Error()
+				return
+			}
+			merge(n, v)
 		}(n)
 	}
 	wg.Wait()
-	sortSessions(result.Sessions)
-	return result, nil
+	return errs
 }
 
 // fetchNodeSessions asks one node for its list. The pooled client already
@@ -195,36 +222,22 @@ func DisconnectClusterUser(user string) (DisconnectResult, error) {
 		return result, localErr
 	}
 
-	var (
-		wg sync.WaitGroup
-		mu sync.Mutex
-	)
 	var ss NodeSyncService
 	form := url.Values{"u": {user}}
-	for _, n := range nodes {
-		wg.Add(1)
-		go func(n *model.Node) {
-			defer wg.Done()
-			raw, err := ss.nodePost(n, nodeHTTPClient(n), "closeSessions", form)
+	result.Errors = eachNode(nodes,
+		func(n *model.Node) (core.DisconnectResult, error) {
 			var remote core.DisconnectResult
+			raw, err := ss.nodePost(n, nodeHTTPClient(n), "closeSessions", form)
 			if err == nil {
 				err = json.Unmarshal(raw, &remote)
 			}
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil {
-				if result.Errors == nil {
-					result.Errors = map[string]string{}
-				}
-				result.Errors[n.Name] = err.Error()
-				return
-			}
+			return remote, err
+		},
+		func(_ *model.Node, remote core.DisconnectResult) {
 			result.Connections += remote.Connections
 			result.Sessions += remote.Sessions
 			result.Unclosable += remote.Unclosable
-		}(n)
-	}
-	wg.Wait()
+		})
 	if localErr != nil {
 		logger.Debug("disconnect ", user, ": local core: ", localErr)
 	}

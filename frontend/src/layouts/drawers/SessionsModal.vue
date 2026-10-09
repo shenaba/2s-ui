@@ -151,8 +151,10 @@ const readAuto = (): boolean => {
   try { return localStorage.getItem(AUTO_KEY) === 'true' } catch { return false }
 }
 const autoRefresh = ref(readAuto())
-// The age column counts from this, so it moves between fetches too.
+// The age column counts from this. A clock of its own advances it while the
+// modal is open, so ages keep moving with auto refresh off too.
 const now = ref(Date.now())
+const CLOCK_MS = 1000
 
 // Same request-sequence guard as ClientIpsModal: a slow response for a closed
 // or reopened modal must not land on the current one.
@@ -187,13 +189,18 @@ const disconnect = async () => {
 }
 
 let timer: ReturnType<typeof setInterval> | undefined
+let clock: ReturnType<typeof setInterval> | undefined
 const stopTimer = () => {
   if (timer) clearInterval(timer)
   timer = undefined
+  if (clock) clearInterval(clock)
+  clock = undefined
 }
 const syncTimer = () => {
   stopTimer()
-  if (props.visible && autoRefresh.value) timer = setInterval(loadData, REFRESH_MS)
+  if (!props.visible) return
+  clock = setInterval(() => { now.value = Date.now() }, CLOCK_MS)
+  if (autoRefresh.value) timer = setInterval(loadData, REFRESH_MS)
 }
 
 watch(() => props.visible, (open) => {
