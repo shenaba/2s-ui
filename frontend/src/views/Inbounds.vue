@@ -87,7 +87,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Data from '@/store/modules/data'
-import { createInbound } from '@/types/inbounds'
+import { createInbound, followListenPort } from '@/types/inbounds'
 import RandomUtil from '@/plugins/randomUtil'
 import { protoColor } from '@/plugins/colors'
 import { HumanReadable } from '@/plugins/utils'
@@ -168,20 +168,57 @@ const openDrawer = (id: number) => {
 
 // ---------------- clone ----------------
 const cloning = ref(false)
+// Both draws retry against what is already configured: a taken port fails the
+// bind on every core start until someone edits it, and a taken tag is refused
+// on save. A replica's port lives on its node, so it cannot collide here.
+// Bounded, so a crowded table degrades to a collision rather than a hang.
+const freePort = (): number => {
+  const store = Data()
+  const used = new Set(
+    [...store.inbounds.filter((i: any) => !i.node_id), ...store.services, ...store.endpoints]
+      .map((o: any) => o?.listen_port).filter(Boolean))
+  let port = RandomUtil.randomIntRange(10000, 60000)
+  for (let i = 0; i < 20 && used.has(port); i++) port = RandomUtil.randomIntRange(10000, 60000)
+  return port
+}
+const freeTag = (type: string): string => {
+  const used = new Set(Data().inbounds.map((i: any) => i.tag))
+  let tag = type + '-' + RandomUtil.randomSeq(3)
+  for (let i = 0; i < 20 && used.has(tag); i++) tag = type + '-' + RandomUtil.randomSeq(3)
+  return tag
+}
 const clone = async (id: number) => {
   if (cloning.value) return
   cloning.value = true
-  const inboundArray = await Data().loadInbounds([id])
-  const inbound = inboundArray[0]
-  const newTag = inbound.type + '-' + RandomUtil.randomSeq(3)
-  const newInbound = createInbound(inbound.type, {
-    ...inbound,
-    id: 0,
-    tag: newTag,
-    listen_port: RandomUtil.randomIntRange(10000, 60000),
-  })
-  await Data().save('inbounds', 'new', newInbound)
-  cloning.value = false
+  // A failed load returns no row, and a throw anywhere below must not leave
+  // `cloning` set: every later click would return at the guard above.
+  try {
+    const inbound = (await Data().loadInbounds([id]))[0]
+    if (!inbound) return
+    const newPort = freePort()
+    // A hysteria port-hopping range is forwarded (iptables, outside the panel)
+    // to the original's listen port, so the copy's clients would hop straight
+    // onto the original. There is no range to move it to that the panel could
+    // know, so the copy starts without hopping and dials its own port until
+    // the operator forwards a range for it.
+    const out_json = inbound.out_json ? { ...inbound.out_json } : inbound.out_json
+    if (out_json) {
+      delete out_json.server_ports
+      delete out_json.hop_interval
+      delete out_json.hop_interval_max
+    }
+    const newInbound = createInbound(inbound.type, {
+      ...inbound,
+      id: 0,
+      tag: freeTag(inbound.type),
+      listen_port: newPort,
+      addrs: followListenPort(inbound.addrs, inbound.listen_port, newPort),
+      out_json,
+    })
+    await Data().save('inbounds', 'new', newInbound)
+  } finally {
+    cloning.value = false
+  }
 }
 
 // ---------------- delete (with confirm) ----------------

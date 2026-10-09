@@ -39,6 +39,17 @@ export interface Addr {
   remark?: string
 }
 
+// Moves the Multi Domain rows that sit on an inbound's old listen port to its
+// new one (#216). Such a row pointed straight at this listener, so leaving it
+// behind sends every generated link to a closed port. A row on any other port
+// is fronted by something else -- a CDN, a NAT forward -- and is the
+// operator's to change. Loose equality on purpose: v-model.number leaves a
+// string in the field when its input does not parse as a number.
+export function followListenPort(addrs: Addr[] | undefined, oldPort: number | undefined, newPort: number | undefined): Addr[] | undefined {
+  if (!Array.isArray(addrs) || !oldPort || !newPort || oldPort == newPort) return addrs
+  return addrs.map(a => a && a.server_port == oldPort ? { ...a, server_port: newPort } : a)
+}
+
 // The NAT mapping and filtering behaviours 1.14 made configurable. Carried by
 // everything that owns a UDP NAT -- tun and tproxy here, the WireGuard endpoint
 // in endpoints.ts. Absent means endpoint_independent, sing-box's default.

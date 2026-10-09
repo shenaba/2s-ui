@@ -106,7 +106,7 @@ import Select from '@/components/ui/Select.vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Data from '@/store/modules/data'
-import { InTypes, createInbound, Addr } from '@/types/inbounds'
+import { InTypes, createInbound, Addr, followListenPort } from '@/types/inbounds'
 import { checkHopInterval } from '@/types/hysteria2'
 import { push } from 'notivue'
 import RandomUtil from '@/plugins/randomUtil'
@@ -221,6 +221,9 @@ const inbound = ref<any>(createInbound('direct', { id: 0, tag: '' }))
 const loading = ref(false)
 const side = ref<string | number>('s')
 const originalTag = ref('')
+// The listen port as loaded, so a save can carry the Multi Domain rows that
+// sat on it to wherever the port was moved (#216).
+const originalPort = ref<number | undefined>(undefined)
 const initUsers = ref<{ model: string; values: any[] }>({ model: 'none', values: [] })
 
 const isNew = computed(() => props.id == 0)
@@ -259,6 +262,7 @@ const loadData = async (id: number) => {
     inbound.value.out_json = {}
   }
   originalTag.value = inbound.value.tag
+  originalPort.value = inbound.value.listen_port
   loading.value = false
 }
 
@@ -276,6 +280,7 @@ const updateData = (id: number) => {
       delete inbound.value.out_json
     }
     originalTag.value = ''
+    originalPort.value = undefined
     loading.value = false
   }
   side.value = 's'
@@ -347,7 +352,10 @@ const saveChanges = async () => {
         clientIds = initUsers.value.values
     }
   }
-  const success = await Data().save('inbounds', props.id == 0 ? 'new' : 'edit', inbound.value, clientIds)
+  // Remapped on the payload, not on the form: a save that fails leaves the
+  // rows as shown, still keyed to originalPort for the next attempt.
+  const data = { ...inbound.value, addrs: followListenPort(inbound.value.addrs, originalPort.value, inbound.value.listen_port) }
+  const success = await Data().save('inbounds', props.id == 0 ? 'new' : 'edit', data, clientIds)
   if (success) emit('close')
   loading.value = false
 }
