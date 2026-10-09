@@ -1507,27 +1507,44 @@ func (s *ClientService) ResetClients(tx *gorm.DB, dt int64, loc *time.Location) 
 
 // ResetAllClientsTraffic zeroes up/down for every client (accumulating into the
 // total counters) and re-enables all of them, in a single bulk update. Used by
-// the global periodic traffic reset; the caller restarts the core afterwards so
-// re-enabled clients take effect.
-func (s *ClientService) ResetAllClientsTraffic() error {
+// the global periodic traffic reset and api/resetTraffic. Returns the inbounds
+// of the clients it re-enabled -- the only user lists that changed -- for the
+// caller to update in the running core.
+func (s *ClientService) ResetAllClientsTraffic() ([]uint, error) {
 	db := database.GetDB()
 	dt := time.Now().Unix()
+	var inboundIds []uint
+	marked := false
 
-	result := db.Model(model.Client{}).
-		Where("(up + down) > 0 OR enable = false").
-		UpdateColumns(map[string]interface{}{
-			"total_up":   gorm.Expr("total_up + up"),
-			"total_down": gorm.Expr("total_down + down"),
-			"up":         0,
-			"down":       0,
-			"enable":     true,
-		})
-	if result.Error != nil {
-		return result.Error
-	}
+	err := db.Transaction(func(tx *gorm.DB) error {
+		// Read in the same transaction as the update, so a client the deplete
+		// job disables in between is either in both or in neither.
+		var disabled []model.Client
+		if err := tx.Model(model.Client{}).Select("inbounds").Where("enable = false").Find(&disabled).Error; err != nil {
+			return err
+		}
+		for _, client := range disabled {
+			var userInbounds []uint
+			json.Unmarshal(client.Inbounds, &userInbounds)
+			inboundIds = common.UnionUintArray(inboundIds, userInbounds)
+		}
 
-	if result.RowsAffected > 0 {
-		if err := db.Create(&model.Changes{
+		result := tx.Model(model.Client{}).
+			Where("(up + down) > 0 OR enable = false").
+			UpdateColumns(map[string]interface{}{
+				"total_up":   gorm.Expr("total_up + up"),
+				"total_down": gorm.Expr("total_down + down"),
+				"up":         0,
+				"down":       0,
+				"enable":     true,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		if err := tx.Create(&model.Changes{
 			DateTime: dt,
 			Actor:    "ResetTrafficJob",
 			Key:      "clients",
@@ -1536,10 +1553,19 @@ func (s *ClientService) ResetAllClientsTraffic() error {
 		}).Error; err != nil {
 			return err
 		}
+		marked = true
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	// After the commit, never inside it: the mark invalidates the config cache,
+	// and a reader racing the commit would cache the pre-reset rows under the
+	// post-reset key (see DepleteClients).
+	if marked {
 		SetLastUpdate(dt)
 	}
-
-	return nil
+	return inboundIds, nil
 }
 
 func setConfigIdentity(client *model.Client) error {

@@ -173,9 +173,8 @@ func (s *SettingService) NotifyBackupEnabled() bool {
 }
 
 // GetNotifyReportSpec returns the cron spec for the periodic report, or "" when
-// it is off. Read at scheduler start, so changing it needs a panel restart --
-// the same as globalReset, and for the same reason: cron entries are registered
-// once with a fixed schedule.
+// it is off. Read at scheduler start, so changing it needs a panel restart:
+// cron entries are registered once with a fixed schedule.
 func (s *SettingService) GetNotifyReportSpec() string {
 	return strings.TrimSpace(s.notifySettings()["notifyReport"])
 }

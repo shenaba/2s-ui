@@ -183,6 +183,10 @@ func InitDB(dbPath string) error {
 	if err != nil {
 		return err
 	}
+	err = migrateRemovedServerECH()
+	if err != nil {
+		return err
+	}
 	err = migrateResetSchedule()
 	if err != nil {
 		return err

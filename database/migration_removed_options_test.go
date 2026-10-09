@@ -81,3 +81,80 @@ func TestMigrateRemovedOptionsLeavesCleanObjects(t *testing.T) {
 		t.Errorf("a clean object must be left byte for byte, got %s", stored.Options)
 	}
 }
+
+// The first ECH cleanup cleared only tls.client. The same options on tls.server
+// make sing-box refuse the inbound, and the panel had copied them into the
+// stored out_json too -- including on rows with no tls_id, such as node
+// replicas.
+func TestMigrateRemovedServerECH(t *testing.T) {
+	openHysteriaTestDB(t)
+	if err := db.Create(&model.Tls{
+		Name:   "site",
+		Server: json.RawMessage(`{"enabled":true,"ech":{"enabled":true,"key":["k"],"pq_signature_schemes_enabled":true,"dynamic_record_sizing_disabled":false}}`),
+		Client: json.RawMessage(`{"enabled":true}`),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	replica := uint(7)
+	for _, in := range []model.Inbound{
+		{Type: "trojan", Tag: "local", TlsId: 1, Options: json.RawMessage(`{}`),
+			OutJson: json.RawMessage(`{"type":"trojan","tls":{"enabled":true,"ech":{"enabled":true,"pq_signature_schemes_enabled":true}}}`)},
+		{Type: "trojan", Tag: "replica", NodeId: &replica, Options: json.RawMessage(`{}`),
+			OutJson: json.RawMessage(`{"type":"trojan","tls":{"enabled":true,"ech":{"enabled":true,"dynamic_record_sizing_disabled":true}}}`)},
+		{Type: "vless", Tag: "clean", Options: json.RawMessage(`{}`),
+			OutJson: json.RawMessage(`{"type":"vless","tls":{"enabled":true}}`)},
+	} {
+		if err := db.Create(&in).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := migrateRemovedServerECH(); err != nil {
+		t.Fatal(err)
+	}
+
+	var stored model.Tls
+	if err := db.First(&stored, 1).Error; err != nil {
+		t.Fatal(err)
+	}
+	var server map[string]any
+	json.Unmarshal(stored.Server, &server)
+	ech, _ := server["ech"].(map[string]any)
+	if ech["enabled"] != true || ech["key"] == nil {
+		t.Errorf("the ech settings that still apply must survive, got %v", ech)
+	}
+	for _, removed := range []string{"pq_signature_schemes_enabled", "dynamic_record_sizing_disabled"} {
+		if _, present := ech[removed]; present {
+			t.Errorf("server: %q must go, got %v", removed, ech)
+		}
+	}
+
+	for _, tag := range []string{"local", "replica"} {
+		var in model.Inbound
+		if err := db.Where("tag = ?", tag).First(&in).Error; err != nil {
+			t.Fatal(err)
+		}
+		var out map[string]any
+		json.Unmarshal(in.OutJson, &out)
+		tls, _ := out["tls"].(map[string]any)
+		ech, _ := tls["ech"].(map[string]any)
+		if ech["enabled"] != true || out["type"] != "trojan" {
+			t.Errorf("%s: the rest of out_json must survive, got %v", tag, out)
+		}
+		if len(ech) != 1 {
+			t.Errorf("%s: legacy ECH options must go, got %v", tag, ech)
+		}
+	}
+
+	var clean model.Inbound
+	db.Where("tag = ?", "clean").First(&clean)
+	if string(clean.OutJson) != `{"type":"vless","tls":{"enabled":true}}` {
+		t.Errorf("a clean out_json must not be rewritten, got %s", clean.OutJson)
+	}
+
+	// One-shot: the flag row stops a second run.
+	var flag model.Setting
+	if err := db.Where("key = ?", migratedKeyRemovedServerECH).First(&flag).Error; err != nil {
+		t.Errorf("the migration must mark itself done: %v", err)
+	}
+}

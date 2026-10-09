@@ -89,11 +89,6 @@ func (a *APP) Start() error {
 		return err
 	}
 
-	globalReset, err := a.SettingService.GetGlobalReset()
-	if err != nil {
-		return err
-	}
-
 	// The hub must exist before the cron jobs first fire into it and before
 	// the web server accepts the first upgrade.
 	service.StartHub()
@@ -110,7 +105,7 @@ func (a *APP) Start() error {
 	// re-read here on a settings save.
 	tgbot.Start()
 
-	err = a.cronJob.Start(loc, trafficAge, statsBucketSeconds, globalReset)
+	err = a.cronJob.Start(loc, trafficAge, statsBucketSeconds)
 	if err != nil {
 		return err
 	}

@@ -18,7 +18,16 @@ import (
 	"github.com/shenaba/2s-ui/util"
 	"github.com/shenaba/2s-ui/util/common"
 
+	"github.com/robfig/cron/v3"
 	"gorm.io/gorm"
+)
+
+// CronParser accepts standard 5-field cron, optional leading seconds (6-field)
+// and descriptors (@daily, @weekly, @every 10s, ...). Shared by the cron engine
+// and by everything that parses a user-provided spec, so a spec Save accepts is
+// exactly one the scheduler can run.
+var CronParser = cron.NewParser(
+	cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
 )
 
 var defaultConfig = `{
@@ -634,13 +643,14 @@ func (s *SettingService) GetSubURI() (string, error) {
 	return s.getString("subURI")
 }
 
-// GetGlobalReset returns the configured period for resetting all clients'
-// traffic: "off", "weekly", "monthly" or "yearly".
+// GetGlobalReset returns the cron spec for resetting all clients' traffic;
+// empty or "off" means disabled.
 func (s *SettingService) GetGlobalReset() (string, error) {
 	return s.getString("globalReset")
 }
 
-// GetGlobalResetLast returns the unix time of the last global traffic reset.
+// GetGlobalResetLast returns the unix time of the next armed global traffic
+// reset -- despite the name -- or 0 when no boundary is armed yet.
 func (s *SettingService) GetGlobalResetLast() (int64, error) {
 	str, err := s.getString("globalResetLast")
 	if err != nil {
@@ -807,6 +817,25 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 			}
 		}
 
+		// A bad spec used to be accepted here and only logged at the next panel
+		// start, so the reset silently never ran.
+		if key == "globalReset" && obj != "" && obj != "off" {
+			if _, err = CronParser.Parse(obj); err != nil {
+				return common.NewError("invalid cron spec <", obj, ">: ", err)
+			}
+		}
+		if key == "globalReset" {
+			var old model.Setting
+			if err = tx.Where("key = ?", key).Limit(1).Find(&old).Error; err != nil {
+				return err
+			}
+			if old.Value != obj {
+				if err = disarmGlobalReset(tx); err != nil {
+					return err
+				}
+			}
+		}
+
 		// Delete all stats if it is set to 0
 		if key == "trafficAge" && obj == "0" {
 			err = tx.Where("id > 0").Delete(model.Stats{}).Error
@@ -823,9 +852,22 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 		}
 	}
 	if hasZone && newZone != oldZone {
+		// The armed boundary is a wall-clock time in the old zone; midnight
+		// there is not midnight here.
+		if err = disarmGlobalReset(tx); err != nil {
+			return err
+		}
 		return rebaseMonthlyResets(tx, oldZone, newZone, time.Now().Unix())
 	}
 	return err
+}
+
+// disarmGlobalReset clears the armed boundary so ResetTrafficJob arms one from
+// the current schedule and zone on its next tick. Left alone, the boundary of
+// the old schedule stands: a monthly-to-daily switch did nothing for up to a
+// month, with nothing anywhere saying why.
+func disarmGlobalReset(tx *gorm.DB) error {
+	return tx.Model(model.Setting{}).Where("key = ?", "globalResetLast").Update("value", "0").Error
 }
 
 func (s *SettingService) GetSubJsonExt() (string, error) {

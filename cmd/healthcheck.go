@@ -13,8 +13,10 @@ import (
 )
 
 // healthCheckTimeout is per dial. A container health check runs on a schedule
-// and must not hang until the orchestrator's own timeout instead of answering.
-const healthCheckTimeout = 3 * time.Second
+// and must not hang until the orchestrator's own timeout instead of answering:
+// an unspecified listen address costs two dials, and both have to fit inside
+// the Dockerfile's five-second HEALTHCHECK timeout.
+const healthCheckTimeout = 2 * time.Second
 
 // healthCheck reports whether the panel is accepting connections on the address
 // it is actually configured with, and exits non-zero when it is not.
