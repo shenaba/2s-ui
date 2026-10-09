@@ -171,6 +171,24 @@ func nodesWithOnlineUser(user string) ([]*model.Node, error) {
 		}
 	}
 	nodeStatusMu.RUnlock()
+	return enabledNodes(ids)
+}
+
+// onlineNodes returns the enabled nodes whose last probe found their core
+// running, whether or not they list any particular client.
+func onlineNodes() ([]*model.Node, error) {
+	var ids []uint
+	nodeStatusMu.RLock()
+	for id, status := range nodeStatuses {
+		if status.State == "online" {
+			ids = append(ids, id)
+		}
+	}
+	nodeStatusMu.RUnlock()
+	return enabledNodes(ids)
+}
+
+func enabledNodes(ids []uint) ([]*model.Node, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -179,10 +197,12 @@ func nodesWithOnlineUser(user string) ([]*model.Node, error) {
 	return nodes, err
 }
 
-// DisconnectResult adds the nodes that could not be told to the local result.
+// DisconnectResult adds what went wrong to the merged result: the nodes that
+// could not be told, and this panel's own failure when nodes were asked too.
 type DisconnectResult struct {
 	core.DisconnectResult
-	Errors map[string]string `json:"errors,omitempty"`
+	Errors     map[string]string `json:"errors,omitempty"`
+	LocalError string            `json:"localError,omitempty"`
 }
 
 // DisconnectLocalUser drops one user's live connections on this panel only.
@@ -193,33 +213,109 @@ func DisconnectLocalUser(user string) (core.DisconnectResult, error) {
 	if corePtr == nil {
 		return core.DisconnectResult{}, common.NewError("sing-box is not running")
 	}
-	return corePtr.DisconnectUser(user)
+	return disconnectLocal(user)
 }
 
-// DisconnectClusterUser drops a user's live connections here and on every node
-// it is online on. The user stays enabled everywhere, so it can reconnect at
-// once -- this is a kick, not a ban.
+// disconnectLocal kicks user off this panel's core, adding to Unclosable the
+// multiplexed Shadowsocks inbounds the user was on. Shadowsocks has no copy in
+// core/protocol/, so its mux carrier is out of the core's reach: closing the
+// routed streams leaves the client opening new ones on the carrier it still
+// has -- the same limit the QUIC inbounds report.
+func disconnectLocal(user string) (core.DisconnectResult, error) {
+	// Read before the kick: the routed connections that show which inbounds
+	// the user was on are what the kick closes.
+	carriers := muxCarrierInbounds(user)
+	result, err := corePtr.DisconnectUser(user)
+	if err != nil {
+		return result, err
+	}
+	result.Unclosable += carriers
+	return result, nil
+}
+
+// muxCarrierInbounds counts the Shadowsocks inbounds with multiplex enabled
+// that user has a live connection on. That a client may use multiplex is not
+// that it does, so this can over-warn; it cannot see a carrier with no stream
+// open on it either. A routed connection is the only evidence there is.
+func muxCarrierInbounds(user string) int {
+	sessions, err := LocalSessions("user", user)
+	if err != nil || len(sessions) == 0 {
+		return 0
+	}
+	seen := make(map[string]struct{}, len(sessions))
+	var tags []string
+	for _, s := range sessions {
+		if _, ok := seen[s.Inbound]; !ok {
+			seen[s.Inbound] = struct{}{}
+			tags = append(tags, s.Inbound)
+		}
+	}
+	return countMuxCarriers(tags)
+}
+
+// countMuxCarriers counts the local Shadowsocks inbounds among tags that have
+// multiplex enabled.
+func countMuxCarriers(tags []string) int {
+	if len(tags) == 0 {
+		return 0
+	}
+	var inbounds []model.Inbound
+	err := database.GetDB().Model(model.Inbound{}).Select("tag", "options").
+		Where("type = ? AND tag IN ? AND node_id IS NULL", "shadowsocks", tags).Find(&inbounds).Error
+	if err != nil {
+		logger.Warning("disconnect: read inbounds: ", err)
+		return 0
+	}
+	count := 0
+	for _, inbound := range inbounds {
+		var options struct {
+			Multiplex *struct {
+				Enabled bool `json:"enabled"`
+			} `json:"multiplex"`
+		}
+		if json.Unmarshal(inbound.Options, &options) == nil && options.Multiplex != nil && options.Multiplex.Enabled {
+			count++
+		}
+	}
+	return count
+}
+
+// DisconnectClusterUser drops a user's live connections here and on every
+// online node. The user stays enabled everywhere, so it can reconnect at once
+// -- this is a kick, not a ban.
+//
+// Every online node is told, not just the ones listing the client: a node's
+// online list only holds clients that moved traffic in its last 10s flush, so
+// an idle connection there would survive the kick. A node the client is not on
+// answers with zero.
 //
 // A core that is not running here is not an error when nodes are involved:
-// the client can perfectly well be online on a node only.
+// the client can perfectly well be online on a node only. A local failure is
+// returned in LocalError then, next to what the nodes did; with no node to
+// ask, it is the error.
 func DisconnectClusterUser(user string) (DisconnectResult, error) {
 	if user == "" {
 		return DisconnectResult{}, common.NewError("empty user name")
 	}
 	var result DisconnectResult
-	localErr := error(nil)
-	if corePtr != nil && corePtr.IsRunning() {
-		local, err := corePtr.DisconnectUser(user)
-		result.DisconnectResult = local
-		localErr = err
+	var localErr error
+	localRunning := corePtr != nil && corePtr.IsRunning()
+	if localRunning {
+		result.DisconnectResult, localErr = disconnectLocal(user)
 	}
 
-	nodes, err := nodesWithOnlineUser(user)
+	nodes, err := onlineNodes()
 	if err != nil {
 		return result, err
 	}
 	if len(nodes) == 0 {
+		if !localRunning {
+			return result, common.NewError("sing-box is not running")
+		}
 		return result, localErr
+	}
+	if localErr != nil {
+		result.LocalError = localErr.Error()
 	}
 
 	var ss NodeSyncService
@@ -238,8 +334,5 @@ func DisconnectClusterUser(user string) (DisconnectResult, error) {
 			result.Sessions += remote.Sessions
 			result.Unclosable += remote.Unclosable
 		})
-	if localErr != nil {
-		logger.Debug("disconnect ", user, ": local core: ", localErr)
-	}
 	return result, nil
 }

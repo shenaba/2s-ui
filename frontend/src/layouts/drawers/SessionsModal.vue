@@ -91,7 +91,9 @@
 
     <template #footer>
       <span class="sub" style="flex: 1; align-self: center;">{{ $t('ui.sessDisconnectHint') }}</span>
-      <Btn sm :disabled="closing || sessions.length == 0" style="color: var(--rose);" @click="disconnect">
+      <!-- Not gated on the list: it shows routed connections only, and an idle
+           mux carrier or QUIC session is exactly what it cannot show. -->
+      <Btn sm :disabled="closing" style="color: var(--rose);" @click="disconnect">
         {{ $t('ui.sessDisconnect') }}
       </Btn>
     </template>
@@ -181,6 +183,7 @@ const disconnect = async () => {
   if (!msg.success) return
   const r = msg.obj ?? {}
   push.success({ message: i18n.global.t('ui.sessDisconnected', { n: (r.connections ?? 0) + (r.sessions ?? 0) }) })
+  if (r.localError) push.error({ message: i18n.global.t('ui.sessLocalError', { err: r.localError }) })
   if ((r.unclosable ?? 0) > 0) push.warning({ message: i18n.global.t('ui.sessQuicLeft') })
   for (const [node, err] of Object.entries(r.errors ?? {})) {
     push.error({ message: i18n.global.t('ui.sessNodeError', { node, err }) })

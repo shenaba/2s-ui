@@ -19,6 +19,8 @@ type DisconnectResult struct {
 	// Unclosable counts the inbounds where the user is known to hold a session
 	// this layer cannot reach -- the QUIC ones. Their routed connections are
 	// closed, but the client opens new streams on the session it still has.
+	// The service layer adds multiplexed Shadowsocks inbounds to it, which
+	// only it can recognise (see service.disconnectLocal).
 	Unclosable int `json:"unclosable"`
 }
 
