@@ -370,6 +370,7 @@ export default {
   colStatus: "Статус",
   colActions: "Действия",
   showingOf: "Показано {a} из {b} клиентов",
+  perPage: "{n} / стр.",
   dLeft: "{n}д осталось",
   daysWord: "дн.",
   newClient: "Новый клиент",

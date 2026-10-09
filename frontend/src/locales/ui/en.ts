@@ -370,6 +370,7 @@ export default {
   colStatus: "Status",
   colActions: "Actions",
   showingOf: "Showing {a} of {b} clients",
+  perPage: "{n} / page",
   dLeft: "{n}d left",
   daysWord: "days",
   newClient: "New client",

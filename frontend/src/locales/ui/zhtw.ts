@@ -370,6 +370,7 @@ export default {
   colStatus: "狀態",
   colActions: "操作",
   showingOf: "顯示 {a} / {b} 個用戶端",
+  perPage: "{n} 筆/頁",
   dLeft: "剩 {n} 天",
   daysWord: "天",
   newClient: "新建用戶端",

@@ -370,6 +370,7 @@ export default {
   colStatus: "状态",
   colActions: "操作",
   showingOf: "显示 {a} / {b} 个客户端",
+  perPage: "{n} 条/页",
   dLeft: "剩 {n} 天",
   daysWord: "天",
   newClient: "新建客户端",

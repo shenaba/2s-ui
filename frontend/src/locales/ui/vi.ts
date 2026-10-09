@@ -370,6 +370,7 @@ export default {
   colStatus: "Trạng thái",
   colActions: "Thao tác",
   showingOf: "Hiển thị {a} / {b} khách",
+  perPage: "{n} / trang",
   dLeft: "còn {n} ngày",
   daysWord: "ngày",
   newClient: "Khách mới",
