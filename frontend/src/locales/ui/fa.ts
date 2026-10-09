@@ -370,7 +370,6 @@ export default {
   colStatus: "وضعیت",
   colActions: "عملیات",
   showingOf: "نمایش {a} از {b} کلاینت",
-  perPage: "{n} / صفحه",
   dLeft: "{n} روز مانده",
   daysWord: "روز",
   newClient: "کلاینت جدید",

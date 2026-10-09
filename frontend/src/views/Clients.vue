@@ -151,7 +151,7 @@
         <span>{{ $t('ui.showingOf', { a: pageRows.length, b: clients.length }) }}</span>
         <div style="margin-inline-start: auto; display: flex; gap: 6px; align-items: center;">
           <Select v-model="perPage" class="per-page">
-            <option v-for="n in PER_PAGE_OPTIONS" :key="n" :value="n">{{ n > 0 ? $t('ui.perPage', { n }) : $t('all') }}</option>
+            <option v-for="n in PER_PAGE_OPTIONS" :key="n" :value="n">{{ n > 0 ? n : $t('all') }}</option>
           </Select>
           <template v-if="perPage > 0">
             <Btn variant="subtle" sm icon :disabled="page <= 1" @click="page--">
@@ -238,7 +238,7 @@
         <span>{{ $t('ui.showingOf', { a: pageRows.length, b: clients.length }) }}</span>
         <div style="margin-inline-start: auto; display: flex; gap: 6px; align-items: center;">
           <Select v-model="perPage" class="per-page">
-            <option v-for="n in PER_PAGE_OPTIONS" :key="n" :value="n">{{ n > 0 ? $t('ui.perPage', { n }) : $t('all') }}</option>
+            <option v-for="n in PER_PAGE_OPTIONS" :key="n" :value="n">{{ n > 0 ? n : $t('all') }}</option>
           </Select>
           <template v-if="perPage > 0">
             <Btn variant="subtle" sm icon :disabled="page <= 1" @click="page--">
@@ -557,8 +557,8 @@ td.actions-td { padding-inline-end: 10px; }
    never reaches its trigger — reach it through the footer instead */
 .t-foot :deep(.per-page) {
   width: auto;
-  /* the option panel takes the trigger's width, so size for "100 / page" + check */
-  min-width: 124px;
+  /* the option panel takes the trigger's width, so leave room for "100" + check */
+  min-width: 84px;
   height: 30px;
   padding: 0 10px;
   font-size: 12.5px;
