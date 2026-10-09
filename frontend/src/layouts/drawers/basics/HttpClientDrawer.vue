@@ -33,7 +33,10 @@
     </div>
 
     <Headers :data="client" />
-    <Dial :dial="client" mode="client" />
+    <!-- The full set, detour included: sing-box embeds the whole DialerOptions
+         in an http client, and a rule-set download that has to leave through
+         a proxy has no other way to say so (upstream #1272). -->
+    <Dial :dial="client" />
     <!-- Which tuning group applies is decided by the version: HTTP/1.1 has
          neither, HTTP/3 is QUIC, anything else is HTTP/2. -->
     <QuicFields v-if="fieldGroup != 'none'" :data="client" :quic="fieldGroup == 'quic'" />

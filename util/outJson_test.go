@@ -449,3 +449,36 @@ func TestFillOutJsonNormalizesPortHoppingRanges(t *testing.T) {
 		})
 	}
 }
+
+// sing-box 1.13 removed these two ECH options and rejects a client config with
+// either one set. They used to be copied across from the server half, so a
+// stale true there broke every subscription the inbound fed.
+func TestFillOutJsonDropsLegacyECHOptions(t *testing.T) {
+	inbound := &model.Inbound{
+		Type: "trojan", Tag: "tr-in",
+		TlsId: 1,
+		Tls: &model.Tls{
+			Server: json.RawMessage(`{"enabled":true,"ech":{"enabled":true,"key":["x"],"pq_signature_schemes_enabled":true,"dynamic_record_sizing_disabled":true}}`),
+			Client: json.RawMessage(`{"enabled":true}`),
+		},
+		Options: json.RawMessage(`{"listen_port":443}`),
+		OutJson: json.RawMessage(`{}`),
+	}
+	if err := FillOutJson(inbound, "example.com"); err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(inbound.OutJson, &out); err != nil {
+		t.Fatal(err)
+	}
+	tls, _ := out["tls"].(map[string]interface{})
+	ech, ok := tls["ech"].(map[string]interface{})
+	if !ok || ech["enabled"] != true {
+		t.Fatalf("ech must still be switched on for the client, got %v", tls)
+	}
+	for _, removed := range []string{"pq_signature_schemes_enabled", "dynamic_record_sizing_disabled"} {
+		if _, present := ech[removed]; present {
+			t.Errorf("%q must not reach the client config, got %v", removed, ech)
+		}
+	}
+}

@@ -602,7 +602,8 @@ func (a *ApiService) SetMaintenance(c *gin.Context) {
 }
 
 func (a *ApiService) ResetTraffic(c *gin.Context) {
-	if err := a.ClientService.ResetAllClientsTraffic(); err != nil {
+	inboundIds, err := a.ClientService.ResetAllClientsTraffic(nil)
+	if err != nil {
 		jsonMsg(c, "resetTraffic", err)
 		return
 	}
@@ -611,8 +612,7 @@ func (a *ApiService) ResetTraffic(c *gin.Context) {
 	// paid-up users until the hourly safety net.
 	a.NodeSyncService.MarkAllDirty()
 	go a.NodeSyncService.ReconcileDirtyOnline()
-	err := a.ConfigService.RestartCore()
-	jsonMsg(c, "resetTraffic", err)
+	jsonMsg(c, "resetTraffic", a.ConfigService.ApplyReenabledUsers(inboundIds))
 }
 
 func (a *ApiService) LinkConvert(c *gin.Context) {

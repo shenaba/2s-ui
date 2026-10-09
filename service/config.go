@@ -366,6 +366,27 @@ func (s *ConfigService) RestartCore() error {
 	return s.StartCore()
 }
 
+// ApplyReenabledUsers brings the running core up to date after a global
+// traffic reset re-enabled clients on the given inbounds. In place where it
+// can be, so the reset does not drop every connection on the panel.
+//
+// UpdateInboundsUsers stops at the first inbound it cannot update, leaving the
+// rest on their old user lists: the re-enabled clients would stay rejected
+// with nothing to retry it, because the reset is already committed. A full
+// restart is the fallback that cannot leave part of the core stale -- and if
+// that fails too, the core is down, which the watchdog does recover.
+func (s *ConfigService) ApplyReenabledUsers(inboundIds []uint) error {
+	if len(inboundIds) == 0 {
+		return nil
+	}
+	err := s.InboundService.UpdateInboundsUsers(database.GetDB(), inboundIds)
+	if err == nil {
+		return nil
+	}
+	logger.Warning("in-place user update after the traffic reset failed, restarting the core: ", err)
+	return s.RestartCore()
+}
+
 func (s *ConfigService) restartCoreWithConfig(config json.RawMessage) error {
 	// The config is saved either way; it takes effect when the core is
 	// started again.

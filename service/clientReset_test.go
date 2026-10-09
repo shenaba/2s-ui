@@ -2,12 +2,15 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/database/model"
+
+	"gorm.io/gorm"
 )
 
 func newResetDB(t *testing.T) *ClientService {
@@ -143,5 +146,105 @@ func TestChangeObjNameIsValidJSON(t *testing.T) {
 		if got != name {
 			t.Errorf("name %q round-tripped to %q", name, got)
 		}
+	}
+}
+
+// The global reset updates users in place instead of restarting the core, so it
+// has to report the inbounds whose user lists changed: those of the clients it
+// re-enabled, and only those. A client that merely had traffic is already in
+// its inbounds' user lists.
+func TestResetAllClientsTrafficReturnsReenabledInbounds(t *testing.T) {
+	svc := newResetDB(t)
+	seedClient(t, &model.Client{Enable: true, Name: "depleted", Up: 10, Down: 10, Inbounds: json.RawMessage(`[1,2]`)})
+	seedClient(t, &model.Client{Enable: true, Name: "active", Up: 5, Inbounds: json.RawMessage(`[3]`)})
+	seedClient(t, &model.Client{Enable: true, Name: "idle", Inbounds: json.RawMessage(`[4]`)})
+	// Created enabled, then disabled: a false bool is GORM's zero value and
+	// would be replaced by the column default on create.
+	if err := database.GetDB().Model(model.Client{}).Where("name = ?", "depleted").Update("enable", false).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	ids, err := svc.ResetAllClientsTraffic(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 || ids[0]+ids[1] != 3 {
+		t.Errorf("want inbounds [1 2] of the re-enabled client, got %v", ids)
+	}
+
+	var stored []model.Client
+	if err := database.GetDB().Order("id").Find(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range stored {
+		if !c.Enable || c.Up+c.Down != 0 {
+			t.Errorf("%s: want enabled with zero traffic, got enable=%v up=%d down=%d", c.Name, c.Enable, c.Up, c.Down)
+		}
+	}
+	if stored[0].TotalUp != 10 || stored[0].TotalDown != 10 {
+		t.Errorf("depleted: traffic must accumulate into the totals, got %d/%d", stored[0].TotalUp, stored[0].TotalDown)
+	}
+}
+
+// Nothing to reset is not a change: no audit row, and no inbound to touch.
+func TestResetAllClientsTrafficIdle(t *testing.T) {
+	svc := newResetDB(t)
+	seedClient(t, &model.Client{Enable: true, Name: "idle", Inbounds: json.RawMessage(`[1]`)})
+
+	ids, err := svc.ResetAllClientsTraffic(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 0 {
+		t.Errorf("want no inbounds, got %v", ids)
+	}
+	var n int64
+	database.GetDB().Model(model.Changes{}).Count(&n)
+	if n != 0 {
+		t.Errorf("want no change row for an idle reset, got %d", n)
+	}
+}
+
+// The scheduled reset commits its next boundary through within. A failure
+// there has to take the reset back with it: committed apart, the boundary
+// stayed in the past and the job, polled every minute, reset everyone again on
+// every tick.
+func TestResetAllClientsTrafficRollsBackWithWithin(t *testing.T) {
+	svc := newResetDB(t)
+	seedClient(t, &model.Client{Enable: true, Name: "used", Up: 7, Down: 3, Inbounds: json.RawMessage(`[1]`)})
+
+	if _, err := svc.ResetAllClientsTraffic(func(tx *gorm.DB) error {
+		return errors.New("boundary write failed")
+	}); err == nil {
+		t.Fatal("want the within error returned")
+	}
+	var stored model.Client
+	if err := database.GetDB().Where("name = ?", "used").First(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Up != 7 || stored.Down != 3 || stored.TotalUp != 0 {
+		t.Errorf("the reset must roll back, got up=%d down=%d totalUp=%d", stored.Up, stored.Down, stored.TotalUp)
+	}
+	var n int64
+	database.GetDB().Model(model.Changes{}).Count(&n)
+	if n != 0 {
+		t.Errorf("want no change row for a rolled-back reset, got %d", n)
+	}
+}
+
+// within runs even when no client needed resetting: the boundary still moves.
+func TestResetAllClientsTrafficRunsWithinWhenIdle(t *testing.T) {
+	svc := newResetDB(t)
+	seedClient(t, &model.Client{Enable: true, Name: "idle", Inbounds: json.RawMessage(`[1]`)})
+
+	ran := false
+	if _, err := svc.ResetAllClientsTraffic(func(tx *gorm.DB) error {
+		ran = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !ran {
+		t.Error("within must run on an idle reset")
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shenaba/2s-ui/service"
+
 	"github.com/robfig/cron/v3"
 )
 
@@ -36,7 +38,7 @@ func (j *blockingJob) Run() {
 // the test exercises the configuration rather than a copy of it.
 func newChainedCron() *cron.Cron {
 	return cron.New(
-		cron.WithParser(cronParser),
+		cron.WithParser(service.CronParser),
 		cron.WithChain(
 			cron.SkipIfStillRunning(cron.DefaultLogger),
 			cron.Recover(cron.DefaultLogger),

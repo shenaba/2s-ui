@@ -9,13 +9,6 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
-// cronParser accepts standard 5-field cron, optional leading seconds (6-field)
-// and descriptors (@daily, @weekly, @every 10s, ...). Used both for the cron
-// engine and for parsing the user-provided globalReset spec.
-var cronParser = cron.NewParser(
-	cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
-)
-
 type CronJob struct {
 	cron *cron.Cron
 }
@@ -24,7 +17,7 @@ func NewCronJob() *CronJob {
 	return &CronJob{}
 }
 
-func (c *CronJob) Start(loc *time.Location, trafficAge int, statsBucketSeconds int64, globalReset string) error {
+func (c *CronJob) Start(loc *time.Location, trafficAge int, statsBucketSeconds int64) error {
 	// Recover: robfig/cron does not recover a panicking job, and a panic in a
 	// job goroutine takes the whole process down -- gin only covers the HTTP
 	// side. Fourteen jobs run here, several of them doing network I/O against
@@ -36,7 +29,7 @@ func (c *CronJob) Start(loc *time.Location, trafficAge int, statsBucketSeconds i
 	// what the first already took.
 	c.cron = cron.New(
 		cron.WithLocation(loc),
-		cron.WithParser(cronParser),
+		cron.WithParser(service.CronParser),
 		// Order matters, and not in the obvious direction. Chain applies the
 		// first wrapper outermost, and SkipIfStillRunning returns its token
 		// with a plain `ch <- v` after j.Run() rather than a defer -- so with
@@ -66,15 +59,10 @@ func (c *CronJob) Start(loc *time.Location, trafficAge int, statsBucketSeconds i
 	addJob("@every 10s", NewIpLimitJob(), "ip limit job")
 	addJob("@every 10s", NewClusterIPLimitJob(), "cluster IP limit job")
 	addJob("@every 1m", NewDepleteJob(), "deplete job")
-	// Periodic global traffic reset, only when a valid cron spec is configured
-	if globalReset != "" && globalReset != "off" {
-		schedule, err := cronParser.Parse(globalReset)
-		if err != nil {
-			logger.Warning("invalid globalReset cron spec <", globalReset, ">: ", err)
-		} else {
-			addJob(globalReset, NewResetTrafficJob(schedule), "traffic reset job")
-		}
-	}
+	// Periodic global traffic reset. Polled rather than scheduled on the spec
+	// itself, so a saved schedule applies without a panel restart; a no-op
+	// while the spec is off.
+	addJob("@every 1m", NewResetTrafficJob(), "traffic reset job")
 	if trafficAge > 0 {
 		addJob("@daily", NewDelStatsJob(trafficAge), "old stats cleanup")
 	}
@@ -93,12 +81,12 @@ func (c *CronJob) Start(loc *time.Location, trafficAge int, statsBucketSeconds i
 	// Daily database backup to Telegram (no-op unless switched on)
 	addJob("@daily", NewNotifyBackupJob(), "notify backup")
 	// Periodic status digest, only when a valid cron spec is configured.
-	// Read here rather than passed in: it is a notification setting, and
-	// like globalReset a cron entry's schedule is fixed at registration, so
-	// changing it needs a panel restart either way.
+	// Read here rather than passed in: it is a notification setting, and a
+	// cron entry's schedule is fixed at registration, so changing it needs a
+	// panel restart either way.
 	var settingService service.SettingService
 	if spec := settingService.GetNotifyReportSpec(); spec != "" && spec != "off" {
-		if _, err := cronParser.Parse(spec); err != nil {
+		if _, err := service.CronParser.Parse(spec); err != nil {
 			logger.Warning("invalid notifyReport cron spec <", spec, ">: ", err)
 		} else {
 			addJob(spec, NewNotifyReportJob(), "notify report")
