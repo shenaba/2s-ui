@@ -150,13 +150,18 @@
       <div class="t-foot">
         <span>{{ $t('ui.showingOf', { a: pageRows.length, b: clients.length }) }}</span>
         <div style="margin-inline-start: auto; display: flex; gap: 6px; align-items: center;">
-          <Btn variant="subtle" sm icon :disabled="page <= 1" @click="page--">
-            <Ico name="chevron" :size="16" style="transform: rotate(180deg);" />
-          </Btn>
-          <span class="mono" style="font-size: 12.5px;">{{ page }} / {{ totalPages }}</span>
-          <Btn variant="subtle" sm icon :disabled="page >= totalPages" @click="page++">
-            <Ico name="chevron" :size="16" />
-          </Btn>
+          <Select v-model="perPage" class="per-page">
+            <option v-for="n in PER_PAGE_OPTIONS" :key="n" :value="n">{{ n > 0 ? n : $t('all') }}</option>
+          </Select>
+          <template v-if="perPage > 0">
+            <Btn variant="subtle" sm icon :disabled="page <= 1" @click="page--">
+              <Ico name="chevron" :size="16" style="transform: rotate(180deg);" />
+            </Btn>
+            <span class="mono" style="font-size: 12.5px;">{{ page }} / {{ totalPages }}</span>
+            <Btn variant="subtle" sm icon :disabled="page >= totalPages" @click="page++">
+              <Ico name="chevron" :size="16" />
+            </Btn>
+          </template>
         </div>
       </div>
     </div>
@@ -232,13 +237,18 @@
       <div class="card t-foot">
         <span>{{ $t('ui.showingOf', { a: pageRows.length, b: clients.length }) }}</span>
         <div style="margin-inline-start: auto; display: flex; gap: 6px; align-items: center;">
-          <Btn variant="subtle" sm icon :disabled="page <= 1" @click="page--">
-            <Ico name="chevron" :size="16" style="transform: rotate(180deg);" />
-          </Btn>
-          <span class="mono" style="font-size: 12.5px;">{{ page }} / {{ totalPages }}</span>
-          <Btn variant="subtle" sm icon :disabled="page >= totalPages" @click="page++">
-            <Ico name="chevron" :size="16" />
-          </Btn>
+          <Select v-model="perPage" class="per-page">
+            <option v-for="n in PER_PAGE_OPTIONS" :key="n" :value="n">{{ n > 0 ? n : $t('all') }}</option>
+          </Select>
+          <template v-if="perPage > 0">
+            <Btn variant="subtle" sm icon :disabled="page <= 1" @click="page--">
+              <Ico name="chevron" :size="16" style="transform: rotate(180deg);" />
+            </Btn>
+            <span class="mono" style="font-size: 12.5px;">{{ page }} / {{ totalPages }}</span>
+            <Btn variant="subtle" sm icon :disabled="page >= totalPages" @click="page++">
+              <Ico name="chevron" :size="16" />
+            </Btn>
+          </template>
         </div>
       </div>
     </div>
@@ -259,6 +269,7 @@ import Avatar from '@/components/ui/Avatar.vue'
 import IconBtn from '@/components/ui/IconBtn.vue'
 import Toggle from '@/components/ui/Toggle.vue'
 import Segmented from '@/components/ui/Segmented.vue'
+import Select from '@/components/ui/Select.vue'
 import DeleteConfirm from '@/components/ui/DeleteConfirm.vue'
 import BarMini from '@/components/charts/BarMini.vue'
 import ClientDrawer from '@/layouts/drawers/client/ClientDrawer.vue'
@@ -329,16 +340,27 @@ const rows = computed((): any[] => {
   })
 })
 
-// ---------------- pagination (legacy items-per-page setting, default 10) ----------------
-const perPage = (() => {
-  const v = parseInt(localStorage.getItem('items-per-page') ?? '10', 10)
+// ---------------- pagination (items-per-page, default 10; 0 = all on one page) ----------------
+// The key predates this selector, and its reader has always taken a negative
+// value as "all" — so "all" is written back as -1, not 0.
+const PER_PAGE_KEY = 'items-per-page'
+const PER_PAGE_OPTIONS = [10, 20, 50, 100, 0]
+const readPerPage = (): number => {
+  let raw: string | null = null
+  try { raw = localStorage.getItem(PER_PAGE_KEY) } catch { /* storage blocked */ }
+  const v = parseInt(raw ?? '10', 10)
   return Number.isFinite(v) && v > 0 ? v : Number.isFinite(v) && v < 0 ? 0 : 10
-})()
+}
 const page = ref(1)
-const totalPages = computed(() => (perPage > 0 ? Math.max(1, Math.ceil(rows.value.length / perPage)) : 1))
+const perPage = ref(readPerPage())
+watch(perPage, (n) => {
+  page.value = 1
+  try { localStorage.setItem(PER_PAGE_KEY, String(n > 0 ? n : -1)) } catch { /* storage blocked */ }
+})
+const totalPages = computed(() => (perPage.value > 0 ? Math.max(1, Math.ceil(rows.value.length / perPage.value)) : 1))
 const pageRows = computed((): any[] => {
-  if (perPage <= 0) return rows.value
-  return rows.value.slice((page.value - 1) * perPage, page.value * perPage)
+  if (perPage.value <= 0) return rows.value
+  return rows.value.slice((page.value - 1) * perPage.value, page.value * perPage.value)
 })
 watch([q, groupFilter, stateFilter], () => { page.value = 1 })
 watch(totalPages, (tp) => { if (page.value > tp) page.value = tp })
@@ -524,10 +546,22 @@ td.actions-td { padding-inline-end: 10px; }
 }
 .t-foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: 8px;
   padding: 12px 18px;
   font-size: 12.5px;
   color: var(--text-3);
+}
+/* Select renders a fragment (trigger + teleported panel), so the scope id
+   never reaches its trigger — reach it through the footer instead */
+.t-foot :deep(.per-page) {
+  width: auto;
+  /* the option panel takes the trigger's width, so leave room for "100" + check */
+  min-width: 84px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12.5px;
 }
 /* mobile card list (≤820px tables become cards) */
 .clients-cards {
