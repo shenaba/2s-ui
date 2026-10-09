@@ -55,6 +55,21 @@ func TestPresenceObserve(t *testing.T) {
 		expect(t, on, off, []string{"alice"}, nil)
 	})
 
+	// What ObservePresence does while the events are off: turning them on
+	// again must not announce everyone already online.
+	t.Run("after a reset the start-up grace applies again", func(t *testing.T) {
+		var p presenceTracker
+		p.observe(at(0), nil, grace)
+		on, _ := p.observe(at(grace), []string{"alice"}, grace)
+		expect(t, on, nil, []string{"alice"}, nil)
+
+		p.reset()
+		on, off := p.observe(at(2*grace), []string{"alice", "bob"}, grace)
+		expect(t, on, off, nil, nil)
+		on, off = p.observe(at(3*grace), []string{"alice", "bob", "carol"}, grace)
+		expect(t, on, off, []string{"carol"}, nil)
+	})
+
 	t.Run("batches are sorted", func(t *testing.T) {
 		var p presenceTracker
 		p.observe(at(0), nil, grace)

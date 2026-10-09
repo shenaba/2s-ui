@@ -62,6 +62,14 @@ func (p *presenceTracker) observe(now time.Time, present []string, grace time.Du
 	return cameOnline, wentOffline
 }
 
+// reset forgets every client, so the next observe starts a fresh start-up
+// grace.
+func (p *presenceTracker) reset() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.online = nil
+}
+
 var presence presenceTracker
 
 // presenceGraceDefault is used when notifyPresenceGrace is unreadable or below
@@ -69,10 +77,21 @@ var presence presenceTracker
 // without a grace every idle client would flap, so the toggle is the off switch.
 const presenceGraceDefault = 5 * time.Minute
 
-// ObservePresence runs after every stats flush. The state is advanced even when
-// these events are switched off, so turning them on later does not announce
-// every client that is already online as having just arrived.
+// ObservePresence runs after every stats flush.
+//
+// With these events switched off it reads the notify settings once and stops:
+// the online list (a client-table scan once nodes report users) is not read,
+// and the state is dropped rather than advanced. Turning the events on later
+// then starts from a fresh tracker, whose start-up grace records the clients
+// already online silently -- the same reason a panel restart announces nobody.
 func ObservePresence() {
+	var settingService SettingService
+	m := settingService.notifySettings()
+	if !notifyWantsFrom(m, notify.ClientOnline, notify.ClientOffline) {
+		presence.reset()
+		return
+	}
+
 	var stats StatsService
 	current, err := stats.GetClusterOnlines()
 	if err != nil {
@@ -80,16 +99,12 @@ func ObservePresence() {
 		return
 	}
 
-	var settingService SettingService
-	grace := time.Duration(settingService.GetNotifyThresholds().PresenceGrace) * time.Minute
+	grace := time.Duration(notifyThresholdsFrom(m).PresenceGrace) * time.Minute
 	if grace < time.Minute {
 		grace = presenceGraceDefault
 	}
 	cameOnline, wentOffline := presence.observe(time.Now(), current.User, grace)
 	if len(cameOnline) == 0 && len(wentOffline) == 0 {
-		return
-	}
-	if !settingService.NotifyWants(notify.ClientOnline, notify.ClientOffline) {
 		return
 	}
 	// A client deleted while online drops out of the list like one that left,
