@@ -126,6 +126,42 @@ type ConnectionInfo struct {
 	Source     netip.Addr
 	CreatedAt  int64
 	lastActive atomic.Int64
+
+	// What the sessions list shows, captured once at routing time and never
+	// written again, so a snapshot can read them without the tracker lock.
+	// RawSource is the address as it arrived, port included: Source above is
+	// the masked identity, and a masked v6 address is one no client ever used.
+	RawSource   M.Socksaddr
+	Destination M.Socksaddr
+	Domain      string
+	Outbound    string
+	Rule        string
+
+	// Bytes moved on this connection, from the client's point of view: up is
+	// what was read from it, down what was written to it -- the same split the
+	// stats tracker counts in.
+	up   atomic.Int64
+	down atomic.Int64
+}
+
+// SessionInfo is one live routed connection as the API hands it out.
+type SessionInfo struct {
+	ID          string `json:"id"`
+	Inbound     string `json:"inbound,omitempty"`
+	User        string `json:"user,omitempty"`
+	Outbound    string `json:"outbound,omitempty"`
+	Network     string `json:"network"`
+	Source      string `json:"source,omitempty"`
+	Destination string `json:"destination,omitempty"`
+	Domain      string `json:"domain,omitempty"`
+	Rule        string `json:"rule,omitempty"`
+	// CreatedAt is wall-clock unix seconds, for display only.
+	CreatedAt int64 `json:"createdAt"`
+	Upload    int64 `json:"up"`
+	Download  int64 `json:"down"`
+	// Node is set by a master merging the list a node returned; this package
+	// never fills it.
+	Node string `json:"node,omitempty"`
 }
 
 // Every tracker gets a distinct generation so readers can tell that the one
@@ -221,6 +257,7 @@ func (c *ConnTracker) RoutedConnection(ctx context.Context, conn net.Conn, metad
 		CreatedAt: now,
 	}
 	connInfo.lastActive.Store(now)
+	fillDisplay(connInfo, metadata, matchedRule, matchOutbound)
 
 	c.trackConnection(connID, connInfo)
 
@@ -246,10 +283,102 @@ func (c *ConnTracker) RoutedPacketConnection(ctx context.Context, conn network.P
 		CreatedAt:  now,
 	}
 	connInfo.lastActive.Store(now)
+	fillDisplay(connInfo, metadata, matchedRule, matchOutbound)
 
 	c.trackConnection(connID, connInfo)
 
 	return c.createWrappedPacketConn(conn, connInfo)
+}
+
+// fillDisplay records what the sessions list shows about a connection. The
+// router fills RouteRule and RouteOutbound just before it calls the trackers,
+// so those are reused rather than formatted again: a rule's String() is not
+// free, and this runs per connection.
+func fillDisplay(info *ConnectionInfo, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) {
+	info.RawSource = metadata.Source
+	info.Destination = metadata.Destination
+	// What sniffing found wins, the same precedence as the clash API: the
+	// destination is only a name when the client happened to send one.
+	info.Domain = metadata.Domain
+	if info.Domain == "" {
+		info.Domain = metadata.Destination.Fqdn
+	}
+	info.Outbound = metadata.RouteOutbound
+	if info.Outbound == "" && matchOutbound != nil {
+		info.Outbound = matchOutbound.Tag()
+	}
+	info.Rule = metadata.RouteRule
+	if info.Rule == "" && matchedRule != nil {
+		info.Rule = matchedRule.String()
+	}
+}
+
+// Sessions snapshots the live connections want accepts (nil means all).
+//
+// Only the pointer list is taken under the lock: formatting every address on
+// a busy server takes milliseconds, and this mutex is the one every connection
+// setup and teardown takes. The fields read afterwards are written once before
+// the connection is tracked, and the counters are atomic.
+func (c *ConnTracker) Sessions(want func(info *ConnectionInfo) bool) []SessionInfo {
+	c.access.Lock()
+	live := make([]*ConnectionInfo, 0, len(c.connections))
+	for _, connInfo := range c.connections {
+		if want == nil || want(connInfo) {
+			live = append(live, connInfo)
+		}
+	}
+	c.access.Unlock()
+
+	sessions := make([]SessionInfo, 0, len(live))
+	for _, info := range live {
+		session := SessionInfo{
+			ID:        info.ID,
+			Inbound:   info.Inbound,
+			User:      info.User,
+			Outbound:  info.Outbound,
+			Network:   info.Type,
+			Domain:    info.Domain,
+			Rule:      info.Rule,
+			CreatedAt: c.epoch.Add(time.Duration(info.CreatedAt)).Unix(),
+			Upload:    info.up.Load(),
+			Download:  info.down.Load(),
+		}
+		if info.RawSource.IsValid() {
+			session.Source = info.RawSource.String()
+		}
+		if info.Destination.IsValid() {
+			session.Destination = info.Destination.String()
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions
+}
+
+// CloseConnByUser closes every routed connection of one user. That is all it
+// can do: a multiplex or QUIC session keeps serving new streams after its
+// routed connections are gone, which is what Core.DisconnectUser is for.
+func (c *ConnTracker) CloseConnByUser(user string) int {
+	if user == "" {
+		return 0
+	}
+	c.access.Lock()
+	defer c.access.Unlock()
+
+	closedCount := 0
+	for connID, connInfo := range c.connections {
+		if connInfo.User != user {
+			continue
+		}
+		if connInfo.Conn != nil {
+			connInfo.Conn.Close()
+		}
+		if connInfo.PacketConn != nil {
+			connInfo.PacketConn.Close()
+		}
+		delete(c.connections, connID)
+		closedCount++
+	}
+	return closedCount
 }
 
 // UserIPs snapshots the live source IPs of every user want accepts, returning
@@ -431,6 +560,7 @@ func (w *wrappedConn) doUntrack() {
 func (w *wrappedConn) Read(b []byte) (int, error) {
 	n, err := w.Conn.Read(b)
 	if n > 0 {
+		w.info.up.Add(int64(n))
 		w.tracker.touch(w.info)
 	}
 	if shouldUntrackIOErr(err) {
@@ -442,6 +572,7 @@ func (w *wrappedConn) Read(b []byte) (int, error) {
 func (w *wrappedConn) Write(b []byte) (int, error) {
 	n, err := w.Conn.Write(b)
 	if n > 0 {
+		w.info.down.Add(int64(n))
 		w.tracker.touch(w.info)
 	}
 	if err != nil && shouldUntrackIOErr(err) {
@@ -475,6 +606,7 @@ func (w *wrappedPacketConn) doUntrack() {
 func (w *wrappedPacketConn) ReadPacket(buffer *buf.Buffer) (destination M.Socksaddr, err error) {
 	dest, err := w.PacketConn.ReadPacket(buffer)
 	if err == nil {
+		w.info.up.Add(int64(buffer.Len()))
 		w.tracker.touch(w.info)
 	}
 	if shouldUntrackIOErr(err) {
@@ -484,8 +616,11 @@ func (w *wrappedPacketConn) ReadPacket(buffer *buf.Buffer) (destination M.Socksa
 }
 
 func (w *wrappedPacketConn) WritePacket(buffer *buf.Buffer, destination M.Socksaddr) error {
+	// Measured before the write: a successful WritePacket releases the buffer.
+	n := buffer.Len()
 	err := w.PacketConn.WritePacket(buffer, destination)
 	if err == nil {
+		w.info.down.Add(int64(n))
 		w.tracker.touch(w.info)
 	}
 	if err != nil && shouldUntrackIOErr(err) {

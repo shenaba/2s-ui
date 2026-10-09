@@ -41,3 +41,9 @@ func withUserSessions(router adapter.ConnectionRouterEx) adapter.ConnectionRoute
 func (h *Inbound) sessions() *usersession.Registry {
 	return h.router.(*usersession.RouterEx).Registry()
 }
+
+// KickUser cuts the sessions of a user who stays on the inbound -- see
+// Core.DisconnectUser.
+func (h *Inbound) KickUser(user string) usersession.Result {
+	return h.sessions().KickUserSessions(user)
+}

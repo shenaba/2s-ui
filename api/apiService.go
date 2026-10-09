@@ -266,6 +266,34 @@ func (a *ApiService) GetOnlineIps(c *gin.Context) {
 	jsonObj(c, gin.H{"ips": service.OnlineIPsOf(name)}, nil)
 }
 
+// GetSessions lists live connections (resource=user|inbound|outbound, tag).
+// cluster adds what the nodes a client is online on hold for it, which only
+// the SPA asks for: apiv2 answers with this panel's own list, so a node never
+// hands its master a list that already includes the master's.
+func (a *ApiService) GetSessions(c *gin.Context, cluster bool) {
+	resource, tag := c.Query("resource"), c.Query("tag")
+	if cluster && resource == "user" {
+		result, err := service.ClusterUserSessions(tag)
+		jsonObj(c, result, err)
+		return
+	}
+	sessions, err := service.LocalSessions(resource, tag)
+	jsonObj(c, service.SessionsResult{Sessions: sessions}, err)
+}
+
+// CloseSessions disconnects one client without disabling it. cluster has the
+// same meaning as for GetSessions.
+func (a *ApiService) CloseSessions(c *gin.Context, cluster bool) {
+	user := c.Request.FormValue("u")
+	if cluster {
+		result, err := service.DisconnectClusterUser(user)
+		jsonObj(c, result, err)
+		return
+	}
+	result, err := service.DisconnectLocalUser(user)
+	jsonObj(c, result, err)
+}
+
 func (a *ApiService) GetClusterIps(c *gin.Context) {
 	ips, err := service.ClusterIPSnapshot()
 	jsonObj(c, ips, err)

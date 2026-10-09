@@ -162,6 +162,9 @@ var defaultValueMap = map[string]string{
 	// so a missing entry reads as the zero value forever -- and Save's UPDATE
 	// touches no row, which means the settings page cannot store it either.
 	"notifyBotEnable": "false",
+	// Minutes a client must be gone before it counts as offline -- and so
+	// before its next appearance is announced. See service/presence.go.
+	"notifyPresenceGrace": "5",
 }
 
 // notifySecrets are the notification settings that must never be read back out

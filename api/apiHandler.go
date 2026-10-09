@@ -95,6 +95,8 @@ func (a *APIHandler) postHandler(c *gin.Context) {
 		a.apiv2.ReloadTokens()
 	case "getCertPing":
 		a.ApiService.GetCertPing(c)
+	case "closeSessions":
+		a.ApiService.CloseSessions(c, true)
 	case "testNode":
 		a.ApiService.TestNode(c)
 	default:
@@ -128,6 +130,8 @@ func (a *APIHandler) getHandler(c *gin.Context) {
 		a.ApiService.GetClusterOnlines(c)
 	case "onlineIps":
 		a.ApiService.GetOnlineIps(c)
+	case "sessions":
+		a.ApiService.GetSessions(c, true)
 	case "logs":
 		a.ApiService.GetLogs(c)
 	case "changes":

@@ -39,4 +39,7 @@ func (s *StatsJob) Run() {
 	// in that case too. Must run on this goroutine: the payload snapshots
 	// onlineResources right after SaveStats rewrote it.
 	service.HubAfterStatsFlush()
+	// Same goroutine for the same reason: presence is judged on the list this
+	// flush just published.
+	service.ObservePresence()
 }

@@ -69,3 +69,9 @@ func (h *Inbound) sessions() *usersession.Registry {
 func gracefulTLS(config tls.ServerConfig) tls.ServerConfig {
 	return quicgrace.Wrap(config, quicgrace.Options{})
 }
+
+// KickUser cuts the sessions of a user who stays on the inbound -- see
+// Core.DisconnectUser.
+func (h *Inbound) KickUser(user string) usersession.Result {
+	return h.sessions().KickUserSessions(user)
+}

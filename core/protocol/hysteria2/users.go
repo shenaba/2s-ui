@@ -49,3 +49,9 @@ func gracefulTLS(config tls.ServerConfig, obfs bool) tls.ServerConfig {
 		StatelessReset:                   !obfs,
 	})
 }
+
+// KickUser cuts the sessions of a user who stays on the inbound -- see
+// Core.DisconnectUser.
+func (h *Inbound) KickUser(user string) usersession.Result {
+	return h.sessions().KickUserSessions(user)
+}

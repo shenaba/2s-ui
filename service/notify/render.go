@@ -125,6 +125,19 @@ func describe(e Event) (string, map[string]string) {
 		p["names"] = ""
 		return "client.depleted", p
 
+	case ClientOnline, ClientOffline:
+		key := "client.online"
+		if e.Kind == ClientOffline {
+			key = "client.offline"
+		}
+		p["count"] = "0"
+		p["names"] = ""
+		if d, ok := e.Data.(*ClientData); ok && len(d.Names) > 0 {
+			p["count"] = strconv.Itoa(len(d.Names))
+			p["names"] = strings.Join(d.Names, ", ")
+		}
+		return key, p
+
 	case ClientExpiring:
 		if d, ok := e.Data.(*ClientData); ok {
 			if d.DaysLeft > 0 {
