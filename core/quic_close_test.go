@@ -41,22 +41,33 @@ func TestRemovingAQUICInboundTellsItsClients(t *testing.T) {
 			"users": []any{map[string]any{"name": "u", "uuid": "2dd61d93-75d8-4da4-ac0e-6aece7eac365", "password": "p"}}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			port := freeUDPPort(t)
-			inbound := map[string]any{"tag": tc.name + "-in", "listen": "127.0.0.1", "listen_port": port, "tls": quicTLS}
-			for key, value := range tc.options {
-				inbound[key] = value
+			// The probed port is free only until the probe closes; something
+			// running in parallel can take it before the core binds it. A few
+			// fresh ports rather than one flaky failure.
+			var c *Core
+			var port int
+			var err error
+			for attempt := 0; attempt < 3; attempt++ {
+				port = freeUDPPort(t)
+				inbound := map[string]any{"tag": tc.name + "-in", "listen": "127.0.0.1", "listen_port": port, "tls": quicTLS}
+				for key, value := range tc.options {
+					inbound[key] = value
+				}
+				var raw []byte
+				raw, err = json.Marshal(map[string]any{
+					"log":       map[string]any{"disabled": true},
+					"inbounds":  []any{inbound},
+					"outbounds": []any{map[string]any{"type": "direct", "tag": "direct"}},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				c = NewCore()
+				if err = c.Start(raw); err == nil {
+					break
+				}
+				skipIfFeatureMissing(t, err)
 			}
-			raw, err := json.Marshal(map[string]any{
-				"log":       map[string]any{"disabled": true},
-				"inbounds":  []any{inbound},
-				"outbounds": []any{map[string]any{"type": "direct", "tag": "direct"}},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			c := NewCore()
-			err = c.Start(raw)
-			skipIfFeatureMissing(t, err)
 			if err != nil {
 				t.Fatalf("start core: %v", err)
 			}
@@ -84,18 +95,30 @@ func TestRemovingAQUICInboundTellsItsClients(t *testing.T) {
 
 			select {
 			case <-client.Context().Done():
-				cause := context.Cause(client.Context())
-				var appErr *quic.ApplicationError
-				var transportErr *quic.TransportError
-				if !(errors.As(cause, &appErr) && appErr.Remote) &&
-					!(errors.As(cause, &transportErr) && transportErr.Remote) {
-					t.Fatalf("client ended with %v, want a close sent by the server", cause)
+				if cause := context.Cause(client.Context()); !isGracefulClose(cause) {
+					t.Fatalf("client ended with %v, want the server's graceful close", cause)
 				}
 			case <-time.After(2 * time.Second):
 				t.Fatal("client was not told: it would sit out its idle timeout")
 			}
 		})
 	}
+}
+
+// isGracefulClose reports whether the client was told by quicgrace in
+// particular: application error 0, or -- for a connection closed before its
+// handshake completed -- the transport close QUIC substitutes for it, which
+// carries the APPLICATION_ERROR code (RFC 9000, 10.2.3). Any other remote error
+// would be the server ending the session some other way, which is not what
+// this test is about. The same predicate as core/quicgrace's tests.
+func isGracefulClose(err error) bool {
+	var appErr *quic.ApplicationError
+	if errors.As(err, &appErr) {
+		return appErr.Remote && appErr.ErrorCode == 0
+	}
+	var transportErr *quic.TransportError
+	return errors.As(err, &transportErr) && transportErr.Remote &&
+		transportErr.ErrorCode == quic.ApplicationErrorErrorCode
 }
 
 func freeUDPPort(t *testing.T) int {
