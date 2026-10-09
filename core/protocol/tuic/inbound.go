@@ -92,7 +92,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	service, err := tuic.NewService[string](tuic.ServiceOptions{
 		Context:   ctx,
 		Logger:    logger,
-		TLSConfig: tlsConfig,
+		TLSConfig: gracefulTLS(tlsConfig),
 		QUICOptions: qtls.QUICOptions{
 			IdleTimeout:             options.IdleTimeout.Build(),
 			KeepAlivePeriod:         options.KeepAlivePeriod.Build(),
@@ -193,8 +193,8 @@ func (h *Inbound) Start(stage adapter.StartStage) error {
 
 func (h *Inbound) Close() error {
 	return common.Close(
+		common.PtrOrNil(h.server),
 		h.listener,
 		h.tlsConfig,
-		common.PtrOrNil(h.server),
 	)
 }
