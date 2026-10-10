@@ -91,6 +91,8 @@ func (a *APIv2Handler) postHandler(c *gin.Context) {
 		a.ApiService.ImportDb(c)
 	case "getCertPing":
 		a.ApiService.GetCertPing(c)
+	case "closeSessions":
+		a.ApiService.CloseSessions(c, false)
 	case "clusterBans":
 		a.ApiService.ApplyClusterBans(c)
 	default:
@@ -122,6 +124,8 @@ func (a *APIv2Handler) getHandler(c *gin.Context) {
 		a.ApiService.GetOnlines(c)
 	case "onlineIps":
 		a.ApiService.GetOnlineIps(c)
+	case "sessions":
+		a.ApiService.GetSessions(c, false)
 	case "clusterIps":
 		a.ApiService.GetClusterIps(c)
 	case "logs":

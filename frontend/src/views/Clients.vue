@@ -27,6 +27,7 @@
     @close="stats.visible = false"
   />
   <ClientIpsModal :visible="ips.visible" :name="ips.name" @close="ips.visible = false" />
+  <SessionsModal :visible="sessions.visible" :name="sessions.name" @close="sessions.visible = false" />
 
   <!-- delete confirmation (single row or bulk) -->
   <DeleteConfirm :open="del.visible" :loading="deleting" @close="del.visible = false" @confirm="confirmDelete" />
@@ -115,7 +116,14 @@
               </td>
               <td>
                 <span style="display: inline-flex; gap: 5px; align-items: center;">
-                  <Chip v-if="isOnline(c.name)" color="emerald" dot>{{ $t('ui.online') }}</Chip>
+                  <Chip
+                    v-if="isOnline(c.name)"
+                    color="emerald"
+                    dot
+                    style="cursor: pointer;"
+                    :title="$t('ui.sessOpen')"
+                    @click.stop="showSessions(c.name)"
+                  >{{ $t('ui.online') }}</Chip>
                   <span v-else style="color: var(--text-3); font-size: 13px;">—</span>
                   <Chip
                     v-if="c.limitIp > 0"
@@ -205,7 +213,14 @@
         <div class="kv-row">
           <span class="k">{{ $t('ui.colStatus') }}</span>
           <span class="v">
-            <Chip v-if="isOnline(c.name)" color="emerald" dot>{{ $t('ui.online') }}</Chip>
+            <Chip
+              v-if="isOnline(c.name)"
+              color="emerald"
+              dot
+              style="cursor: pointer;"
+              :title="$t('ui.sessOpen')"
+              @click.stop="showSessions(c.name)"
+            >{{ $t('ui.online') }}</Chip>
             <template v-else>—</template>
             <!-- Spaced with a logical margin rather than a flex gap: .v relies on
                  text-overflow to clip a long status, which a flex container drops. -->
@@ -278,6 +293,7 @@ import ClientEditBulk from '@/layouts/drawers/client/ClientEditBulk.vue'
 import QrModal from '@/layouts/drawers/QrModal.vue'
 import StatsModal from '@/layouts/drawers/StatsModal.vue'
 import ClientIpsModal from '@/layouts/drawers/ClientIpsModal.vue'
+import SessionsModal from '@/layouts/drawers/SessionsModal.vue'
 
 const { t } = useI18n({ useScope: 'global' })
 const dataStore = Data()
@@ -483,6 +499,11 @@ const ips = ref({ visible: false, name: '' })
 const showIps = (name: string) => {
   ips.value.name = name
   ips.value.visible = true
+}
+const sessions = ref({ visible: false, name: '' })
+const showSessions = (name: string) => {
+  sessions.value.name = name
+  sessions.value.visible = true
 }
 
 // ---------------- delete (single + bulk, with confirm) ----------------

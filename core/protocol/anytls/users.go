@@ -65,3 +65,9 @@ func (h *Inbound) newSessionConnection(ctx context.Context, conn net.Conn, sourc
 	defer h.sessions().Untrack(key)
 	return h.service.NewConnection(ctx, conn, source, onClose)
 }
+
+// KickUser cuts the sessions of a user who stays on the inbound -- see
+// Core.DisconnectUser.
+func (h *Inbound) KickUser(user string) usersession.Result {
+	return h.sessions().KickUserSessions(user)
+}

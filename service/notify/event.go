@@ -25,6 +25,11 @@ const (
 	CPUHigh        Kind = "cpu.high"
 	MemoryHigh     Kind = "memory.high"
 
+	// Presence events. Debounced at the source (service/presence.go) and
+	// batched per flush, so they pass the suppressor untouched.
+	ClientOnline  Kind = "client.online"
+	ClientOffline Kind = "client.offline"
+
 	// Login events, each handled differently -- see Suppressor.Decide.
 	LoginSuccess Kind = "login.success"
 	LoginFailed  Kind = "login.failed"
@@ -35,7 +40,8 @@ const (
 var AllKinds = []Kind{
 	NodeDown, NodeUp, CoreCrash, CoreUp,
 	OutboundDown, OutboundUp,
-	ClientDepleted, ClientExpiring, CPUHigh, MemoryHigh,
+	ClientDepleted, ClientExpiring, ClientOnline, ClientOffline,
+	CPUHigh, MemoryHigh,
 	LoginSuccess, LoginFailed, LoginBanned,
 }
 
@@ -79,7 +85,8 @@ type OutboundData struct {
 	Err       string
 }
 
-// ClientData accompanies ClientDepleted / ClientExpiring. Names is plural
+// ClientData accompanies ClientDepleted / ClientExpiring, and ClientOnline /
+// ClientOffline, which only use Names. Names is plural
 // because DepleteJob disables a whole batch in one pass and sends one event for
 // the batch rather than one per client.
 type ClientData struct {

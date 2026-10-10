@@ -264,6 +264,9 @@
         <SRow :label="$t('setting.notifyNodeFlap')" :hint="$t('setting.notifyNodeFlapHint')">
           <input class="input mono" type="number" min="1" v-model.number="notifyNodeFlap" />
         </SRow>
+        <SRow :label="$t('setting.notifyPresenceGrace')" :hint="$t('setting.notifyPresenceGraceHint')">
+          <input class="input mono" type="number" min="1" v-model.number="notifyPresenceGrace" />
+        </SRow>
         <SRow :label="$t('setting.notifyOutboundUrl')" :hint="$t('setting.notifyOutboundUrlHint')">
           <input class="input mono" v-model="settings.notifyOutboundUrl"
                  placeholder="https://www.gstatic.com/generate_204" />
@@ -475,6 +478,7 @@ const settings = ref({
   notifyCpu: "80",
   notifyMemory: "80",
   notifyNodeFlap: "3",
+  notifyPresenceGrace: "5",
   notifyOutboundUrl: "",
   notifyReport: "",
   notifyBackup: "false",
@@ -1036,7 +1040,7 @@ const notifyBackup = computed({
   set: (v: boolean) => { settings.value.notifyBackup = v.toString() },
 })
 
-const notifyNum = (key: 'notifyExpireDays' | 'notifyVolumeGB' | 'notifyCpu' | 'notifyMemory' | 'notifyNodeFlap' | 'notifySmtpPort', fallback: number) => computed({
+const notifyNum = (key: 'notifyExpireDays' | 'notifyVolumeGB' | 'notifyCpu' | 'notifyMemory' | 'notifyNodeFlap' | 'notifyPresenceGrace' | 'notifySmtpPort', fallback: number) => computed({
   get: () => { const s = settings.value[key]; return s && s.length > 0 ? parseInt(s) : fallback },
   set: (v: number) => { settings.value[key] = (v > 0 ? v : 0).toString() },
 })
@@ -1045,6 +1049,7 @@ const notifyVolumeGB = notifyNum('notifyVolumeGB', 5)
 const notifyCpu = notifyNum('notifyCpu', 80)
 const notifyMemory = notifyNum('notifyMemory', 80)
 const notifyNodeFlap = notifyNum('notifyNodeFlap', 3)
+const notifyPresenceGrace = notifyNum('notifyPresenceGrace', 5)
 const notifySmtpPort = notifyNum('notifySmtpPort', 587)
 
 // 事件种类和顺序都由后端给（notify.AllKinds → GetAllSetting 的 notifyKindsAll）。

@@ -23,6 +23,9 @@ type NotifyThresholds struct {
 	// NodesJob's 5s cadence a single dropped packet would otherwise produce a
 	// down/up pair.
 	NodeFlap int
+	// PresenceGrace is how many minutes a client must be absent from the
+	// online list before it is declared offline. See service/presence.go.
+	PresenceGrace int
 }
 
 func isNotifySecret(key string) bool {
@@ -121,13 +124,20 @@ func (s *SettingService) GetNotifyConfig() notify.Config {
 
 // GetNotifyThresholds reads the observation thresholds.
 func (s *SettingService) GetNotifyThresholds() NotifyThresholds {
-	m := s.notifySettings()
+	return notifyThresholdsFrom(s.notifySettings())
+}
+
+// notifyThresholdsFrom is GetNotifyThresholds over a map already read, for a
+// caller that needs other notify settings from the same read.
+func notifyThresholdsFrom(m map[string]string) NotifyThresholds {
 	return NotifyThresholds{
 		ExpireDays:  atoiOr(m["notifyExpireDays"], 0),
 		VolumeBytes: int64(atoiOr(m["notifyVolumeGB"], 0)) << 30,
 		Cpu:         atoiOr(m["notifyCpu"], 0),
 		Memory:      atoiOr(m["notifyMemory"], 0),
 		NodeFlap:    atoiOr(m["notifyNodeFlap"], 1),
+
+		PresenceGrace: atoiOr(m["notifyPresenceGrace"], 5),
 	}
 }
 
@@ -149,7 +159,11 @@ func (s *SettingService) NotifyEnabled() bool {
 // skip it. Config.Wants exists for the same reason -- see CheckOutboundJob,
 // which skips a whole round of proxy handshakes on it.
 func (s *SettingService) NotifyWants(kinds ...notify.Kind) bool {
-	m := s.notifySettings()
+	return notifyWantsFrom(s.notifySettings(), kinds...)
+}
+
+// notifyWantsFrom is NotifyWants over a map already read.
+func notifyWantsFrom(m map[string]string, kinds ...notify.Kind) bool {
 	if m["notifyEnable"] != "true" {
 		return false
 	}
