@@ -35,4 +35,5 @@ windows/sui-*.exe
 # Claude Code local docs and config — keep out of the public repo.
 .claude/
 CLAUDE.md
+AGENTS.md
 .mcp.json
