@@ -15,7 +15,7 @@ require (
 	github.com/op/go-logging v0.0.0-20160315200505-970db520ece7
 	github.com/refraction-networking/utls v1.8.2
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/sagernet/quic-go v0.61.0-sing-box-mod.9
+	github.com/sagernet/quic-go v0.61.0-sing-box-mod.10
 	github.com/sagernet/sing v0.9.7-0.20260929150544-0ad23b637bd4
 	github.com/sagernet/sing-box v1.14.3
 	github.com/sagernet/sing-mux v0.3.10-0.20260929204512-caf09fe32475
