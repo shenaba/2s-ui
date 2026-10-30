@@ -23,6 +23,14 @@
 // is removed from the inbound -- swapping the user table alone only decides who
 // may start a new one. That line is the whole of it here; everything it reaches
 // lives in users.go, which the copy check skips. See core/usersession.
+//
+// Third local change, PROXY protocol for an inbound behind a front on this
+// host (#260), in four lines: a proxyHdr field; NewInbound taking the request
+// out of the listen options before it builds the listener (sing-box refuses to
+// start one that still carries it); that listener handing connections to
+// connectionHandler() rather than to the inbound itself; and the transport
+// serving proxyListener(tcpListener). All three helpers are in users.go. See
+// core/proxyheader.
 package vless
 
 import (
@@ -63,6 +71,7 @@ type Inbound struct {
 	router     adapter.ConnectionRouterEx
 	logger     logger.ContextLogger
 	listener   *listener.Listener
+	proxyHdr   bool
 	service    *vless.Service[string]
 	tlsConfig  tls.ServerConfig
 	transport  adapter.V2RayServerTransport
@@ -115,12 +124,13 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 			return nil, E.Cause(err, "create server transport: ", options.Transport.Type)
 		}
 	}
+	inbound.proxyHdr = takeProxyHdr(&options.ListenOptions)
 	inbound.listener = listener.New(listener.Options{
 		Context:           ctx,
 		Logger:            logger,
 		Network:           []string{N.NetworkTCP},
 		Listen:            options.ListenOptions,
-		ConnectionHandler: inbound,
+		ConnectionHandler: inbound.connectionHandler(),
 	})
 	return inbound, nil
 }
@@ -152,7 +162,7 @@ func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 			return err
 		}
 		go func() {
-			sErr := h.transport.Serve(tcpListener)
+			sErr := h.transport.Serve(h.proxyListener(tcpListener))
 			if sErr != nil && !E.IsClosed(sErr) {
 				h.logger.Error("transport serve error: ", sErr)
 			}

@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/shenaba/2s-ui/core/proxyheader"
+
 	"github.com/gofrs/uuid/v5"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-tun"
@@ -557,12 +559,38 @@ type wrappedConn struct {
 	tracker     *ConnTracker
 	info        *ConnectionInfo
 	untrackOnce sync.Once
+	// releaseDial ends what proxyheader.GuardDial remembers about this
+	// connection's outbound; dialUntracked once it has been untracked.
+	releaseDial atomic.Pointer[func()]
 }
+
+var dialUntracked = func() {}
 
 func (w *wrappedConn) doUntrack() {
 	w.untrackOnce.Do(func() {
 		w.tracker.untrackConnection(w.info.ID)
+		if release := w.releaseDial.Swap(&dialUntracked); release != nil {
+			(*release)()
+		}
 	})
+}
+
+// ConnHandshakeSuccess is how the connection manager hands over the outbound
+// it just dialed for this connection, before it relays a byte: the one place
+// the core sees both ends of a client's connection. proxyheader is told about
+// it, so a client cannot loop back into a PROXY-enabled inbound and speak as
+// its front (#260). Then it is passed on to whatever the wrapped connection
+// does with it, as it was before this wrapper took it.
+func (w *wrappedConn) ConnHandshakeSuccess(remote net.Conn) error {
+	release, err := proxyheader.GuardDial(remote)
+	if err != nil {
+		return err
+	}
+	if !w.releaseDial.CompareAndSwap(nil, &release) {
+		// Untracked already: nothing will release it later.
+		release()
+	}
+	return network.ReportConnHandshakeSuccess(w.Conn, remote)
 }
 
 func (w *wrappedConn) Read(b []byte) (int, error) {

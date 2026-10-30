@@ -96,6 +96,10 @@ func (a *APP) Start() error {
 		return err
 	}
 
+	// Before the core starts: its PROXY-enabled inbounds read it from their
+	// first connection on.
+	service.ApplyProxyProtocol()
+
 	// The hub must exist before the cron jobs first fire into it and before
 	// the web server accepts the first upgrade.
 	service.StartHub()
