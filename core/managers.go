@@ -237,6 +237,15 @@ func (t *componentTable[T]) all() []T {
 	return t.list
 }
 
+// settled is all, once no create, rename or remove is under way: one being
+// created can already be started -- accepting, for an inbound -- before it is
+// listed.
+func (t *componentTable[T]) settled() []T {
+	t.mutate.Lock()
+	defer t.mutate.Unlock()
+	return t.all()
+}
+
 func (t *componentTable[T]) get(tag string) (T, bool) {
 	t.access.RLock()
 	defer t.access.RUnlock()

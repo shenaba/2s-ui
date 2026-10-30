@@ -86,6 +86,7 @@ var defaultValueMap = map[string]string{
 	"webCertMode":        "",
 	"webNginx":           "",
 	"webTrustedProxies":  "",
+	"proxyProtoTrusted":  "",
 	"webAcmeMethod":      "auto",
 	"webAcmeEmail":       "",
 	"webPath":            "/app/",
@@ -401,6 +402,18 @@ func (s *SettingService) GetWebTrustedProxies() ([]netip.Prefix, error) {
 	return parseTrustedProxies(raw)
 }
 
+// GetProxyProtoTrusted returns the fronts beyond this host that a
+// PROXY-enabled inbound reads headers from (#260) -- a Docker bridge's gateway,
+// an nginx on another machine. Kept apart from webTrustedProxies: that one
+// lets a peer speak for a panel login, this one for every proxy client.
+func (s *SettingService) GetProxyProtoTrusted() ([]netip.Prefix, error) {
+	raw, err := s.getString("proxyProtoTrusted")
+	if err != nil {
+		return nil, err
+	}
+	return parseTrustedProxies(raw)
+}
+
 func parseTrustedProxies(raw string) ([]netip.Prefix, error) {
 	parts := strings.FieldsFunc(raw, func(r rune) bool {
 		return r == ',' || unicode.IsSpace(r)
@@ -415,6 +428,15 @@ func parseTrustedProxies(raw string) ([]netip.Prefix, error) {
 			}
 			addr = addr.Unmap()
 			prefix = netip.PrefixFrom(addr, addr.BitLen())
+		}
+		// Addresses are unmapped before they are matched, and a 4in6 prefix
+		// contains no unmapped one: ::ffff:172.18.0.1/128, copied off a
+		// dual-stack socket, would be stored and never match.
+		if prefix.Addr().Is4In6() {
+			if prefix.Bits() < 96 {
+				return nil, common.NewErrorf("invalid trusted proxy %q: a v4-mapped prefix needs at least 96 bits", part)
+			}
+			prefix = netip.PrefixFrom(prefix.Addr().Unmap(), prefix.Bits()-96)
 		}
 		prefixes = append(prefixes, prefix.Masked())
 	}
@@ -828,9 +850,15 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 		if isNotifySecretFlag(key) || key == notifyKindsKey {
 			continue
 		}
-		if key == "webTrustedProxies" {
-			if _, err = parseTrustedProxies(obj); err != nil {
+		if key == "webTrustedProxies" || key == "proxyProtoTrusted" {
+			var prefixes []netip.Prefix
+			if prefixes, err = parseTrustedProxies(obj); err != nil {
 				return err
+			}
+			if key == "proxyProtoTrusted" {
+				if err = checkProxyProtoFronts(prefixes); err != nil {
+					return err
+				}
 			}
 		}
 		if key == "subCustomHeaders" {

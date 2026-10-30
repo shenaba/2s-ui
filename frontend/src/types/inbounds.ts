@@ -30,6 +30,11 @@ export const InTypes = {
 
 type InType = typeof InTypes[keyof typeof InTypes]
 
+// The inbounds that can read a PROXY protocol header (#260): the TCP protocols
+// the panel carries its own copy of. Keep in step with proxyProtocolTypes in
+// service/inboundProxyProtocol.go, which refuses the rest on save.
+export const ProxyProtocolTypes: string[] = [InTypes.VLESS, InTypes.VMess, InTypes.Trojan, InTypes.AnyTls]
+
 export interface Addr {
   server: string
   server_port: number
@@ -67,6 +72,7 @@ export interface Listen {
   udp_fragment?: boolean
   udp_timeout?: string
   detour?: string
+  proxy_protocol?: boolean
   disable_tcp_keep_alive?: boolean
   tcp_keep_alive?: string
   tcp_keep_alive_interval?: string

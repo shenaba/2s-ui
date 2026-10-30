@@ -157,6 +157,10 @@ func (s *InboundService) Save(tx *gorm.DB, act string, data json.RawMessage, ini
 		// (an out_json that is not an object), which after the core had been
 		// changed left it on a config the save then rolled back.
 		if inbound.NodeId == nil {
+			err = checkProxyProtocol(&inbound)
+			if err != nil {
+				return err
+			}
 			err = util.FillOutJson(&inbound, hostname)
 			if err != nil {
 				return err

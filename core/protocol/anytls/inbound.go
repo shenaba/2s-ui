@@ -14,6 +14,14 @@
 // newSessionConnection in users.go, so the session can be registered there and
 // closed later. Without it, removing a user only stops new sessions while the
 // one the client already holds keeps being served. See core/usersession.
+//
+// Second local change, PROXY protocol for an inbound behind a front on this
+// host (#260), in three lines: a proxyHdr field; NewInbound taking the request
+// out of the listen options before it builds the listener (sing-box refuses to
+// start one that still carries it); and that listener handing connections to
+// connectionHandler() rather than to the inbound itself. anytls has no
+// transport, so there is no second listener to hook as in the other copies.
+// Both helpers are in users.go. See core/proxyheader.
 package anytls
 
 import (
@@ -50,6 +58,7 @@ type Inbound struct {
 	router    adapter.ConnectionRouterEx
 	logger    logger.ContextLogger
 	listener  *listener.Listener
+	proxyHdr  bool
 	service   *anytls.Service
 }
 
@@ -86,12 +95,13 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		return nil, err
 	}
 	inbound.service = service
+	inbound.proxyHdr = takeProxyHdr(&options.ListenOptions)
 	inbound.listener = listener.New(listener.Options{
 		Context:           ctx,
 		Logger:            logger,
 		Network:           []string{N.NetworkTCP},
 		Listen:            options.ListenOptions,
-		ConnectionHandler: inbound,
+		ConnectionHandler: inbound.connectionHandler(),
 	})
 	return inbound, nil
 }

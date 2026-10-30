@@ -47,7 +47,8 @@
         <!-- tun brings its own interface options; cloudflared dials out to the
              Cloudflare edge and sing-box rejects listen fields on it. -->
         <template v-if="!NoListen.includes(inbound.type)">
-          <Listen :data="inbound" :in-tags="inTags" />
+          <Listen :data="inbound" :in-tags="inTags" :proxy-protocol="proxyProtocolOffered" />
+          <MHint v-if="proxyWithoutAddrs" style="margin-bottom: 14px;">{{ $t('in.proxyProtocolNoAddrs', { port: inbound.listen_port }) }}</MHint>
           <hr class="form-divider" />
         </template>
         <Direct v-if="inbound.type == inTypes.Direct" :data="inbound" />
@@ -78,6 +79,7 @@
           <SectionLabel style="flex: 1;">{{ $t('in.multiDomain') }}</SectionLabel>
           <Btn sm icon :title="$t('actions.add')" @click="add_addr"><Ico name="plus" :size="14" /></Btn>
         </div>
+        <MHint v-if="proxyWithoutAddrs" style="margin-bottom: 12px;">{{ $t('in.proxyProtocolNoAddrs', { port: inbound.listen_port }) }}</MHint>
         <div
           v-for="(addr, index) in addrsList"
           :key="index"
@@ -106,7 +108,7 @@ import Select from '@/components/ui/Select.vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Data from '@/store/modules/data'
-import { InTypes, createInbound, Addr, followListenPort } from '@/types/inbounds'
+import { InTypes, ProxyProtocolTypes, createInbound, Addr, followListenPort } from '@/types/inbounds'
 import { checkHopInterval } from '@/types/hysteria2'
 import { push } from 'notivue'
 import RandomUtil from '@/plugins/randomUtil'
@@ -119,6 +121,7 @@ import Chip from '@/components/ui/Chip.vue'
 import Btn from '@/components/ui/Btn.vue'
 import Ico from '@/components/ui/Ico.vue'
 import IconBtn from '@/components/ui/IconBtn.vue'
+import MHint from '@/components/ui/MHint.vue'
 import Listen from '@/components/forms/out/Listen.vue'
 import Direct from '@/components/forms/in/Direct.vue'
 import Shadowsocks from '@/components/forms/in/Shadowsocks.vue'
@@ -245,6 +248,16 @@ const subTitle = computed(() => {
 const clients = computed((): any[] => Data().clients ?? [])
 
 const addrsList = computed((): any[] => inbound.value.addrs ?? [])
+
+// The QUIC transport serves only UDP, where there is no header to read; the
+// save refuses it there (checkProxyProtocol).
+const proxyProtocolOffered = computed((): boolean =>
+  ProxyProtocolTypes.includes(inbound.value.type) && inbound.value.transport?.type != 'quic')
+
+// Behind a front, the inbound's own port is not the one clients dial, and
+// links are generated from it unless a Multi Domain row says otherwise (#260).
+const proxyWithoutAddrs = computed((): boolean =>
+  inbound.value.proxy_protocol == true && HasInData.includes(inbound.value.type) && addrsList.value.length == 0)
 
 // What this client config can dial through: the ShadowTLS listeners, whose
 // client half carries no proxy of its own and is only ever ridden (#255).
