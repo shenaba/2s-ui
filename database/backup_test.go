@@ -204,6 +204,7 @@ func seedEveryTable(t *testing.T) {
 		&model.Endpoint{Type: "wireguard", Tag: "ep-1", Options: obj, Ext: obj},
 		&model.Tokens{Desc: "token-1", Token: "t0ken", UserId: 1},
 		&model.Stats{DateTime: now, Resource: "user", Tag: "client-1", Direction: true, Traffic: 1024},
+		&model.TargetStats{DateTime: now, User: "client-1", Target: "example.com", Up: 512, Down: 1024},
 		&model.Client{Name: "client-1", Enable: true, Config: obj, Inbounds: arr, Links: arr, CreatedAt: now},
 		&model.Changes{DateTime: now, Actor: "test", Key: "clients", Action: "new", Obj: json.RawMessage(`"client-1"`)},
 		&model.Node{Name: "node-1", BaseUrl: "https://node.example", WebPath: "/app/", Token: "n0de", Baselines: obj},

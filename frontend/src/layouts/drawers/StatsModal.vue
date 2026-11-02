@@ -1,39 +1,51 @@
 <template>
-  <Modal :open="visible" :title="$t('stats.graphTitle')" :width="800" @close="$emit('close')">
+  <Modal :open="visible" :title="$t('stats.graphTitle')" :width="850" @close="$emit('close')">
     <div style="padding: 18px 20px;">
-      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;">
-        <Chip :color="'brand'"><span class="mono">{{ $t('objects.' + resource) }} · {{ tag }}</span></Chip>
-        <div style="flex: 1;" />
-        <Segmented v-model="period" :options="periods" @update:model-value="onPeriodChange" />
-      </div>
+      <Tabs v-if="resource === 'user'" v-model="activeTab" :tabs="modalTabs" :mb="14" />
 
-      <div v-if="loading" style="padding: 24px 0;">
-        <EmptyState icon="chart" :title="$t('loading')" />
-      </div>
-      <div v-else-if="noData" style="padding: 24px 0;">
-        <EmptyState icon="chart" :title="$t('noData')" />
-      </div>
+      <template v-if="activeTab === 'traffic' || resource !== 'user'">
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;">
+          <Chip :color="'brand'"><span class="mono">{{ $t('objects.' + resource) }} · {{ tag }}</span></Chip>
+          <div style="flex: 1;" />
+          <Segmented v-model="period" :options="periods" @update:model-value="onPeriodChange" />
+        </div>
+
+        <div v-if="loading" style="padding: 24px 0;">
+          <EmptyState icon="chart" :title="$t('loading')" />
+        </div>
+        <div v-else-if="noData" style="padding: 24px 0;">
+          <EmptyState icon="chart" :title="$t('noData')" />
+        </div>
+        <template v-else>
+          <div style="display: flex; gap: 22px; margin-bottom: 12px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="width: 16px; height: 3px; border-radius: 2px; background: var(--brand);" />
+              <div>
+                <div style="font-size: 11.5px; color: var(--text-3);">{{ $t('stats.download') }}</div>
+                <div class="mono" style="font-size: 14px; font-weight: 700;">{{ HumanReadable.sizeFormat(totalDown) }}</div>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="width: 16px; height: 3px; border-radius: 2px; border-top: 2px dashed var(--emerald);" />
+              <div>
+                <div style="font-size: 11.5px; color: var(--text-3);">{{ $t('stats.upload') }}</div>
+                <div class="mono" style="font-size: 14px; font-weight: 700;">{{ HumanReadable.sizeFormat(totalUp) }}</div>
+              </div>
+            </div>
+          </div>
+          <AreaChart :data="down" :data2="up" :height="220" :labels="tooltipLabels" :value-formatter="HumanReadable.sizeFormat" />
+          <div class="mono" style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 10.5px; color: var(--text-3);">
+            <span v-for="l in axisLabels" :key="l">{{ l }}</span>
+          </div>
+        </template>
+      </template>
+
+      <!-- Target Sites Tab (Only for user) -->
       <template v-else>
-        <div style="display: flex; gap: 22px; margin-bottom: 12px; flex-wrap: wrap;">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span style="width: 16px; height: 3px; border-radius: 2px; background: var(--brand);" />
-            <div>
-              <div style="font-size: 11.5px; color: var(--text-3);">{{ $t('stats.download') }}</div>
-              <div class="mono" style="font-size: 14px; font-weight: 700;">{{ HumanReadable.sizeFormat(totalDown) }}</div>
-            </div>
-          </div>
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span style="width: 16px; height: 3px; border-radius: 2px; border-top: 2px dashed var(--emerald);" />
-            <div>
-              <div style="font-size: 11.5px; color: var(--text-3);">{{ $t('stats.upload') }}</div>
-              <div class="mono" style="font-size: 14px; font-weight: 700;">{{ HumanReadable.sizeFormat(totalUp) }}</div>
-            </div>
-          </div>
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 14px;">
+          <Chip :color="'brand'"><span class="mono">{{ $t('objects.user') }} · {{ tag }}</span></Chip>
         </div>
-        <AreaChart :data="down" :data2="up" :height="220" :labels="tooltipLabels" :value-formatter="HumanReadable.sizeFormat" />
-        <div class="mono" style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 10.5px; color: var(--text-3);">
-          <span v-for="l in axisLabels" :key="l">{{ l }}</span>
-        </div>
+        <TargetStatsTable :user="tag" :default-period="String(period)" />
       </template>
     </div>
   </Modal>
@@ -47,8 +59,10 @@ import { HumanReadable } from '@/plugins/utils'
 import Modal from '@/components/ui/Modal.vue'
 import Chip from '@/components/ui/Chip.vue'
 import Segmented from '@/components/ui/Segmented.vue'
+import Tabs from '@/components/ui/Tabs.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import AreaChart from '@/components/charts/AreaChart.vue'
+import TargetStatsTable from '@/components/stats/TargetStatsTable.vue'
 
 const props = defineProps<{
   visible: boolean
@@ -58,6 +72,12 @@ const props = defineProps<{
 defineEmits<{ close: [] }>()
 
 const { t, locale } = useI18n({ useScope: 'global' })
+
+const activeTab = ref('traffic')
+const modalTabs = computed<[string, string][]>(() => [
+  ['traffic', t('stats.graphTitle')],
+  ['targets', t('ui.targetSites')],
+])
 
 const period = ref<string | number>('hour')
 const periods = computed<[string, string][]>(() => [
@@ -133,6 +153,7 @@ const applyRows = (rows: any) => {
 let live: LiveSub | null = null
 watch(() => props.visible, (v) => {
   if (v) {
+    activeTab.value = 'traffic'
     period.value = 'hour'
     noData.value = false
     up.value = []

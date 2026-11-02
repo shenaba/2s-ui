@@ -147,6 +147,7 @@ func InitDB(dbPath string) error {
 		&model.User{},
 		&model.Tokens{},
 		&model.Stats{},
+		&model.TargetStats{},
 		&model.Client{},
 		&model.Changes{},
 		&model.Node{},

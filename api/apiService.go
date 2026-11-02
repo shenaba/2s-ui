@@ -237,6 +237,36 @@ func (a *ApiService) GetStats(c *gin.Context) {
 	jsonObj(c, data, err)
 }
 
+func (a *ApiService) GetTargetStats(c *gin.Context) {
+	user := c.Query("user")
+	period := c.Query("period")
+	if period == "" {
+		period = "day"
+	}
+	search := c.Query("search")
+	sortField := c.Query("sort")
+	sortOrder := c.Query("order")
+	page, _ := strconv.Atoi(c.Query("page"))
+	limit, _ := strconv.Atoi(c.Query("limit"))
+
+	query := service.TargetStatsQuery{
+		User:      user,
+		Period:    period,
+		Search:    search,
+		SortField: sortField,
+		SortOrder: sortOrder,
+		Page:      page,
+		Limit:     limit,
+	}
+
+	result, err := a.StatsService.GetTargetStats(query)
+	if err != nil {
+		jsonMsg(c, "", err)
+		return
+	}
+	jsonObj(c, result, nil)
+}
+
 func (a *ApiService) GetStatus(c *gin.Context) {
 	request := c.Query("r")
 	result := a.ServerService.GetStatus(request)

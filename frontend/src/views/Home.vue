@@ -162,6 +162,11 @@
       </div>
     </DPanel>
 
+    <!-- target sites traffic (global) -->
+    <DPanel v-if="tiles.targetStats" :title="$t('ui.targetStats')" :sub="$t('ui.targetSitesSub')">
+      <TargetStatsTable />
+    </DPanel>
+
     <EmptyState
       v-if="allHidden"
       icon="settings"
@@ -193,6 +198,7 @@ import MetricItem from './dashboard/MetricItem.vue'
 import LogsModal from '@/layouts/drawers/LogsModal.vue'
 import BackupModal from '@/layouts/drawers/BackupModal.vue'
 import UsageStatsModal from '@/layouts/drawers/UsageStatsModal.vue'
+import TargetStatsTable from '@/components/stats/TargetStatsTable.vue'
 import { loadTiles, saveTiles, defaultTiles } from './dashboard/tiles'
 
 const { t, te, locale } = useI18n({ useScope: 'global' })

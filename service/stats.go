@@ -2,6 +2,7 @@ package service
 
 import (
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -240,8 +241,9 @@ func (s *StatsService) GetInboundTraffic() map[string]int64 {
 // lists are not carried either -- they answer "who is sending right now", so
 // replaying a previous window would keep a client listed after it went away.
 var (
-	pendingMu    sync.Mutex
-	pendingStats []model.Stats
+	pendingMu          sync.Mutex
+	pendingStats       []model.Stats
+	pendingTargetStats []model.TargetStats
 )
 
 // maxPendingStats bounds that buffer. A panel whose database has been refusing
@@ -261,6 +263,14 @@ func takePending() []model.Stats {
 	return held
 }
 
+func takePendingTargets() []model.TargetStats {
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	held := pendingTargetStats
+	pendingTargetStats = nil
+	return held
+}
+
 // holdPending keeps a batch that failed to commit. It goes in front of whatever
 // was carried over while it ran (carryOverStats), which a plain replace would
 // throw away; the batch is older, being what the flush took first.
@@ -270,11 +280,23 @@ func holdPending(batch []model.Stats) {
 	keepPendingLocked(append(batch, pendingStats...))
 }
 
+func holdPendingTargets(batch []model.TargetStats) {
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	keepPendingTargetsLocked(append(batch, pendingTargetStats...))
+}
+
 // carryPending adds rows newer than everything already held.
 func carryPending(rows []model.Stats) {
 	pendingMu.Lock()
 	defer pendingMu.Unlock()
 	keepPendingLocked(append(pendingStats, rows...))
+}
+
+func carryPendingTargets(rows []model.TargetStats) {
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	keepPendingTargetsLocked(append(pendingTargetStats, rows...))
 }
 
 // keepPendingLocked stores batch, oldest first, dropping the oldest rows if it
@@ -287,6 +309,14 @@ func keepPendingLocked(batch []model.Stats) {
 		batch = batch[dropped:]
 	}
 	pendingStats = batch
+}
+
+func keepPendingTargetsLocked(batch []model.TargetStats) {
+	if len(batch) > maxPendingStats {
+		dropped := len(batch) - maxPendingStats
+		batch = batch[dropped:]
+	}
+	pendingTargetStats = batch
 }
 
 // carryOverStats takes what the running core has counted since the last flush
@@ -308,17 +338,20 @@ func carryOverStats() {
 		return
 	}
 	drained := *box.StatsTracker().GetStats()
-	if len(drained) == 0 {
-		return
-	}
-	inboundDelta := map[string]int64{}
-	for _, stat := range drained {
-		if stat.Resource == "inbound" {
-			inboundDelta[stat.Tag] += stat.Traffic
+	if len(drained) > 0 {
+		inboundDelta := map[string]int64{}
+		for _, stat := range drained {
+			if stat.Resource == "inbound" {
+				inboundDelta[stat.Tag] += stat.Traffic
+			}
 		}
+		addInboundTraffic(inboundDelta)
+		carryPending(drained)
 	}
-	addInboundTraffic(inboundDelta)
-	carryPending(drained)
+	drainedTargets := *box.StatsTracker().GetTargetStats()
+	if len(drainedTargets) > 0 {
+		carryPendingTargets(drainedTargets)
+	}
 }
 
 // statsFlush is the stats job's own run, registered by the cron job, which is
@@ -346,10 +379,12 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 	// with the core already down -- would otherwise hold them until they are
 	// lost with the process.
 	drained := &[]model.Stats{}
+	drainedTargets := &[]model.TargetStats{}
 	if corePtr != nil && corePtr.IsRunning() {
 		if box := corePtr.GetInstance(); box != nil {
 			if st := box.StatsTracker(); st != nil {
 				drained = st.GetStats()
+				drainedTargets = st.GetTargetStats()
 			}
 		}
 	}
@@ -365,7 +400,11 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 	if pending := takePending(); len(pending) > 0 {
 		batch = mergeStats(append(pending, batch...))
 	}
-	if len(batch) == 0 {
+	targetBatch := *drainedTargets
+	if pending := takePendingTargets(); len(pending) > 0 {
+		targetBatch = mergeTargetStats(append(pending, targetBatch...))
+	}
+	if len(batch) == 0 && len(targetBatch) == 0 {
 		setOnlines(fresh)
 		return nil
 	}
@@ -385,6 +424,9 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 		}
 		if err != nil {
 			holdPending(batch)
+			if len(targetBatch) > 0 {
+				holdPendingTargets(targetBatch)
+			}
 		}
 	}()
 
@@ -467,18 +509,63 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 
 	// Round each sample down to its bucket and upsert, so all 10s cycles within
 	// the same bucket accumulate into one row per (resource, tag, direction).
-	if bucketSeconds < 1 {
-		bucketSeconds = 1
+	if len(batch) > 0 {
+		if bucketSeconds < 1 {
+			bucketSeconds = 1
+		}
+		bucket := now - (now % bucketSeconds)
+		for i := range batch {
+			batch[i].DateTime = bucket
+		}
+		err = tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "resource"}, {Name: "tag"}, {Name: "date_time"}, {Name: "direction"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{"traffic": gorm.Expr("stats.traffic + excluded.traffic")}),
+		}).Create(&batch).Error
+		if err != nil {
+			return err
+		}
 	}
-	bucket := now - (now % bucketSeconds)
-	for i := range batch {
-		batch[i].DateTime = bucket
+
+	if len(targetBatch) > 0 {
+		targetBucket := now - (now % 3600)
+		for i := range targetBatch {
+			targetBatch[i].DateTime = targetBucket
+		}
+		targetBatch = mergeTargetStats(targetBatch)
+		err = tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "user"}, {Name: "target"}, {Name: "date_time"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"up":   gorm.Expr("target_stats.up + excluded.up"),
+				"down": gorm.Expr("target_stats.down + excluded.down"),
+			}),
+		}).Create(&targetBatch).Error
+		if err != nil {
+			return err
+		}
 	}
-	err = tx.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "resource"}, {Name: "tag"}, {Name: "date_time"}, {Name: "direction"}},
-		DoUpdates: clause.Assignments(map[string]interface{}{"traffic": gorm.Expr("stats.traffic + excluded.traffic")}),
-	}).Create(&batch).Error
-	return err
+
+	return nil
+}
+
+func mergeTargetStats(rows []model.TargetStats) []model.TargetStats {
+	type key struct {
+		user   string
+		target string
+	}
+	index := make(map[key]int, len(rows))
+	merged := make([]model.TargetStats, 0, len(rows))
+	for _, row := range rows {
+		k := key{row.User, row.Target}
+		if i, ok := index[k]; ok {
+			merged[i].Up += row.Up
+			merged[i].Down += row.Down
+			continue
+		}
+		index[k] = len(merged)
+		row.Id = 0
+		merged = append(merged, row)
+	}
+	return merged
 }
 
 // mergeStats folds the rows of each (resource, tag, direction) into one, in
@@ -708,7 +795,146 @@ func (s *StatsService) DelOldStats(days int) error {
 			return res.Error
 		}
 		if res.RowsAffected < delOldStatsChunk {
+			break
+		}
+	}
+	for {
+		res := db.Where("id IN (?)",
+			db.Model(model.TargetStats{}).Select("id").Where("date_time < ?", oldTime).Limit(delOldStatsChunk),
+		).Delete(model.TargetStats{})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected < delOldStatsChunk {
 			return nil
 		}
 	}
+}
+
+type TargetStatsQuery struct {
+	User      string `json:"user"`
+	Period    string `json:"period"` // "hour", "day", "month", "60day", "90day"
+	Search    string `json:"search"`
+	SortField string `json:"sort"`  // "up", "down", "total"
+	SortOrder string `json:"order"` // "desc", "asc"
+	Page      int    `json:"page"`
+	Limit     int    `json:"limit"`
+}
+
+type TargetStatItem struct {
+	Target string `json:"target"`
+	Up     int64  `json:"up"`
+	Down   int64  `json:"down"`
+	Total  int64  `json:"total"`
+}
+
+type TargetStatsSummary struct {
+	TotalUp    int64 `json:"totalUp"`
+	TotalDown  int64 `json:"totalDown"`
+	Total      int64 `json:"total"`
+	TotalSites int64 `json:"totalSites"`
+}
+
+type TargetStatsResponse struct {
+	Items   []TargetStatItem   `json:"items"`
+	Summary TargetStatsSummary `json:"summary"`
+	Total   int64              `json:"total"`
+	Page    int                `json:"page"`
+	Limit   int                `json:"limit"`
+}
+
+func (s *StatsService) GetTargetStats(query TargetStatsQuery) (*TargetStatsResponse, error) {
+	now := time.Now().Unix()
+	var startTime int64
+	switch query.Period {
+	case "hour":
+		startTime = now - 3600
+	case "day":
+		startTime = now - 86400
+	case "month":
+		startTime = now - 86400*30
+	case "60day":
+		startTime = now - 86400*60
+	case "90day":
+		startTime = now - 86400*90
+	default:
+		startTime = now - 86400
+	}
+
+	db := database.GetDB()
+	filterQuery := func(tx *gorm.DB) *gorm.DB {
+		tx = tx.Where("date_time >= ?", startTime)
+		if query.User != "" {
+			tx = tx.Where("user = ?", query.User)
+		}
+		if query.Search != "" {
+			tx = tx.Where("target LIKE ?", "%"+strings.ToLower(strings.TrimSpace(query.Search))+"%")
+		}
+		return tx
+	}
+
+	var summary TargetStatsSummary
+	type sumResult struct {
+		TotalUp    int64 `gorm:"column:total_up"`
+		TotalDown  int64 `gorm:"column:total_down"`
+		TotalSites int64 `gorm:"column:total_sites"`
+	}
+	var sr sumResult
+	err := filterQuery(db.Model(&model.TargetStats{})).Select(
+		"COALESCE(SUM(up), 0) AS total_up, COALESCE(SUM(down), 0) AS total_down, COUNT(DISTINCT target) AS total_sites",
+	).Scan(&sr).Error
+	if err != nil {
+		return nil, err
+	}
+	summary.TotalUp = sr.TotalUp
+	summary.TotalDown = sr.TotalDown
+	summary.Total = sr.TotalUp + sr.TotalDown
+	summary.TotalSites = sr.TotalSites
+
+	page := query.Page
+	if page < 1 {
+		page = 1
+	}
+	limit := query.Limit
+	if limit < 1 {
+		limit = 20
+	} else if limit > 200 {
+		limit = 200
+	}
+	offset := (page - 1) * limit
+
+	sortCol := "(SUM(up) + SUM(down))"
+	switch query.SortField {
+	case "up":
+		sortCol = "SUM(up)"
+	case "down":
+		sortCol = "SUM(down)"
+	case "total":
+		sortCol = "(SUM(up) + SUM(down))"
+	default:
+		sortCol = "(SUM(up) + SUM(down))"
+	}
+	sortOrder := "DESC"
+	if strings.ToUpper(query.SortOrder) == "ASC" {
+		sortOrder = "ASC"
+	}
+
+	var items []TargetStatItem
+	err = filterQuery(db.Model(&model.TargetStats{})).Select(
+		"target, SUM(up) AS up, SUM(down) AS down, (SUM(up) + SUM(down)) AS total",
+	).Group("target").Order(sortCol + " " + sortOrder).Offset(offset).Limit(limit).Scan(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	if items == nil {
+		items = []TargetStatItem{}
+	}
+
+	return &TargetStatsResponse{
+		Items:   items,
+		Summary: summary,
+		Total:   summary.TotalSites,
+		Page:    page,
+		Limit:   limit,
+	}, nil
 }

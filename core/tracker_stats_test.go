@@ -3,6 +3,8 @@ package core
 import (
 	"testing"
 	"time"
+
+	M "github.com/sagernet/sing/common/metadata"
 )
 
 // A sample reads the user counters in place; the stats flush empties them on
@@ -82,5 +84,46 @@ func TestSampleUsersLeavesAShortWindowOpen(t *testing.T) {
 	moved, window, ok := c.SampleUsers(start.Add(2*time.Second), time.Second)
 	if !ok || window != 2*time.Second || moved["alice"] != (UserBytes{Up: 300}) {
 		t.Errorf("next sample = %v over %v (ok=%v), want alice {Up:300} over 2s", moved, window, ok)
+	}
+}
+
+func TestExtractTarget(t *testing.T) {
+	if got := ExtractTarget("GitHub.com:443", M.ParseSocksaddr("1.2.3.4:443")); got != "github.com" {
+		t.Errorf("ExtractTarget with domain: got %s, want github.com", got)
+	}
+	if got := ExtractTarget("", M.ParseSocksaddrHostPort("API.Google.COM", 443)); got != "api.google.com" {
+		t.Errorf("ExtractTarget with dest fqdn: got %s, want api.google.com", got)
+	}
+	if got := ExtractTarget("", M.ParseSocksaddr("1.1.1.1:80")); got != "1.1.1.1" {
+		t.Errorf("ExtractTarget with dest addr: got %s, want 1.1.1.1", got)
+	}
+}
+
+func TestTargetStatsDrainsCorrectly(t *testing.T) {
+	c := NewStatsTracker()
+	read, write := c.getReadCounters("inbound-1", "direct", "alice", "example.com")
+	if len(read) < 2 || len(write) < 2 {
+		t.Fatalf("expected at least 2 counters (inbound/user/target), got read:%d write:%d", len(read), len(write))
+	}
+	// Target counters are appended
+	targetRead := read[len(read)-1]
+	targetWrite := write[len(write)-1]
+
+	targetRead.Add(500)
+	targetWrite.Add(1500)
+
+	stats := *c.GetTargetStats()
+	if len(stats) != 1 {
+		t.Fatalf("expected 1 target stat, got %d", len(stats))
+	}
+	item := stats[0]
+	if item.User != "alice" || item.Target != "example.com" || item.Up != 500 || item.Down != 1500 {
+		t.Errorf("unexpected target stat: %+v", item)
+	}
+
+	// Next drain should be empty since counters were swapped
+	stats2 := *c.GetTargetStats()
+	if len(stats2) != 0 {
+		t.Errorf("expected 0 target stats on next drain, got %d", len(stats2))
 	}
 }

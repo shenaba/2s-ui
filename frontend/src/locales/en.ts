@@ -161,6 +161,9 @@ export default {
     reset: "Reset",
     copyAll: "Copy all",
     adopt: "Adopt",
+    prev: "Prev",
+    next: "Next",
+    copied: "Copied",
   },
   login: {
     title: "Login",

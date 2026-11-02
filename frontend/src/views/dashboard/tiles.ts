@@ -9,6 +9,7 @@ export const TILES = [
   { id: 'network', k: 'networkThroughput' },
   { id: 'nodes', k: 'nodesTile' },
   { id: 'activity', k: 'activity' },
+  { id: 'targetStats', k: 'targetStats' },
 ]
 
 export const TILES_KEY = '2sui-tiles'

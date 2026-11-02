@@ -109,7 +109,7 @@ type Client struct {
 }
 
 type Stats struct {
-	Id        uint64 `json:"id" gorm:"primaryKey;autoIncrement"`
+	Id uint64 `json:"id" gorm:"primaryKey;autoIncrement"`
 	// date_time sits third in idx_stats_bucket, so that index cannot serve the
 	// retention purge, which filters on date_time alone and scans the table
 	// instead.
@@ -118,6 +118,15 @@ type Stats struct {
 	Tag       string `json:"tag" gorm:"uniqueIndex:idx_stats_bucket,priority:2"`
 	Direction bool   `json:"direction" gorm:"uniqueIndex:idx_stats_bucket,priority:4"`
 	Traffic   int64  `json:"traffic"`
+}
+
+type TargetStats struct {
+	Id       uint64 `json:"id" gorm:"primaryKey;autoIncrement"`
+	DateTime int64  `json:"dateTime" gorm:"uniqueIndex:idx_target_stats_bucket,priority:3;index:idx_target_stats_date_time"`
+	User     string `json:"user" gorm:"uniqueIndex:idx_target_stats_bucket,priority:1;size:100;default:''"`
+	Target   string `json:"target" gorm:"uniqueIndex:idx_target_stats_bucket,priority:2;size:255"`
+	Up       int64  `json:"up" gorm:"default:0"`
+	Down     int64  `json:"down" gorm:"default:0"`
 }
 
 type Changes struct {

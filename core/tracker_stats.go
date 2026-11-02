@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,8 +13,29 @@ import (
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/atomic"
 	"github.com/sagernet/sing/common/bufio"
+	M "github.com/sagernet/sing/common/metadata"
 	"github.com/sagernet/sing/common/network"
 )
+
+// ExtractTarget extracts and normalizes the target host (domain or destination IP) from connection metadata.
+func ExtractTarget(domain string, dest M.Socksaddr) string {
+	target := strings.TrimSpace(domain)
+	if target == "" {
+		target = strings.TrimSpace(dest.Fqdn)
+	}
+	if target == "" && dest.IsValid() {
+		if dest.Addr.IsValid() {
+			target = dest.Addr.String()
+		}
+	}
+	if target == "" {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(target); err == nil {
+		target = host
+	}
+	return strings.ToLower(strings.TrimSpace(target))
+}
 
 type Counter struct {
 	read  *atomic.Int64
@@ -21,10 +43,12 @@ type Counter struct {
 }
 
 type StatsTracker struct {
-	access    sync.Mutex
-	inbounds  map[string]Counter
-	outbounds map[string]Counter
-	users     map[string]Counter
+	access     sync.Mutex
+	inbounds   map[string]Counter
+	outbounds  map[string]Counter
+	users      map[string]Counter
+	targets    map[string]Counter // key: user + "\x00" + target
+	targetIdle map[string]int
 
 	// Rate sampling over the user counters, without a second set of counters on
 	// the data path: SampleUsers reads them in place, and GetStats, which
@@ -44,11 +68,13 @@ type UserBytes struct {
 
 func NewStatsTracker() *StatsTracker {
 	return &StatsTracker{
-		inbounds:  make(map[string]Counter),
-		outbounds: make(map[string]Counter),
-		users:     make(map[string]Counter),
-		sampled:   make(map[string]UserBytes),
-		drained:   make(map[string]UserBytes),
+		inbounds:   make(map[string]Counter),
+		outbounds:  make(map[string]Counter),
+		users:      make(map[string]Counter),
+		targets:    make(map[string]Counter),
+		targetIdle: make(map[string]int),
+		sampled:    make(map[string]UserBytes),
+		drained:    make(map[string]UserBytes),
 		// Every counter starts at zero here, so this is where the first
 		// sample's window starts.
 		sampledAt: time.Now(),
@@ -61,12 +87,14 @@ func (c *StatsTracker) Reset() {
 	c.inbounds = make(map[string]Counter)
 	c.outbounds = make(map[string]Counter)
 	c.users = make(map[string]Counter)
+	c.targets = make(map[string]Counter)
+	c.targetIdle = make(map[string]int)
 	c.sampled = make(map[string]UserBytes)
 	c.drained = make(map[string]UserBytes)
 	c.sampledAt = time.Now()
 }
 
-func (c *StatsTracker) getReadCounters(inbound string, outbound string, user string) ([]*atomic.Int64, []*atomic.Int64) {
+func (c *StatsTracker) getReadCounters(inbound string, outbound string, user string, target ...string) ([]*atomic.Int64, []*atomic.Int64) {
 	var readCounter []*atomic.Int64
 	var writeCounter []*atomic.Int64
 	c.access.Lock()
@@ -84,6 +112,13 @@ func (c *StatsTracker) getReadCounters(inbound string, outbound string, user str
 		readCounter = append(readCounter, c.loadOrCreateCounter(&c.users, user).read)
 		writeCounter = append(writeCounter, c.users[user].write)
 	}
+	if len(target) > 0 && target[0] != "" {
+		t := target[0]
+		key := user + "\x00" + t
+		counter := c.loadOrCreateCounter(&c.targets, key)
+		readCounter = append(readCounter, counter.read)
+		writeCounter = append(writeCounter, counter.write)
+	}
 	return readCounter, writeCounter
 }
 
@@ -98,12 +133,14 @@ func (c *StatsTracker) loadOrCreateCounter(obj *map[string]Counter, name string)
 }
 
 func (c *StatsTracker) RoutedConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) net.Conn {
-	readCounter, writeCounter := c.getReadCounters(metadata.Inbound, matchOutbound.Tag(), metadata.User)
+	target := ExtractTarget(metadata.Domain, metadata.Destination)
+	readCounter, writeCounter := c.getReadCounters(metadata.Inbound, matchOutbound.Tag(), metadata.User, target)
 	return bufio.NewInt64CounterConn(conn, readCounter, writeCounter)
 }
 
 func (c *StatsTracker) RoutedPacketConnection(ctx context.Context, conn network.PacketConn, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) network.PacketConn {
-	readCounter, writeCounter := c.getReadCounters(metadata.Inbound, matchOutbound.Tag(), metadata.User)
+	target := ExtractTarget(metadata.Domain, metadata.Destination)
+	readCounter, writeCounter := c.getReadCounters(metadata.Inbound, matchOutbound.Tag(), metadata.User, target)
 	return bufio.NewInt64CounterPacketConn(conn, readCounter, nil, writeCounter, nil)
 }
 
@@ -139,6 +176,44 @@ func (c *StatsTracker) GetStats() *[]model.Stats {
 			d.Up += up
 			d.Down += down
 			c.drained[user] = d
+		}
+	}
+	return &s
+}
+
+// GetTargetStats drains traffic counted for each target site.
+func (c *StatsTracker) GetTargetStats() *[]model.TargetStats {
+	c.access.Lock()
+	defer c.access.Unlock()
+
+	s := []model.TargetStats{}
+	dt := time.Now().Unix()
+
+	for key, counter := range c.targets {
+		down := counter.write.Swap(0)
+		up := counter.read.Swap(0)
+		if down > 0 || up > 0 {
+			c.targetIdle[key] = 0
+			var u, t string
+			if idx := strings.IndexByte(key, 0); idx >= 0 {
+				u = key[:idx]
+				t = key[idx+1:]
+			} else {
+				t = key
+			}
+			s = append(s, model.TargetStats{
+				DateTime: dt,
+				User:     u,
+				Target:   t,
+				Up:       up,
+				Down:     down,
+			})
+		} else {
+			c.targetIdle[key]++
+			if c.targetIdle[key] >= 6 {
+				delete(c.targets, key)
+				delete(c.targetIdle, key)
+			}
 		}
 	}
 	return &s

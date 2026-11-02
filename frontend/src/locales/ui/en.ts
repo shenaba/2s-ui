@@ -500,4 +500,12 @@ export default {
   downloadConfig: "Download sing-box config",
   addItem: "Add {x}",
   newItem: "New {x}",
+  targetStats: "Target Sites Traffic",
+  targetSites: "Target Sites",
+  targetSite: "Target Site",
+  targetSitesSub: "Visited domains and upload/download volume",
+  siteSearch: "Search target site...",
+  totalTraffic: "Total Traffic",
+  totalSitesCount: "Total Sites",
+  pageInfo: "Page {current} of {total}, {count} sites",
 }
