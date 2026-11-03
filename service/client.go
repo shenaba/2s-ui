@@ -765,7 +765,8 @@ func (s *ClientService) UpdateClientsOnInboundAdd(tx *gorm.DB, initIds string, i
 			return err
 		}
 		// Add links
-		var clientLinks, newClientLinks []map[string]string
+		var clientLinks []map[string]string
+		newClientLinks := []map[string]string{}
 		json.Unmarshal(client.Links, &clientLinks)
 		newLinks := util.LinkGenerator(client.Config, &inbound, hostname, client.Remark)
 		for _, newLink := range newLinks {
@@ -815,7 +816,11 @@ func (s *ClientService) UpdateClientsOnInboundDelete(tx *gorm.DB, id uint, tag s
 	}
 	for _, client := range clients {
 		// Delete inbounds
-		var clientInbounds, newClientInbounds []uint
+		// Both start non-nil: a nil slice marshals to `null`, and a client whose
+		// only inbound is deleted would be stored with `"inbounds": null`, which
+		// the edit drawer cannot render (issue #264).
+		var clientInbounds []uint
+		newClientInbounds := []uint{}
 		json.Unmarshal(client.Inbounds, &clientInbounds)
 		for _, clientInbound := range clientInbounds {
 			if clientInbound != id {
@@ -829,7 +834,8 @@ func (s *ClientService) UpdateClientsOnInboundDelete(tx *gorm.DB, id uint, tag s
 		// Delete links. A node link for the same inbound carries the tag behind
 		// a "[<node>] " prefix, so an exact match alone would leave it behind
 		// for good: nothing else strips links for an inbound that is gone.
-		var clientLinks, newClientLinks []map[string]string
+		var clientLinks []map[string]string
+		newClientLinks := []map[string]string{}
 		json.Unmarshal(client.Links, &clientLinks)
 		for _, clientLink := range clientLinks {
 			remark := clientLink["remark"]
@@ -867,7 +873,8 @@ func (s *ClientService) UpdateLinksByInboundChange(tx *gorm.DB, inbounds *[]mode
 			return err
 		}
 		for _, client := range clients {
-			var clientLinks, newClientLinks []map[string]string
+			var clientLinks []map[string]string
+			newClientLinks := []map[string]string{}
 			json.Unmarshal(client.Links, &clientLinks)
 			newLinks := util.LinkGenerator(client.Config, &inbound, hostname, client.Remark)
 			for _, newLink := range newLinks {

@@ -222,6 +222,7 @@ const saveChanges = async () => {
       break
     case 'add_inbounds':
       targetClients.forEach((c: Client) => {
+        c.inbounds = c.inbounds ?? []
         editData.value.inboundTags.forEach((tg: number) => {
           if (!c.inbounds.includes(tg)) {
             c.inbounds.push(tg)
@@ -232,7 +233,7 @@ const saveChanges = async () => {
       break
     case 'remove_inbounds':
       targetClients.forEach((c: Client) => {
-        c.inbounds = c.inbounds.filter((i: number) => !editData.value.inboundTags.includes(i))
+        c.inbounds = (c.inbounds ?? []).filter((i: number) => !editData.value.inboundTags.includes(i))
       })
       break
     case 'reset_policy': {

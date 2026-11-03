@@ -205,6 +205,10 @@ export function coerceResetDayOfMonth(v: unknown): number {
 export function createClient<T extends Client>(json?: Partial<T>): Client {
   defaultClient.name = RandomUtil.randomSeq(8)
   const defaultObject: Client = { ...defaultClient, ...(json || {}) }
+  // Older servers stored `null` here once a client's last inbound (or link) was
+  // deleted, and spreading it over the defaults keeps the null (issue #264).
+  if (!Array.isArray(defaultObject.inbounds)) defaultObject.inbounds = []
+  if (!Array.isArray(defaultObject.links)) defaultObject.links = []
 
   // Add missing config
   defaultObject.config = { ...randomConfigs(defaultObject.name), ...defaultObject.config }
