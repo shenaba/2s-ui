@@ -25,7 +25,18 @@ func ExtractTarget(domain string, dest M.Socksaddr) string {
 	}
 	if target == "" && dest.IsValid() {
 		if dest.Addr.IsValid() {
-			target = dest.Addr.String()
+			addr := dest.Addr
+			if addr.Is4() {
+				b := addr.As4()
+				target = net.IPv4(b[0], b[1], b[2], 0).String() + "/24"
+			} else if addr.Is6() {
+				b := addr.As16()
+				var masked [16]byte
+				copy(masked[:6], b[:6])
+				target = net.IP(masked[:]).String() + "/48"
+			} else {
+				target = addr.String()
+			}
 		}
 	}
 	if target == "" {
@@ -42,13 +53,20 @@ type Counter struct {
 	write *atomic.Int64
 }
 
+type TargetCounter struct {
+	read   *atomic.Int64
+	write  *atomic.Int64
+	active *atomic.Int32
+}
+
 type StatsTracker struct {
-	access     sync.Mutex
-	inbounds   map[string]Counter
-	outbounds  map[string]Counter
-	users      map[string]Counter
-	targets    map[string]Counter // key: user + "\x00" + target
-	targetIdle map[string]int
+	access         sync.Mutex
+	inbounds       map[string]Counter
+	outbounds      map[string]Counter
+	users          map[string]Counter
+	targets        map[string]TargetCounter // key: user + "\x00" + target
+	targetIdle     map[string]int
+	trafficEnabled atomic.Bool
 
 	// Rate sampling over the user counters, without a second set of counters on
 	// the data path: SampleUsers reads them in place, and GetStats, which
@@ -67,11 +85,11 @@ type UserBytes struct {
 }
 
 func NewStatsTracker() *StatsTracker {
-	return &StatsTracker{
+	st := &StatsTracker{
 		inbounds:   make(map[string]Counter),
 		outbounds:  make(map[string]Counter),
 		users:      make(map[string]Counter),
-		targets:    make(map[string]Counter),
+		targets:    make(map[string]TargetCounter),
 		targetIdle: make(map[string]int),
 		sampled:    make(map[string]UserBytes),
 		drained:    make(map[string]UserBytes),
@@ -79,6 +97,8 @@ func NewStatsTracker() *StatsTracker {
 		// sample's window starts.
 		sampledAt: time.Now(),
 	}
+	st.trafficEnabled.Store(true)
+	return st
 }
 
 func (c *StatsTracker) Reset() {
@@ -87,16 +107,25 @@ func (c *StatsTracker) Reset() {
 	c.inbounds = make(map[string]Counter)
 	c.outbounds = make(map[string]Counter)
 	c.users = make(map[string]Counter)
-	c.targets = make(map[string]Counter)
+	c.targets = make(map[string]TargetCounter)
 	c.targetIdle = make(map[string]int)
 	c.sampled = make(map[string]UserBytes)
 	c.drained = make(map[string]UserBytes)
 	c.sampledAt = time.Now()
 }
 
-func (c *StatsTracker) getReadCounters(inbound string, outbound string, user string, target ...string) ([]*atomic.Int64, []*atomic.Int64) {
+func (c *StatsTracker) SetTrafficEnabled(enabled bool) {
+	c.trafficEnabled.Store(enabled)
+}
+
+func (c *StatsTracker) IsTrafficEnabled() bool {
+	return c.trafficEnabled.Load()
+}
+
+func (c *StatsTracker) getReadCounters(inbound string, outbound string, user string, target string) ([]*atomic.Int64, []*atomic.Int64, func()) {
 	var readCounter []*atomic.Int64
 	var writeCounter []*atomic.Int64
+	var release func()
 	c.access.Lock()
 	defer c.access.Unlock()
 
@@ -112,14 +141,17 @@ func (c *StatsTracker) getReadCounters(inbound string, outbound string, user str
 		readCounter = append(readCounter, c.loadOrCreateCounter(&c.users, user).read)
 		writeCounter = append(writeCounter, c.users[user].write)
 	}
-	if len(target) > 0 && target[0] != "" {
-		t := target[0]
-		key := user + "\x00" + t
-		counter := c.loadOrCreateCounter(&c.targets, key)
+	if c.trafficEnabled.Load() && target != "" {
+		key := user + "\x00" + target
+		counter := c.loadOrCreateTargetCounter(key)
+		counter.active.Add(1)
 		readCounter = append(readCounter, counter.read)
 		writeCounter = append(writeCounter, counter.write)
+		release = func() {
+			counter.active.Add(-1)
+		}
 	}
-	return readCounter, writeCounter
+	return readCounter, writeCounter, release
 }
 
 func (c *StatsTracker) loadOrCreateCounter(obj *map[string]Counter, name string) Counter {
@@ -132,16 +164,70 @@ func (c *StatsTracker) loadOrCreateCounter(obj *map[string]Counter, name string)
 	return counter
 }
 
+func (c *StatsTracker) loadOrCreateTargetCounter(name string) TargetCounter {
+	counter, loaded := c.targets[name]
+	if loaded {
+		return counter
+	}
+	counter = TargetCounter{read: &atomic.Int64{}, write: &atomic.Int64{}, active: &atomic.Int32{}}
+	c.targets[name] = counter
+	return counter
+}
+
+type trackerConn struct {
+	net.Conn
+	onClose func()
+	closed  atomic.Bool
+}
+
+func (c *trackerConn) Close() error {
+	if c.closed.CompareAndSwap(false, true) {
+		if c.onClose != nil {
+			c.onClose()
+		}
+	}
+	return c.Conn.Close()
+}
+
+type trackerPacketConn struct {
+	network.PacketConn
+	onClose func()
+	closed  atomic.Bool
+}
+
+func (c *trackerPacketConn) Close() error {
+	if c.closed.CompareAndSwap(false, true) {
+		if c.onClose != nil {
+			c.onClose()
+		}
+	}
+	return c.PacketConn.Close()
+}
+
 func (c *StatsTracker) RoutedConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) net.Conn {
-	target := ExtractTarget(metadata.Domain, metadata.Destination)
-	readCounter, writeCounter := c.getReadCounters(metadata.Inbound, matchOutbound.Tag(), metadata.User, target)
-	return bufio.NewInt64CounterConn(conn, readCounter, writeCounter)
+	var target string
+	if c.trafficEnabled.Load() {
+		target = ExtractTarget(metadata.Domain, metadata.Destination)
+	}
+	readCounter, writeCounter, release := c.getReadCounters(metadata.Inbound, matchOutbound.Tag(), metadata.User, target)
+	countedConn := bufio.NewInt64CounterConn(conn, readCounter, writeCounter)
+	if release != nil {
+		return &trackerConn{Conn: countedConn, onClose: release}
+	}
+	return countedConn
 }
 
 func (c *StatsTracker) RoutedPacketConnection(ctx context.Context, conn network.PacketConn, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) network.PacketConn {
-	target := ExtractTarget(metadata.Domain, metadata.Destination)
-	readCounter, writeCounter := c.getReadCounters(metadata.Inbound, matchOutbound.Tag(), metadata.User, target)
-	return bufio.NewInt64CounterPacketConn(conn, readCounter, nil, writeCounter, nil)
+	var target string
+	if c.trafficEnabled.Load() {
+		target = ExtractTarget(metadata.Domain, metadata.Destination)
+	}
+	readCounter, writeCounter, release := c.getReadCounters(metadata.Inbound, matchOutbound.Tag(), metadata.User, target)
+	countedConn := bufio.NewInt64CounterPacketConn(conn, readCounter, nil, writeCounter, nil)
+	if release != nil {
+		return &trackerPacketConn{PacketConn: countedConn, onClose: release}
+	}
+	return countedConn
 }
 
 func (c *StatsTracker) GetStats() *[]model.Stats {
@@ -186,6 +272,14 @@ func (c *StatsTracker) GetTargetStats() *[]model.TargetStats {
 	c.access.Lock()
 	defer c.access.Unlock()
 
+	if !c.trafficEnabled.Load() {
+		if len(c.targets) > 0 {
+			c.targets = make(map[string]TargetCounter)
+			c.targetIdle = make(map[string]int)
+		}
+		return &[]model.TargetStats{}
+	}
+
 	s := []model.TargetStats{}
 	dt := time.Now().Unix()
 
@@ -208,12 +302,14 @@ func (c *StatsTracker) GetTargetStats() *[]model.TargetStats {
 				Up:       up,
 				Down:     down,
 			})
-		} else {
+		} else if counter.active.Load() <= 0 {
 			c.targetIdle[key]++
 			if c.targetIdle[key] >= 6 {
 				delete(c.targets, key)
 				delete(c.targetIdle, key)
 			}
+		} else {
+			c.targetIdle[key] = 0
 		}
 	}
 	return &s
