@@ -74,7 +74,7 @@ type Inbound struct {
 	router    adapter.ConnectionRouterEx
 	logger    logger.ContextLogger
 	listener  *listener.Listener
-	proxyHdr  bool
+	proxyHdr  proxyHdrSettings
 	service   *vmess.Service[string]
 	tlsConfig tls.ServerConfig
 	transport adapter.V2RayServerTransport

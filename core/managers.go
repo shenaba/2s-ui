@@ -377,7 +377,6 @@ func (t *componentTable[T]) rename(oldTag string, r recipe) error {
 	if oldTag == r.tag {
 		return t.create(r)
 	}
-	defer t.settle()
 	t.mutate.Lock()
 	old, found := t.get(oldTag)
 	if !found {
@@ -385,6 +384,8 @@ func (t *componentTable[T]) rename(oldTag string, r recipe) error {
 		t.mutate.Unlock()
 		return t.create(r)
 	}
+	// Ahead of the Unlock below, so it runs after it (create settles itself).
+	defer t.settle()
 	defer t.mutate.Unlock()
 	if _, taken := t.get(r.tag); taken {
 		return E.New("duplicate ", t.kind, " tag: ", r.tag)

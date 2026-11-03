@@ -419,8 +419,8 @@ func TestProxyProtocolEveryCopy(t *testing.T) {
 					"outbounds": []any{map[string]any{"type": "direct", "tag": "direct"}},
 				}
 			})
-			// What keeps the dial guard on (proxyheader.RefreshInUse).
-			if !server.ReadsProxyHeaders() {
+			// What the dial guard is computed from (refreshProxyHeaders).
+			if !server.readsProxyHeaders() {
 				t.Fatal("the core does not report its PROXY-enabled inbound")
 			}
 			front := testFront(t, M.ParseSocksaddrHostPort("127.0.0.1", uint16(serverPort)))
@@ -444,7 +444,7 @@ func TestProxyProtocolEveryCopy(t *testing.T) {
 					"outbounds": []any{outbound},
 				}
 			})
-			if client.ReadsProxyHeaders() {
+			if client.readsProxyHeaders() {
 				t.Fatal("a core with no PROXY-enabled inbound reports one")
 			}
 
@@ -511,8 +511,9 @@ func connectRelay(t *testing.T) M.Socksaddr {
 }
 
 // A client handed to a relay on this host cannot loop back into a
-// PROXY-enabled inbound through it either: the relay's connection arrives from
-// loopback, and the core never dialed it.
+// PROXY-enabled inbound through it either: the relay's connection would arrive
+// from loopback, and the core never dials it, so the core refuses to hand it
+// that port at all.
 func TestProxyProtocolRefusesAClientLoopingThroughARelay(t *testing.T) {
 	target := echoServer(t)
 	relay := connectRelay(t)
@@ -549,29 +550,62 @@ func TestProxyProtocolRefusesAClientLoopingThroughARelay(t *testing.T) {
 	}
 	echo.Close()
 
-	conn, err := socks.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(ppPort)))
+	// Refused at the dial: the relay is never asked to connect there, so no
+	// header the client sends can reach the inbound.
+	for _, host := range []string{"127.0.0.1", "localhost", "0.0.0.0"} {
+		conn, err := socks.Dial("tcp", net.JoinHostPort(host, strconv.Itoa(ppPort)))
+		if err == nil {
+			conn.Close()
+			t.Fatalf("a relay on this host was handed %s:%d, a PROXY-enabled inbound's port", host, ppPort)
+		}
+	}
+	if sessions := c.GetInstance().ConnTracker().Sessions(func(info *ConnectionInfo) bool { return info.User == "u" }); len(sessions) != 0 {
+		t.Fatalf("a relayed connection was recorded as %s", sessions[0].Source)
+	}
+}
+
+// A client asking the direct outbound for a PROXY-enabled inbound by name is
+// dialed by the core itself, and recorded exactly: the front's own
+// connections to that inbound, at the same time, still get through.
+func TestProxyProtocolDirectDialByNameLeavesTheFrontAlone(t *testing.T) {
+	target := echoServer(t)
+	var mixedPort, ppPort int
+	c := startTestCore(t, func() map[string]any {
+		mixedPort, ppPort = freeTCPPort(t), freeTCPPort(t)
+		return map[string]any{
+			"log": map[string]any{"disabled": true},
+			"inbounds": []any{
+				map[string]any{"type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": mixedPort},
+				map[string]any{
+					"type": "vless", "tag": "pp-in", "listen": "127.0.0.1", "listen_port": ppPort,
+					"proxy_protocol": true,
+					"users":          []any{map[string]any{"name": "u", "uuid": proxyTestUUID}},
+				},
+			},
+			"outbounds": []any{map[string]any{"type": "direct", "tag": "direct"}},
+		}
+	})
+	socks, err := proxy.SOCKS5("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(mixedPort)), nil, proxy.Direct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Held open, never sending a header: it would only time out.
+	loop, err := socks.Dial("tcp", net.JoinHostPort("localhost", strconv.Itoa(ppPort)))
+	if err == nil {
+		defer loop.Close()
+	}
+
+	front := headerDialer{header: "PROXY TCP4 203.0.113.7 127.0.0.1 51000 " + strconv.Itoa(ppPort) + "\r\n"}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := front.DialContext(ctx, "tcp", M.ParseSocksaddrHostPort("127.0.0.1", uint16(ppPort)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	if _, err = conn.Write([]byte("PROXY TCP4 198.51.100.9 127.0.0.1 51000 " + strconv.Itoa(ppPort) + "\r\n")); err != nil {
-		t.Fatal(err)
-	}
-	client, err := vless.NewClient(proxyTestUUID, "", logger.NOP())
-	if err != nil {
-		t.Fatal(err)
-	}
-	vconn, err := client.DialConn(conn, target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	vconn.SetDeadline(time.Now().Add(5 * time.Second))
-	vconn.Write([]byte("ping"))
-	if _, err = io.ReadFull(vconn, make([]byte, 4)); err == nil {
-		t.Fatal("a header sent through a relay on this host was believed")
-	}
-	if sessions := c.GetInstance().ConnTracker().Sessions(func(info *ConnectionInfo) bool { return info.User == "u" }); len(sessions) != 0 {
-		t.Fatalf("the relayed connection was recorded as %s", sessions[0].Source)
+	ping(t, conn, target)
+	if got := sessionSource(t, c); got != "203.0.113.7:51000" {
+		t.Fatalf("core recorded the source as %s, want the client 203.0.113.7:51000", got)
 	}
 }
 

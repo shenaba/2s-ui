@@ -66,7 +66,7 @@ type Inbound struct {
 	router                   adapter.ConnectionRouterEx
 	logger                   log.ContextLogger
 	listener                 *listener.Listener
-	proxyHdr                 bool
+	proxyHdr                 proxyHdrSettings
 	service                  *trojan.Service[string]
 	tlsConfig                tls.ServerConfig
 	fallbackAddr             M.Socksaddr

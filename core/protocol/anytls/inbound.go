@@ -58,7 +58,7 @@ type Inbound struct {
 	router    adapter.ConnectionRouterEx
 	logger    logger.ContextLogger
 	listener  *listener.Listener
-	proxyHdr  bool
+	proxyHdr  proxyHdrSettings
 	service   *anytls.Service
 }
 

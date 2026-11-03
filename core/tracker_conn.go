@@ -177,6 +177,11 @@ type ConnTracker struct {
 	connections map[string]*ConnectionInfo
 	epoch       time.Time
 	generation  uint64
+	// route tells proxyheader.GuardDial how the outbound a connection was
+	// routed to reaches its destination. Set by the box that owns the
+	// tracker, before it routes anything; nil in a bare tracker, which
+	// GuardDial then treats as dialing through some unknown server.
+	route func(adapter.Outbound) proxyheader.Route
 }
 
 func NewConnTracker() *ConnTracker {
@@ -263,7 +268,12 @@ func (c *ConnTracker) RoutedConnection(ctx context.Context, conn net.Conn, metad
 
 	c.trackConnection(connID, connInfo)
 
-	return c.createWrappedConn(conn, connInfo)
+	wrapped := c.createWrappedConn(conn, connInfo)
+	// Only while some inbound reads PROXY headers: it is GuardDial's alone.
+	if c.route != nil && matchOutbound != nil && proxyheader.InUse() {
+		wrapped.route = c.route(matchOutbound)
+	}
+	return wrapped
 }
 
 func (c *ConnTracker) RoutedPacketConnection(ctx context.Context, conn network.PacketConn, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) network.PacketConn {
@@ -562,6 +572,10 @@ type wrappedConn struct {
 	// releaseDial ends what proxyheader.GuardDial remembers about this
 	// connection's outbound; dialUntracked once it has been untracked.
 	releaseDial atomic.Pointer[func()]
+	// route is how the outbound this connection was routed to reaches its
+	// destination, for proxyheader.GuardDial. Written before the wrapper is
+	// handed out.
+	route proxyheader.Route
 	// relayGuard is the guard to tell when the client's first bytes go out,
 	// while that has yet to happen and the outbound is a relay it watches.
 	relayGuard atomic.Pointer[proxyheader.Guard]
@@ -585,7 +599,7 @@ func (w *wrappedConn) doUntrack() {
 // its front (#260). Then it is passed on to whatever the wrapped connection
 // does with it, as it was before this wrapper took it.
 func (w *wrappedConn) ConnHandshakeSuccess(remote net.Conn) error {
-	guard, err := proxyheader.GuardDial(remote, w.info.Destination)
+	guard, err := proxyheader.GuardDial(remote, w.info.Destination, w.route)
 	if err != nil {
 		return err
 	}
