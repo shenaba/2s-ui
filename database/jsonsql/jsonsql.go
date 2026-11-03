@@ -13,8 +13,9 @@
 // Every call here reads the column through CAST(... AS TEXT), whatever the
 // driver stored. The rows themselves stay BLOB; only how a query reads them
 // changes, so rows written before the fix read correctly too. Nothing outside
-// this package spells a JSON function in SQL -- TestNoBareJSONFunctions holds
-// the rest of the tree to that.
+// this package spells a JSON function, or the -> and ->> operators that read a
+// BLOB the same way, in SQL -- TestNoBareJSONFunctions holds the rest of the
+// tree to that.
 package jsonsql
 
 import "strings"

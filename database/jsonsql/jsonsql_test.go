@@ -15,6 +15,11 @@ import (
 // package instead, so the CAST cannot be forgotten.
 var bareJSONFunction = regexp.MustCompile(`\bjsonb?(_[a-z_]+)?\(`)
 
+// The -> and ->> operators read a BLOB as JSONB the same way. Only the SQL
+// form is matched -- the operator followed by a path, a quoted key or an array
+// index -- so a gorm tag such as "->" (read-only) is not taken for one.
+var bareJSONOperator = regexp.MustCompile(`->>?\s*(['$]|"\$|\d)`)
+
 func TestNoBareJSONFunctions(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
@@ -59,9 +64,9 @@ func TestNoBareJSONFunctions(t *testing.T) {
 			if strings.HasPrefix(strings.TrimSpace(text), "//") {
 				continue
 			}
-			if bareJSONFunction.MatchString(text) {
+			if bareJSONFunction.MatchString(text) || bareJSONOperator.MatchString(text) {
 				rel, _ := filepath.Rel(root, path)
-				t.Errorf("%s:%d: SQL JSON function outside database/jsonsql: %s", rel, line, strings.TrimSpace(text))
+				t.Errorf("%s:%d: SQL JSON function or operator outside database/jsonsql: %s", rel, line, strings.TrimSpace(text))
 			}
 		}
 		return scanner.Err()
@@ -71,6 +76,32 @@ func TestNoBareJSONFunctions(t *testing.T) {
 	}
 	if scanned == 0 {
 		t.Fatal("scanned no Go files; the walk is not looking at the module")
+	}
+}
+
+func TestTheScanRecognisesSQLAndNothingElse(t *testing.T) {
+	for _, line := range []string{
+		`db.Raw("SELECT json_extract(options, '$.a') FROM outbounds")`,
+		`db.Raw("SELECT value FROM json_each(inbounds)")`,
+		`db.Raw("SELECT options ->> '$.server_port' FROM outbounds")`,
+		`db.Raw("SELECT options->'tag' FROM outbounds")`,
+		"db.Raw(`SELECT options -> \"$.tag\" FROM outbounds`)",
+		`db.Raw("SELECT inbounds->>0 FROM clients")`,
+	} {
+		if !bareJSONFunction.MatchString(line) && !bareJSONOperator.MatchString(line) {
+			t.Errorf("not caught: %s", line)
+		}
+	}
+	for _, line := range []string{
+		"TwoFa bool `json:\"twoFa\" gorm:\"->;-:migration\"`",
+		"Name string `gorm:\"->\"`",
+		`sig := <-sigCh`,
+		`json.Unmarshal(raw, &v)`,
+		`jsonsql.Extract("options", "$.tag")`,
+	} {
+		if bareJSONFunction.MatchString(line) || bareJSONOperator.MatchString(line) {
+			t.Errorf("taken for SQL: %s", line)
+		}
 	}
 }
 
