@@ -1,7 +1,26 @@
 <template>
   <div class="target-stats-container">
     <!-- Toolbar: period selector, search input, refresh button -->
-    <div class="ts-toolbar">
+    <Teleport v-if="mounted && toolbarTeleport" :to="toolbarTeleport">
+      <div class="ts-toolbar ts-header-toolbar">
+        <Segmented v-model="period" :options="periods" @update:model-value="onPeriodChange" />
+        <div class="search-box">
+          <input
+            v-model="searchInput"
+            type="text"
+            class="ts-input"
+            :placeholder="$t('ui.siteSearch')"
+            @input="onSearchInput"
+            @keydown.enter="fetchData"
+          />
+          <span v-if="searchInput" class="clear-btn" @click="clearSearch">✕</span>
+        </div>
+        <Btn sm variant="subtle" :loading="loading" @click="fetchData">
+          <Ico name="refresh" :size="14" /> {{ $t('actions.update') }}
+        </Btn>
+      </div>
+    </Teleport>
+    <div v-else-if="!toolbarTeleport" class="ts-toolbar">
       <Segmented v-model="period" :options="periods" @update:model-value="onPeriodChange" />
       <div class="grow" />
       <div class="search-box">
@@ -140,6 +159,7 @@ const props = withDefaults(defineProps<{
   user?: string
   defaultPeriod?: string
   limit?: number
+  toolbarTeleport?: string
 }>(), {
   user: '',
   defaultPeriod: 'day',
@@ -147,6 +167,8 @@ const props = withDefaults(defineProps<{
 })
 
 const { t } = useI18n({ useScope: 'global' })
+
+const mounted = ref(false)
 
 const period = ref<string | number>(props.defaultPeriod)
 const periods = computed<[string, string][]>(() => [
@@ -274,6 +296,7 @@ watch(() => props.user, () => {
 })
 
 onMounted(() => {
+  mounted.value = true
   fetchData()
 })
 </script>
@@ -288,7 +311,14 @@ onMounted(() => {
 .ts-toolbar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ts-header-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
@@ -303,11 +333,12 @@ onMounted(() => {
 }
 
 .ts-input {
-  background: var(--bg-card);
+  background: var(--surface-3);
   border: 1px solid var(--line);
-  color: var(--text-1);
-  border-radius: 8px;
-  padding: 6px 26px 6px 10px;
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 0 26px 0 10px;
+  height: 32px;
   font-size: 12.5px;
   width: 170px;
   transition: all 0.15s ease;
@@ -316,6 +347,8 @@ onMounted(() => {
 .ts-input:focus {
   outline: none;
   border-color: var(--brand);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px var(--brand-soft);
   width: 210px;
 }
 
@@ -328,7 +361,7 @@ onMounted(() => {
 }
 
 .clear-btn:hover {
-  color: var(--text-1);
+  color: var(--text);
 }
 
 .ts-summary {
@@ -338,9 +371,9 @@ onMounted(() => {
 }
 
 .ts-metric {
-  background: color-mix(in srgb, var(--line) 30%, transparent);
+  background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 8px 12px;
 }
 

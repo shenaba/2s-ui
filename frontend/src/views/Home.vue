@@ -60,10 +60,34 @@
           <Chip color="emerald" dot>{{ $t('ui.live') }}</Chip>
         </template>
         <div class="km-grid">
-          <MetricItem icon="clients" :label="$t('ui.onlineClients')" :value="String(onlineUsers)" accent="var(--emerald)" />
-          <MetricItem icon="download" :label="$t('stats.download')" :value="HumanReadable.sizeFormat(totalDown)" accent="var(--cyan)" />
-          <MetricItem icon="upload" :label="$t('stats.upload')" :value="HumanReadable.sizeFormat(totalUp)" accent="var(--violet)" />
-          <MetricItem icon="inbound" :label="$t('ui.activeInbounds')" :value="`${onlineInbounds}/${data.inbounds.length}`" accent="var(--brand)" />
+          <MetricItem
+            icon="clients"
+            :label="$t('ui.onlineClients')"
+            :value="String(onlineUsers)"
+            accent="var(--emerald)"
+            :sub="`${data.clients.length} ${$t('objects.client')}`"
+          />
+          <MetricItem
+            icon="download"
+            :label="$t('stats.download')"
+            :value="HumanReadable.sizeFormat(totalDown)"
+            accent="var(--cyan)"
+            :sub="`↓ ${HumanReadable.sizeFormat(netInNow)}/s`"
+          />
+          <MetricItem
+            icon="upload"
+            :label="$t('stats.upload')"
+            :value="HumanReadable.sizeFormat(totalUp)"
+            accent="var(--violet)"
+            :sub="`↑ ${HumanReadable.sizeFormat(netOutNow)}/s`"
+          />
+          <MetricItem
+            icon="inbound"
+            :label="$t('ui.activeInbounds')"
+            :value="`${onlineInbounds}/${data.inbounds.length}`"
+            accent="var(--brand)"
+            :sub="`${data.inbounds.length} ${$t('objects.inbound')}`"
+          />
         </div>
       </DPanel>
     </div>
@@ -141,6 +165,14 @@
       </div>
     </DPanel>
 
+    <!-- target sites traffic (global) -->
+    <DPanel v-if="tiles.targetStats" :title="$t('ui.targetStats')" :sub="$t('ui.targetSitesSub')">
+      <template #right>
+        <div id="target-stats-header-actions" />
+      </template>
+      <TargetStatsTable toolbar-teleport="#target-stats-header-actions" />
+    </DPanel>
+
     <!-- activity -->
     <DPanel v-if="tiles.activity" :title="$t('ui.activity')" :sub="$t('ui.activitySub')" :pad="0">
       <template #right>
@@ -160,11 +192,6 @@
           <span class="mono" dir="ltr" style="margin-inline-start: auto; font-size: 11.5px; color: var(--text-3);">{{ e.time }}</span>
         </div>
       </div>
-    </DPanel>
-
-    <!-- target sites traffic (global) -->
-    <DPanel v-if="tiles.targetStats" :title="$t('ui.targetStats')" :sub="$t('ui.targetSitesSub')">
-      <TargetStatsTable />
     </DPanel>
 
     <EmptyState
@@ -212,9 +239,9 @@ const topCount = computed(() => ['resources', 'server', 'keymetrics'].filter((i)
 const mainCount = computed(() => ['traffic', 'protocol', 'network'].filter((i) => tiles[i]).length)
 const allHidden = computed(() => Object.values(tiles).every((v) => !v))
 
-// 卡片显隐会改变同一行图表所在 grid 列的宽度（如关掉「流量」后「网络吞吐」变宽、再开回又变窄），
-// ECharts 不会自动跟随父级 grid 重排。布局变化后等 DOM 更新完，广播一次重排让所有图表按新列宽重测，
-// 否则放大/缩小后 SVG 不跟随会溢出卡片边框（issue #15）。
+// Toggling card visibility changes grid column width in the same row (e.g. hiding "Traffic" expands "Network Throughput", and showing it narrows it).
+// ECharts does not automatically reflow with parent grid changes. After layout changes and DOM update, broadcast a resize event so all charts recalculate against new column widths,
+// otherwise SVG charts won't follow and will overflow the card boundaries (issue #15).
 watch([topCount, mainCount], () => { nextTick(requestChartRelayout) })
 
 /* ---------- nodes tile ---------- */
@@ -253,8 +280,8 @@ const sys = ref<any>({})
 const sbd = computed(() => status.value.sbd ?? {})
 const sbVersion = computed(() => sbd.value.version || '—')
 
-// 服务端 status 主题的采样周期。只在首拍(还没有时间戳基准)时用来换算速率,
-// 之后一律按推送自带的 t 算真实间隔,所以别当成"轮询周期"
+// Server status topic sampling period. Only used for rate calculation on the first tick (before timestamp baseline exists),
+// subsequently calculated using actual interval from server timestamp t, not a polling period.
 const FALLBACK_SAMPLE_SEC = 2
 const BUF = 40
 const buf = reactive({
@@ -262,8 +289,8 @@ const buf = reactive({
   netOut: [] as number[],
   users: [] as number[],
   inbounds: [] as number[],
-  // 每个速率点对应的采样时刻(毫秒)。推送节奏可变(重连、断流),写死 2 秒会让
-  // x 轴与 tooltip 标注跟真实时间对不上,所以按实际时间戳标注。
+  // Timestamp (ms) for each rate point. Push cadence can vary (reconnections, dropouts); hardcoding 2s would cause
+  // x-axis and tooltip labels to drift from real time, so label with actual timestamps.
   netAt: [] as number[],
 })
 let lastNet: { recv: number; sent: number } | null = null
@@ -274,13 +301,13 @@ const push = (arr: number[], v: number) => { arr.push(v); if (arr.length > BUF) 
 const onSample = (obj: any) => {
   if (!obj) return
   status.value = { ...status.value, ...obj }
-  // 推送带服务器时间戳 t(毫秒);按真实间隔换算速率,重连间隙不会造出尖峰
+  // Push includes server timestamp t (ms); convert rate using actual interval to prevent spikes during reconnection gaps
   const dtSec = Number.isFinite(obj.t) && lastT ? Math.max(0.5, (obj.t - lastT) / 1000) : FALLBACK_SAMPLE_SEC
   if (Number.isFinite(obj.t)) lastT = obj.t
   const net = obj.net
-  // net.recv/sent 可能缺失(后端取不到 IO 计数器时返回空对象)
+  // net.recv/sent may be missing (backend returns empty object when IO counters are unavailable)
   if (net && Number.isFinite(net.recv) && Number.isFinite(net.sent)) {
-    // 有基准才出速率;恢复后的首个有效拍只重建基准,避免把跨缺口的累计增量当作单拍速率
+    // Only calculate rate with a baseline; first valid tick after recovery only rebuilds baseline to avoid counting accumulated gap deltas as single-tick rates
     if (lastNet) {
       push(buf.netIn, Math.max(0, (net.recv - lastNet.recv) / dtSec))
       push(buf.netOut, Math.max(0, (net.sent - lastNet.sent) / dtSec))
@@ -288,7 +315,7 @@ const onSample = (obj: any) => {
     }
     lastNet = { recv: net.recv, sent: net.sent }
   } else {
-    // 计数器中断:作废基准,使恢复后首拍走上面"只重建基准"分支,既挡住 NaN 也避免速率尖峰
+    // Counter interruption: invalidate baseline so the next tick enters the "rebuild baseline" branch, preventing NaN and rate spikes
     lastNet = null
   }
   push(buf.users, data.onlines.user?.length ?? 0)
@@ -312,7 +339,7 @@ onMounted(() => {
   loadChanges()
   live = liveSubscribe({ topic: 'status', params: () => ({ r: statusResources() }), onData: onSample })
 })
-// 资源卡开关改变要采的指标集合;重订阅即以新参数生效
+// Resource card toggle changes the metrics to collect; resubscribe to apply with new parameters
 watch(() => tiles.resources, () => live?.resubscribe())
 onBeforeUnmount(() => { live?.stop(); live = null })
 
@@ -324,7 +351,7 @@ const onlineInbounds = computed(() => data.onlines.inbound?.length ?? 0)
 const totalDown = computed(() => data.clients.reduce((a: number, c: any) => a + (c.down ?? 0), 0))
 const totalUp = computed(() => data.clients.reduce((a: number, c: any) => a + (c.up ?? 0), 0))
 const trafficAxis = computed(() => {
-  // 按首尾采样时刻的真实跨度标注,而不是"点数 × 2 秒"
+  // Label based on actual span between start and end timestamps, rather than "points * 2s"
   const at = buf.netAt
   if (at.length < 2) return []
   const span = Math.round((at[at.length - 1] - at[0]) / 1000)
@@ -332,13 +359,13 @@ const trafficAxis = computed(() => {
   return [`-${span}s`, `-${Math.round(span * 0.75)}s`, `-${Math.round(span * 0.5)}s`, `-${Math.round(span * 0.25)}s`, 'now']
 })
 
-// 实时图 tooltip：速率带单位，标签用相对时间（最后一点为 now）
+// Real-time chart tooltip: rate with units, labels use relative time (last point is now)
 const netFmt = (v: number) => HumanReadable.sizeFormat(v) + '/s'
 const trafficLabels = computed(() =>
   buf.netIn.map((_, i, a) => {
     if (i === a.length - 1) return 'now'
     const at = buf.netAt
-    // 同样按真实时间差,断流后重连的那一点不会被标成 2 秒前
+    // Also based on actual time difference, so reconnection point won't be labeled as 2s ago
     if (at.length === a.length && at[at.length - 1] != null && at[i] != null) {
       return `-${Math.round((at[at.length - 1] - at[i]) / 1000)}s`
     }
@@ -429,13 +456,13 @@ const setMaintenance = async (enable: boolean) => {
 <style scoped>
 .top-grid { display: grid; grid-template-columns: repeat(var(--top-cols, 3), minmax(0, 1fr)); gap: 14px; }
 .res-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; height: 100%; align-content: center; }
-.km-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 14px; height: 100%; align-content: center; }
-.srv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 13px 14px; padding: 16px 20px; }
+.km-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; height: 100%; }
+.srv-grid { display: grid; flex: 1; grid-template-columns: 1fr 1fr; gap: 13px 14px; padding: 16px 20px; }
 .srv-k { font-size: 10.5px; color: var(--text-3); margin-bottom: 3px; }
-.srv-v { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srv-v { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .srv-status { display: flex; align-items: center; gap: 10px; padding: 13px 20px; border-top: 1px solid var(--line); }
 .main-grid { display: grid; grid-template-columns: repeat(var(--main-cols, 3), minmax(0, 1fr)); gap: 18px; }
-/* minmax(0, 1fr)：裸 1fr 的 min 是 auto，ECharts SVG 的固定宽度会把列撑开导致图表缩不回（#15） */
+/* minmax(0, 1fr): bare 1fr min is auto; fixed width of ECharts SVG would expand columns and prevent shrinking (#15) */
 .net-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 @media (max-width: 1180px) {
   .top-grid { grid-template-columns: 1fr 1fr !important; }
