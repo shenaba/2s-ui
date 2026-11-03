@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/shenaba/2s-ui/database/jsonsql"
 	"github.com/shenaba/2s-ui/database/model"
 
 	"gorm.io/gorm"
@@ -97,7 +98,10 @@ func migrate_dns(db *gorm.DB) error {
 
 func remove_outbound_strategy(db *gorm.DB) error {
 	var outbounds []model.Outbound
-	err := db.Find(&outbounds).Where("json_extract(options, '$.domain_strategy') IS NOT NULL").Error
+	// The condition goes before Find: chained after it, it never reached the
+	// query, and every outbound was loaded and rewritten whether it had the
+	// field or not.
+	err := db.Where(jsonsql.Extract("options", "$.domain_strategy") + " IS NOT NULL").Find(&outbounds).Error
 	if err != nil {
 		return err
 	}
@@ -107,8 +111,13 @@ func remove_outbound_strategy(db *gorm.DB) error {
 			return err
 		}
 		delete(restFields, "domain_strategy")
-		outbound.Options, _ = json.MarshalIndent(restFields, "", "  ")
-		db.Save(&outbound)
+		outbound.Options, err = json.MarshalIndent(restFields, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := db.Save(&outbound).Error; err != nil {
+			return err
+		}
 	}
 	return nil
 }
