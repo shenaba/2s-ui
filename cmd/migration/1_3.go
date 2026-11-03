@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/shenaba/2s-ui/database/jsonsql"
 	"github.com/shenaba/2s-ui/database/model"
 
 	"gorm.io/gorm"
@@ -97,7 +98,7 @@ func migrate_dns(db *gorm.DB) error {
 
 func remove_outbound_strategy(db *gorm.DB) error {
 	var outbounds []model.Outbound
-	err := db.Find(&outbounds).Where("json_extract(options, '$.domain_strategy') IS NOT NULL").Error
+	err := db.Find(&outbounds).Where(jsonsql.Extract("options", "$.domain_strategy") + " IS NOT NULL").Error
 	if err != nil {
 		return err
 	}

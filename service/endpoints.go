@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/shenaba/2s-ui/database"
+	"github.com/shenaba/2s-ui/database/jsonsql"
 	"github.com/shenaba/2s-ui/database/model"
 	"github.com/shenaba/2s-ui/util/common"
 
@@ -94,7 +95,7 @@ func (s *EndpointService) Save(tx *gorm.DB, act string, data json.RawMessage) (r
 				}
 			} else {
 				var old_license string
-				err = tx.Model(model.Endpoint{}).Select("json_extract(CAST(ext AS TEXT), '$.license_key')").Where("id = ?", endpoint.Id).Find(&old_license).Error
+				err = tx.Model(model.Endpoint{}).Select(jsonsql.Extract("ext", "$.license_key")).Where("id = ?", endpoint.Id).Find(&old_license).Error
 				if err != nil {
 					return false, err
 				}

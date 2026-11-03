@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/shenaba/2s-ui/database/jsonsql"
 	"github.com/shenaba/2s-ui/database/model"
 	"github.com/shenaba/2s-ui/util/common"
 
@@ -42,9 +43,9 @@ func readClientConfig(outJson json.RawMessage) clientConfigHead {
 // whose out_json is not JSON -- restored from an old backup, written by hand --
 // would make a bare json_extract fail the whole query, and with it every
 // delete and rename; json_valid reads such a row as naming nothing instead.
-// The CAST makes the text reading explicit, whatever the driver stored.
-const detourColumn = "CASE WHEN json_valid(CAST(out_json AS TEXT)) " +
-	"THEN json_extract(CAST(out_json AS TEXT), '$.detour') END"
+// jsonsql reads the column as text, whatever the driver stored.
+var detourColumn = "CASE WHEN " + jsonsql.Valid("out_json") +
+	" THEN " + jsonsql.Extract("out_json", "$.detour") + " END"
 
 // clientDetourRiders lists the local inbounds other than id whose client
 // config rides tag. Left alone, a rider of a renamed or deleted inbound would
