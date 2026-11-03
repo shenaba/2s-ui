@@ -30,23 +30,23 @@
 //
 // The same goes for a relay the core hands a client to: an outbound to a
 // socks or shadowsocks server on this host (a local gost, a WARP client), or
-// at a named front's address. That relay opens the onward connection, so the
-// core never sees its two ends, and it arrives from a trusted address. Which
-// outbound is direct is the router's to say (Route): a name a client asks the
-// direct outbound for is dialed by the core itself, and its record is exact.
-// A relay on this host connects without a NAT, so a client asking it for a
-// PROXY-enabled inbound's port by a name, or by an address of this host, is
-// refused -- only that client, and only on those ports; a PROXY-enabled
+// at a named front's address (one on the Docker host, seen from the
+// container at the bridge's gateway). That relay opens the onward
+// connection, so the core never sees its two ends, and it arrives from a
+// trusted address. Which outbound is direct is the router's to say (Route): a
+// name a client asks the direct outbound for is dialed by the core itself,
+// and its record is exact. A client asking a relay in either place for a
+// PROXY-enabled inbound's port, by a name or by an address that lands on this
+// host, is refused -- only that client, and only on those ports, so a real
+// front at the same address is never caught up in it. A PROXY-enabled
 // inbound on a port clients do ask for (443) takes that port away from them
 // through such a relay. A relay asked for a named front's address is refused
-// as a direct dial there is. A relay at a named front's address -- an upstream
-// inside a listed range -- may reach back through a NAT that changes the
-// port, so it is watched instead: a trusted connection from that address
-// within relayWindow is refused. An upstream is not usually also a front, so
-// the watch costs a real front nothing.
+// outright, as a direct dial there is: through a NAT the port says nothing.
 //
-// Some paths stay outside this. A relay on this host that a name sends
-// through a named front's NAT and back arrives from the front on another port.
+// Some paths stay outside this. A relay that reaches this inbound through a
+// port mapping that changes the port -- a Docker host's relay asked for the
+// published 8443 of a container's 443 -- asks for a port the check does not
+// know; a mapping that keeps the port (443:443) is caught.
 // A NAT on this host itself -- an iptables REDIRECT or DNAT in OUTPUT that
 // turns a dial to one port into a connection on another -- does the same to
 // the core's own dials: the inbound no longer sees the two ends the core
@@ -80,6 +80,7 @@ import (
 	"net/netip"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -121,17 +122,6 @@ const (
 	// v2MaxPayload caps what a v2 header may claim to carry. Addresses take at
 	// most 216 bytes (unix); the rest is TLVs, which nginx does not send.
 	v2MaxPayload = 4096
-
-	// relayWindow is how long a watch on a relay at a named front's address
-	// lasts, from the dial and again from the client's first bytes. The relay
-	// opens its onward connection by then -- at the dial for socks and HTTP,
-	// on the first bytes for shadowsocks and the other lazy protocols -- and
-	// the inbound has read the header within readTimeout of accepting it. The
-	// rest is the relay's own dial back, a hop inside the operator's network.
-	relayWindow = 3 * readTimeout
-	// relaySweepAt is how many watches may pile up before the expired ones
-	// are cleared. Outbounds bound them anyway.
-	relaySweepAt = 1024
 )
 
 // Settings is what an inbound asked of PROXY protocol: whether to read
@@ -271,11 +261,11 @@ func onThisHost(addr, local netip.Addr) bool {
 // speak for a client: it comes from this host, or from a front the operator
 // named.
 func Trusted(source, local M.Socksaddr) bool {
-	addr := source.Addr.Unmap()
+	addr := plain(source.Addr)
 	if !addr.IsValid() {
 		return false
 	}
-	return onThisHost(addr, local.Addr.Unmap()) || namedFront(addr)
+	return onThisHost(addr, plain(local.Addr)) || namedFront(addr)
 }
 
 // dialed counts the connections the core has open to this host on a client's
@@ -326,7 +316,6 @@ type Route struct {
 // client. A nil Guard keeps nothing.
 type Guard struct {
 	release func()
-	watch   []netip.Addr
 }
 
 // Release is called once the connection ends.
@@ -336,32 +325,14 @@ func (g *Guard) Release() {
 	}
 }
 
-// WatchesRelay reports whether Payload has anything to do.
-func (g *Guard) WatchesRelay() bool {
-	return g != nil && len(g.watch) > 0
-}
-
-// Payload is called once, when the client's first bytes are relayed down the
-// connection: a lazy relay -- shadowsocks, vmess -- opens its onward
-// connection only then, so the watch on it starts over.
-func (g *Guard) Payload() {
-	if g == nil {
-		return
-	}
-	now := time.Now()
-	for _, addr := range g.watch {
-		watchRelay(addr, now)
-	}
-}
-
 // GuardDial is told about each connection the core has just dialed for a
 // client, to destination -- the address the client asked for -- along the
 // route the router chose. While PROXY protocol is in use, a direct dial to a
 // front the operator named is refused, and one an inbound would trust is
 // remembered until readTimeout after Release, so that a PROXY-enabled inbound
 // it reaches can tell it from a real front (dialedByCore). A dial to a relay
-// that could carry the client back into a PROXY-enabled inbound is refused, or
-// watched (see the package comment).
+// that could carry the client back into a PROXY-enabled inbound is refused
+// (see the package comment).
 //
 // The record outlives the connection because the inbound's check can come
 // after it: a client that sends its forged header and resets at once has the
@@ -409,14 +380,10 @@ func guardDial(conn net.Conn, destination M.Socksaddr, route Route, linger time.
 	if !remote.Addr.IsValid() || !local.Addr.IsValid() {
 		// Where the socket goes cannot be seen -- a gRPC or HTTP/2 transport
 		// keeps it inside its own client -- so the configured server says.
-		if route.Direct {
+		if route.Direct || !serverMayRelay(route.Server) {
 			return nil, nil
 		}
-		here, at, relays := serverPlace(route.Server)
-		if !relays {
-			return nil, nil
-		}
-		return relayGuard(*ports, here, at, destination)
+		return nil, relayGuard(*ports, destination)
 	}
 	remoteAddr, localAddr := plain(remote.Addr), plain(local.Addr)
 	here := onThisHost(remoteAddr, localAddr)
@@ -424,14 +391,11 @@ func guardDial(conn net.Conn, destination M.Socksaddr, route Route, linger time.
 	// asked for is not direct: the group it was picked from changed its mind
 	// between routing and dialing.
 	direct := route.Direct && (!destination.IsIP() || endpoint(destination) == endpoint(remote))
-	var guard *Guard
 	switch {
 	case direct && !here && namedFront(remoteAddr):
 		return nil, E.New("refused to dial ", remote, ": a trusted PROXY protocol front, which a client could speak through as anyone")
 	case !direct && (here || namedFront(remoteAddr)):
-		var err error
-		guard, err = relayGuard(*ports, here, remoteAddr, destination)
-		if err != nil {
+		if err := relayGuard(*ports, destination); err != nil {
 			return nil, err
 		}
 	}
@@ -443,12 +407,9 @@ func guardDial(conn net.Conn, destination M.Socksaddr, route Route, linger time.
 	// inbound: on a cloud VM whose own address is inside the listed VPC
 	// range that is every dial, and the rest are not worth a record each.
 	if here || (namedFront(localAddr) && hostAddrs.contains(remoteAddr)) {
-		if guard == nil {
-			guard = &Guard{}
-		}
-		guard.release = remember(fourTuple{client: endpoint(local), server: endpoint(remote)}, linger)
+		return &Guard{release: remember(fourTuple{client: endpoint(local), server: endpoint(remote)}, linger)}, nil
 	}
-	return guard, nil
+	return nil, nil
 }
 
 // plain is addr as matched against this host's and the named fronts'
@@ -464,29 +425,22 @@ func onThisHostAsked(addr netip.Addr) bool {
 	return addr.IsLoopback() || addr.IsUnspecified() || hostAddrs.contains(addr)
 }
 
-// serverPlace says where an outbound's configured server is: on this host
-// (here), at a named front's address (at), and whether it is either, so that
-// it could relay a client back in. A server given by name is taken as off
-// this host unless it is localhost: it is the operator's to point, and one
-// that resolved here would be a chain the operator built on purpose. Nothing
-// configured is taken as this host, which costs at most a refused dial.
-func serverPlace(server M.Socksaddr) (here bool, at netip.Addr, relays bool) {
+// serverMayRelay says whether an outbound's configured server is somewhere a
+// relay could carry a client back in from: on this host, or at a named
+// front's address. A server given by name is taken as off this host unless it
+// is localhost: it is the operator's to point, and one that resolved here
+// would be a chain the operator built on purpose. Nothing configured is
+// taken as this host, which costs at most a refused dial.
+func serverMayRelay(server M.Socksaddr) bool {
 	switch {
 	case !server.IsValid():
-		return true, netip.Addr{}, true
+		return true
 	case server.IsFqdn():
-		name := server.Fqdn
-		local := name == "localhost" || len(name) > len(".localhost") && name[len(name)-len(".localhost"):] == ".localhost"
-		return local, netip.Addr{}, local
+		name := strings.TrimSuffix(strings.ToLower(server.Fqdn), ".")
+		return name == "localhost" || strings.HasSuffix(name, ".localhost")
 	}
 	addr := plain(server.Addr)
-	if onThisHostAsked(addr) {
-		return true, netip.Addr{}, true
-	}
-	if namedFront(addr) {
-		return false, addr, true
-	}
-	return false, netip.Addr{}, false
+	return onThisHostAsked(addr) || namedFront(addr)
 }
 
 // remember records key until linger after the returned release is called.
@@ -514,72 +468,27 @@ func remember(key fourTuple, linger time.Duration) func() {
 }
 
 // relayGuard decides a dial to a relay, which opens the onward connection
-// itself where the core cannot see its two ends: one on this host (here), or
-// at relayAt, a named front's address. destination is what the client asked
-// it for; an address off this host and outside the named fronts cannot lead
-// back into an inbound. A name can lead anywhere, so it is taken as this host.
-//
-// A relay on this host connects to this host without a NAT, so the port asked
-// for is the port it arrives on: a dial that could reach a PROXY-enabled
-// inbound's port is refused, and nothing else is touched. A named front's
-// address, asked for, may be a NAT that says nothing about the port, and is
-// refused outright, as a direct dial there is. A relay at a named front's
-// address arrives from that address, possibly through a NAT of its own, so it
-// is watched by that address instead (Guard, relayed): a front is not usually
-// also an outbound's server, so the watch costs no real front anything.
-func relayGuard(ports portSet, here bool, relayAt netip.Addr, destination M.Socksaddr) (*Guard, error) {
+// itself where the core cannot see its two ends: one on this host, or at a
+// named front's address. destination is what the client asked it for; an
+// address off this host and outside the named fronts cannot lead back into an
+// inbound. A name can lead anywhere, so it is taken as this host. The relay
+// connects to this host without a NAT, so the port asked for is the port it
+// arrives on: a dial that could reach a PROXY-enabled inbound's port is
+// refused, and nothing else is touched. A named front's address, asked for,
+// may be a NAT that says nothing about the port, and is refused outright, as
+// a direct dial there is.
+func relayGuard(ports portSet, destination M.Socksaddr) error {
 	asked := plain(destination.Addr)
 	switch {
 	case destination.IsIP() && namedFront(asked):
-		return nil, E.New("refused to relay to ", destination, ": a trusted PROXY protocol front, which a client could speak through as anyone")
+		return E.New("refused to relay to ", destination, ": a trusted PROXY protocol front, which a client could speak through as anyone")
 	case destination.IsIP() && !onThisHostAsked(asked):
-		return nil, nil
-	case here:
-		if ports.has(destination.Port) {
-			return nil, E.New("refused to relay to ", destination, " through a proxy on this host: it could reach a PROXY-enabled inbound, ",
-				"which would believe a header the client sent; give PROXY-enabled inbounds a port clients do not ask for")
-		}
-		return nil, nil
-	case !relayAt.IsValid():
-		return nil, nil
+		return nil
+	case ports.has(destination.Port):
+		return E.New("refused to relay to ", destination, ": it could reach a PROXY-enabled inbound, ",
+			"which would believe a header the client sent; give PROXY-enabled inbounds a port clients do not ask for")
 	}
-	guard := &Guard{watch: []netip.Addr{relayAt}}
-	guard.Payload()
-	return guard, nil
-}
-
-// relays holds the watches on relays at named fronts' addresses, each until
-// the time it lapses. Keyed by an outbound's server, so there are only ever as
-// many as there are outbounds; swept at most once a relayWindow all the same.
-var relays = struct {
-	sync.Mutex
-	until map[netip.Addr]time.Time
-	swept time.Time
-}{until: make(map[netip.Addr]time.Time)}
-
-func watchRelay(addr netip.Addr, now time.Time) {
-	relays.Lock()
-	defer relays.Unlock()
-	if until := now.Add(relayWindow); until.After(relays.until[addr]) {
-		relays.until[addr] = until
-	}
-	if len(relays.until) > relaySweepAt && now.Sub(relays.swept) >= relayWindow {
-		relays.swept = now
-		for addr, until := range relays.until {
-			if !now.Before(until) {
-				delete(relays.until, addr)
-			}
-		}
-	}
-}
-
-// relayed reports whether a connection from source matches a watch on a
-// relay.
-func relayed(source M.Socksaddr) bool {
-	addr := plain(source.Addr)
-	relays.Lock()
-	defer relays.Unlock()
-	return time.Now().Before(relays.until[addr])
+	return nil
 }
 
 // hostAddrs is this host's interface addresses, for telling a dial to one of
@@ -673,8 +582,7 @@ func dialedByCore(source, local M.Socksaddr) bool {
 }
 
 // accept reads the header off a trusted conn from source that arrived on
-// local, and refuses one the core dialed itself, or one a relay at a named
-// front's address may have opened. Checked only after the header is read: the core reports its
+// local, and refuses one the core dialed itself. Checked only after the header is read: the core reports its
 // dial before it relays a byte the client sent, so by now it has been told.
 func accept(conn net.Conn, source, local M.Socksaddr) (M.Socksaddr, error) {
 	client, err := Read(conn)
@@ -683,9 +591,6 @@ func accept(conn net.Conn, source, local M.Socksaddr) (M.Socksaddr, error) {
 	}
 	if dialedByCore(source, local) {
 		return M.Socksaddr{}, E.New("PROXY header on a connection this core dialed for a client")
-	}
-	if relayed(source) {
-		return M.Socksaddr{}, E.New("PROXY header on a connection from ", source.Addr, ", an outbound server the core just handed a client to, which may have relayed it back")
 	}
 	return client, nil
 }
@@ -846,7 +751,9 @@ func (h *handler) NewConnection(ctx context.Context, conn net.Conn, metadata ada
 	// from the front.
 	h.logger.DebugContext(ctx, "inbound connection from ", client, " via ", metadata.Source)
 	metadata.Source = client
-	h.next.NewConnection(ctx, conn, metadata, onClose)
+	// The conn says so too, as on a transport: REALITY and TLS read the
+	// client from RemoteAddr, not from the metadata.
+	h.next.NewConnection(ctx, &sourceConn{Conn: conn, remote: client.TCPAddr()}, metadata, onClose)
 }
 
 // logRefused reports a trusted connection that was refused. One that closed
@@ -1061,9 +968,10 @@ func (l *listener) handshake(conn net.Conn, source, local M.Socksaddr) {
 
 // sourceConn reports the client the header named as its remote address, and
 // is otherwise the connection itself: it steps aside for anything that looks
-// for the socket underneath (Upstream, Reader/WriterReplaceable). A transport
-// serving TLS puts it under the TLS conn, and kTLS has to reach the TCP socket
-// through it -- sing-box closes a connection whose kTLS setup cannot.
+// for the socket underneath (Upstream, Reader/WriterReplaceable). Both
+// listeners hand one on. TLS goes over it, and kTLS and vision's splice have
+// to reach the TCP socket through it -- sing-box closes a connection whose
+// kTLS setup cannot.
 type sourceConn struct {
 	net.Conn
 	remote net.Addr

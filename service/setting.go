@@ -402,20 +402,12 @@ func (s *SettingService) GetWebTrustedProxies() ([]netip.Prefix, error) {
 	return parseTrustedProxies(raw)
 }
 
-// GetProxyProtoTrusted returns the fronts beyond this host that a
-// PROXY-enabled inbound reads headers from (#260) -- a Docker bridge's gateway,
-// an nginx on another machine. Kept apart from webTrustedProxies: that one
-// lets a peer speak for a panel login, this one for every proxy client.
-func (s *SettingService) GetProxyProtoTrusted() ([]netip.Prefix, error) {
-	raw, err := s.getString("proxyProtoTrusted")
-	if err != nil {
-		return nil, err
-	}
-	return parseProxyProtoFronts(raw)
-}
-
-// parseProxyProtoFronts is a proxyProtoTrusted value as the core may use it:
-// parsed, and held to checkProxyProtoFronts' breadth. Save checks the same, but
+// parseProxyProtoFronts is a proxyProtoTrusted value as the core may use it --
+// the fronts beyond this host that a PROXY-enabled inbound reads headers from
+// (#260), a Docker bridge's gateway, an nginx on another machine. Kept apart
+// from webTrustedProxies: that one lets a peer speak for a panel login, this
+// one for every proxy client. It is parsed, and held to checkProxyProtoFronts'
+// breadth: Save checks the same, but
 // a value can arrive without a save -- an imported database, a row written by
 // hand -- and one that slipped past would trust the whole internet.
 func parseProxyProtoFronts(raw string) ([]netip.Prefix, error) {

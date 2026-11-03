@@ -911,18 +911,6 @@ func TestListenGivesUpOnAStalledTransport(t *testing.T) {
 	}
 }
 
-// relaysForTest starts a test with no watches, and leaves none behind.
-func relaysForTest(t *testing.T) {
-	reset := func() {
-		relays.Lock()
-		relays.until = make(map[netip.Addr]time.Time)
-		relays.swept = time.Time{}
-		relays.Unlock()
-	}
-	reset()
-	t.Cleanup(reset)
-}
-
 // through is the route of an outbound with a server of its own.
 var through = Route{}
 
@@ -932,7 +920,6 @@ var through = Route{}
 // asked for any other port, or for somewhere off this host, it is dialed.
 func TestRelayOnThisHost(t *testing.T) {
 	inUseForTest(t, 10443)
-	relaysForTest(t)
 	hostAddrsForTest(t, "198.51.100.1", "fe80::1")
 	SetTrusted([]netip.Prefix{netip.MustParsePrefix("172.18.0.1/32")})
 	defer SetTrusted(nil)
@@ -959,10 +946,39 @@ func TestRelayOnThisHost(t *testing.T) {
 			if (err != nil) != c.refused {
 				t.Fatalf("refused = %v (%v), want %v", err != nil, err, c.refused)
 			}
-			if guard.WatchesRelay() {
-				t.Fatal("a relay on this host was watched rather than decided")
-			}
 		})
+	}
+}
+
+// A relay at a named front's address -- a socks server on the Docker host,
+// seen from the container at the gateway that is also the front -- is held to
+// the same rule, and nothing else: the front's own connections from that
+// address are never caught up in it, however much the relay is used.
+func TestRelayAtANamedFront(t *testing.T) {
+	inUseForTest(t, 10443)
+	hostAddrsForTest(t, "172.17.0.2")
+	SetTrusted([]netip.Prefix{netip.MustParsePrefix("172.17.0.1/32")})
+	defer SetTrusted(nil)
+	relay := func() net.Conn { return dialedConn("172.17.0.2:40080", "172.17.0.1:40000") }
+	for _, destination := range []string{"example.com:443", "203.0.113.7:10443"} {
+		guard, err := guardDial(relay(), M.ParseSocksaddr(destination), through, 0)
+		if err != nil {
+			t.Fatalf("a relay at the gateway was refused %s: %v", destination, err)
+		}
+		guard.Release()
+	}
+	for _, destination := range []string{"example.com:10443", "172.17.0.2:10443", "172.17.0.1:8443"} {
+		if _, err := guardDial(relay(), M.ParseSocksaddr(destination), through, 0); err == nil {
+			t.Fatalf("a relay at the gateway was handed %s", destination)
+		}
+	}
+	conn := send(t, "PROXY TCP4 203.0.113.7 172.17.0.2 51000 10443\r\n"+tail)
+	client, err := accept(conn, M.ParseSocksaddr("172.17.0.1:40081"), M.ParseSocksaddr("172.17.0.2:10443"))
+	if err != nil {
+		t.Fatalf("the front's own connection was refused: %v", err)
+	}
+	if client.String() != "203.0.113.7:51000" {
+		t.Fatalf("client = %s, want 203.0.113.7:51000", client)
 	}
 }
 
@@ -970,15 +986,11 @@ func TestRelayOnThisHost(t *testing.T) {
 // that lands on this host is recorded exactly, and refuses no one else.
 func TestDirectDialByNameIsRecorded(t *testing.T) {
 	inUseForTest(t, 10443)
-	relaysForTest(t)
 	guard, err := guardDial(dialedConn("127.0.0.1:40055", "127.0.0.1:10443"), M.ParseSocksaddr("localhost:10443"), Route{Direct: true}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer guard.Release()
-	if guard.WatchesRelay() {
-		t.Fatal("a direct dial was watched as a relay")
-	}
 	if !dialedByCore(M.ParseSocksaddr("127.0.0.1:40055"), M.ParseSocksaddr("127.0.0.1:10443")) {
 		t.Fatal("a direct dial by name to this host was not recorded")
 	}
@@ -987,8 +999,8 @@ func TestDirectDialByNameIsRecorded(t *testing.T) {
 	}
 }
 
-// A direct outbound picked from a group that then switched to a relay is
-// caught by where its socket went.
+// A direct outbound whose socket went somewhere else than the address asked
+// for is judged as a relay.
 func TestDirectThatWentElsewhereIsARelay(t *testing.T) {
 	inUseForTest(t, 10443)
 	if _, err := guardDial(dialedConn("127.0.0.1:40057", "127.0.0.1:1080"), M.ParseSocksaddr("127.0.0.1:10443"), Route{Direct: true}, 0); err == nil {
@@ -1006,105 +1018,29 @@ func TestDirectDialToANamedFrontByName(t *testing.T) {
 	}
 }
 
-// A header read off a connection a watch matches is refused, as one the core
-// dialed itself is.
-func TestRelayedHeaderIsRefused(t *testing.T) {
-	inUseForTest(t)
-	relaysForTest(t)
-	SetTrusted([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")})
-	defer SetTrusted(nil)
-	guard, err := guardDial(dialedConn("10.0.0.2:40060", "10.0.0.7:1080"), M.ParseSocksaddr("example.com:443"), through, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer guard.Release()
-	conn := send(t, "PROXY TCP4 6.6.6.6 127.0.0.1 51000 443\r\n"+tail)
-	if _, err := accept(conn, M.ParseSocksaddr("10.0.0.7:40061"), M.ParseSocksaddr("10.0.0.2:10443")); err == nil {
-		t.Fatal("a forged header through a relay at a named front's address was believed")
-	}
-}
-
-// A watch lapses relayWindow after it starts, and starts over when the
-// client's first bytes go out: a lazy relay connects only then.
-func TestRelayWatchLapsesAndRestartsOnPayload(t *testing.T) {
-	inUseForTest(t)
-	relaysForTest(t)
-	SetTrusted([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")})
-	defer SetTrusted(nil)
-	source := M.ParseSocksaddr("10.0.0.7:40071")
-	guard, _ := guardDial(dialedConn("10.0.0.2:40070", "10.0.0.7:8388"), M.ParseSocksaddr("example.com:443"), through, 0)
-	if !guard.WatchesRelay() {
-		t.Fatal("no watch on a relay at a named front's address")
-	}
-	// As if the dial were relayWindow old.
-	relays.Lock()
-	relays.until[netip.MustParseAddr("10.0.0.7")] = time.Now().Add(-time.Second)
-	relays.Unlock()
-	if relayed(source) {
-		t.Fatal("a lapsed watch still matched")
-	}
-	guard.Payload()
-	if !relayed(source) {
-		t.Fatal("the client's first bytes did not start the watch over")
-	}
-}
-
-// Watches are swept at most once a relayWindow, so a pile of live ones does
-// not put a walk of the whole map behind every dial.
-func TestRelayWatchSweepIsSpaced(t *testing.T) {
-	relaysForTest(t)
-	now := time.Now()
-	relays.Lock()
-	for i := 0; i <= relaySweepAt; i++ {
-		relays.until[netip.AddrFrom4([4]byte{10, 1, byte(i >> 8), byte(i)})] = now.Add(-time.Second)
-	}
-	relays.Unlock()
-	watchRelay(netip.MustParseAddr("10.0.0.7"), now)
-	relays.Lock()
-	swept := len(relays.until)
-	relays.until[netip.MustParseAddr("10.2.0.1")] = now.Add(-time.Second)
-	relays.Unlock()
-	if swept != 1 {
-		t.Fatalf("%d watches left after a sweep, want the live one", swept)
-	}
-	watchRelay(netip.MustParseAddr("10.0.0.8"), now.Add(time.Second))
-	relays.Lock()
-	defer relays.Unlock()
-	if _, kept := relays.until[netip.MustParseAddr("10.2.0.1")]; !kept {
-		t.Fatal("swept again within relayWindow")
-	}
-}
-
-// An outbound whose server is inside a named range -- an upstream in the same
-// VPC -- is a proxy, not a way back in: the client's bytes reach it wrapped in
-// that protocol. It is dialed; only one asked for a way back is watched, and
-// by its own address.
+// An outbound whose server is inside a named range but is no relay of ours --
+// an upstream in the same VPC -- is dialed for anything off this host.
 func TestOutboundServerInANamedRangeIsDialed(t *testing.T) {
-	inUseForTest(t)
-	relaysForTest(t)
+	inUseForTest(t, 10443)
 	hostAddrsForTest(t, "10.0.0.2")
 	SetTrusted([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")})
 	defer SetTrusted(nil)
-	upstream := func() net.Conn { return dialedConn("10.0.0.2:40080", "10.0.0.7:443") }
+	for _, destination := range []string{"203.0.113.7:443", "example.com:443"} {
+		guard, err := guardDial(dialedConn("10.0.0.2:40080", "10.0.0.7:443"), M.ParseSocksaddr(destination), through, 0)
+		if err != nil {
+			t.Fatalf("an outbound to a server in a named range was refused %s: %v", destination, err)
+		}
+		guard.Release()
+	}
+}
 
-	guard, err := guardDial(upstream(), M.ParseSocksaddr("203.0.113.7:443"), through, 0)
-	if err != nil {
-		t.Fatalf("an outbound to a server in a named range was refused: %v", err)
-	}
-	if guard.WatchesRelay() {
-		t.Fatal("watched a proxy asked for an address off this host")
-	}
-
-	guard, err = guardDial(upstream(), M.ParseSocksaddr("example.com:443"), through, 0)
-	if err != nil {
-		t.Fatalf("an outbound to a server in a named range was refused: %v", err)
-	}
-	defer guard.Release()
-	if !relayed(M.ParseSocksaddr("10.0.0.7:40081")) {
-		t.Fatal("a name through a server in a named range was not watched by its address")
-	}
-	if relayed(M.ParseSocksaddr("10.0.0.5:40082")) {
-		t.Fatal("the watch matched another front in the range")
+// A named front on the link is trusted from its zoned address, as the socket
+// reports it.
+func TestTrustedLinkLocalFront(t *testing.T) {
+	SetTrusted([]netip.Prefix{netip.MustParsePrefix("fe80::1/128")})
+	defer SetTrusted(nil)
+	if !Trusted(M.ParseSocksaddr("[fe80::1%eth0]:40000"), M.ParseSocksaddr("[fe80::2%eth0]:10443")) {
+		t.Fatal("a link-local named front was not trusted from its zoned address")
 	}
 }
 
@@ -1125,7 +1061,6 @@ func (c *writeConn) Write(p []byte) (int, error) {
 // server its outbound is configured with.
 func TestAddresslessConn(t *testing.T) {
 	inUseForTest(t, 10443)
-	relaysForTest(t)
 	cases := []struct {
 		name    string
 		server  string
@@ -1135,6 +1070,9 @@ func TestAddresslessConn(t *testing.T) {
 		{"server by name", "cdn.example.com:443", false},
 		{"server on this host", "127.0.0.1:8443", true},
 		{"server at localhost", "localhost:8443", true},
+		{"server at localhost, fully qualified", "localhost.:8443", true},
+		{"server at LOCALHOST", "LOCALHOST:8443", true},
+		{"server at a .localhost name", "relay.localhost:8443", true},
 		{"no server known", "", true},
 	}
 	for _, c := range cases {
@@ -1313,4 +1251,55 @@ func TestListenHandsUntrustedConnsOver(t *testing.T) {
 	if _, err := l.Accept(); err == nil {
 		t.Fatal("Accept succeeded on a closed listener")
 	}
+}
+
+// remoteHandler records the RemoteAddr of the conn it is handed, and whether
+// the TCP socket is still reachable under it.
+type remoteHandler struct {
+	got chan net.Conn
+}
+
+func (h *remoteHandler) NewConnection(_ context.Context, conn net.Conn, _ adapter.InboundContext, _ N.CloseHandlerFunc) {
+	h.got <- conn
+}
+
+// On the inbound's own listener the conn names the client as its remote
+// address, as on a transport -- REALITY and TLS read it there -- and the
+// socket is still reachable under it for kTLS and splice.
+func TestHandlerConnNamesTheClient(t *testing.T) {
+	raw, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	client, err := net.Dial("tcp", raw.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	server, err := raw.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	if _, err = client.Write([]byte("PROXY TCP4 203.0.113.7 127.0.0.1 51000 443\r\n" + tail)); err != nil {
+		t.Fatal(err)
+	}
+	next := &remoteHandler{got: make(chan net.Conn, 1)}
+	metadata := adapter.InboundContext{
+		Source:            M.SocksaddrFromNet(server.RemoteAddr()),
+		OriginDestination: M.SocksaddrFromNet(server.LocalAddr()),
+	}
+	Handler(next, log.NewNOPFactory().Logger(), on).NewConnection(context.Background(), server, metadata, nil)
+	conn := <-next.got
+	if got := conn.RemoteAddr().String(); got != "203.0.113.7:51000" {
+		t.Fatalf("RemoteAddr = %s, want 203.0.113.7:51000", got)
+	}
+	if _, ok := N.UnwrapReader(conn).(*net.TCPConn); !ok {
+		t.Fatal("the TCP socket is not reachable for reads")
+	}
+	if _, ok := N.UnwrapWriter(conn).(*net.TCPConn); !ok {
+		t.Fatal("the TCP socket is not reachable for writes")
+	}
+	assertTail(t, conn)
 }

@@ -3,12 +3,15 @@ package service
 import (
 	"encoding/json"
 	"net/netip"
+	"sync"
 
 	"github.com/shenaba/2s-ui/core/proxyheader"
 	"github.com/shenaba/2s-ui/database/model"
 	"github.com/shenaba/2s-ui/logger"
 	"github.com/shenaba/2s-ui/util/common"
 )
+
+var applyProxyProtocolMu sync.Mutex
 
 // ApplyProxyProtocol hands the core the proxyProtoTrusted setting, which it
 // reads per connection and so cannot fetch from the database itself. Called
@@ -21,6 +24,10 @@ import (
 // guard runs at all -- is the core's own to track: it recomputes that every
 // time its inbounds change, by whatever path.
 func ApplyProxyProtocol() {
+	// One at a time, each reading what is committed when it holds the lock:
+	// two saves applying at once would otherwise leave whichever read first.
+	applyProxyProtocolMu.Lock()
+	defer applyProxyProtocolMu.Unlock()
 	var settingService SettingService
 	raw, err := settingService.getString("proxyProtoTrusted")
 	if err != nil {

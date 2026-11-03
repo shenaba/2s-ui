@@ -31,6 +31,15 @@ func startReadingProxyHeaders(m *inboundManager) {
 	refreshProxyHeaders()
 }
 
+// readingProxyHeaders reports whether m's inbounds are counted: its box has
+// started and not closed.
+func readingProxyHeaders(m *inboundManager) bool {
+	proxyReaders.Lock()
+	defer proxyReaders.Unlock()
+	_, counted := proxyReaders.managers[m]
+	return counted
+}
+
 // stopReadingProxyHeaders stops counting m's inbounds, once its box has
 // closed them.
 func stopReadingProxyHeaders(m *inboundManager) {

@@ -510,8 +510,14 @@ func newInboundManager(logger log.ContextLogger, registry adapter.InboundRegistr
 	}
 	// Every path that builds, replaces or drops an inbound comes through the
 	// table -- a hot add, a client save that rebuilds one, a TLS reload -- so
-	// this is where the PROXY dial guard learns it may switch off.
-	m.settledHook = refreshProxyHeaders
+	// this is where the PROXY dial guard learns it may switch off. Not before
+	// the box starts: its inbounds count only from then, and Start refreshes
+	// once for all of them.
+	m.settledHook = func() {
+		if readingProxyHeaders(m) {
+			refreshProxyHeaders()
+		}
+	}
 	return m
 }
 
