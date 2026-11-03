@@ -508,4 +508,5 @@ export default {
   totalTraffic: "Total Traffic",
   totalSitesCount: "Total Sites",
   pageInfo: "Page {current} of {total}, {count} sites",
+  localNodeOnly: "Local node only",
 }

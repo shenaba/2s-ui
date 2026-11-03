@@ -161,6 +161,7 @@ export default {
     reset: "Reset",
     copyAll: "Copy all",
     adopt: "Adopt",
+    copy: "Copy",
     prev: "Prev",
     next: "Next",
     copied: "Copied",

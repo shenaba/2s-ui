@@ -159,6 +159,10 @@ export default {
     reset: "Đặt lại",
     copyAll: "Sao chép tất cả",
     adopt: "Nhận",
+    copy: "Sao chép",
+    prev: "Trước",
+    next: "Tiếp",
+    copied: "Đã sao chép",
   },
   login: {
     title: "Đăng nhập",

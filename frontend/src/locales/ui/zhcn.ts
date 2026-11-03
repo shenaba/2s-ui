@@ -505,6 +505,7 @@ export default {
   totalTraffic: "总流量",
   totalSitesCount: "网站总数",
   pageInfo: "第 {current} / {total} 页，共 {count} 个网站",
+  localNodeOnly: "仅统计本机",
   downloadConfig: "下载 sing-box 配置",
   addItem: "添加{x}",
   newItem: "新建{x}",

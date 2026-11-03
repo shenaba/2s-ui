@@ -3,6 +3,7 @@
     <!-- Toolbar: period selector, search input, refresh button -->
     <Teleport v-if="mounted && toolbarTeleport" :to="toolbarTeleport">
       <div class="ts-toolbar ts-header-toolbar">
+        <span class="ts-node-hint">{{ $t('ui.localNodeOnly') }}</span>
         <Segmented v-model="period" :options="periods" @update:model-value="onPeriodChange" />
         <div class="search-box">
           <input
@@ -11,7 +12,7 @@
             class="ts-input"
             :placeholder="$t('ui.siteSearch')"
             @input="onSearchInput"
-            @keydown.enter="fetchData"
+            @keydown.enter="onSearchEnter"
           />
           <span v-if="searchInput" class="clear-btn" @click="clearSearch">✕</span>
         </div>
@@ -21,6 +22,7 @@
       </div>
     </Teleport>
     <div v-else-if="!toolbarTeleport" class="ts-toolbar">
+      <span class="ts-node-hint">{{ $t('ui.localNodeOnly') }}</span>
       <Segmented v-model="period" :options="periods" @update:model-value="onPeriodChange" />
       <div class="grow" />
       <div class="search-box">
@@ -30,7 +32,7 @@
           class="ts-input"
           :placeholder="$t('ui.siteSearch')"
           @input="onSearchInput"
-          @keydown.enter="fetchData"
+          @keydown.enter="onSearchEnter"
         />
         <span v-if="searchInput" class="clear-btn" @click="clearSearch">✕</span>
       </div>
@@ -102,7 +104,7 @@
                 <button
                   type="button"
                   class="copy-btn"
-                  title="Copy"
+                  :title="$t('actions.copy')"
                   @click="copySite(item.target)"
                 >
                   <Ico name="copy" :size="12" />
@@ -230,6 +232,7 @@ const toggleSort = (field: 'total' | 'down' | 'up') => {
   fetchData()
 }
 
+let currentReqId = 0
 let debounceTimer: any = null
 const onSearchInput = () => {
   if (debounceTimer) clearTimeout(debounceTimer)
@@ -239,7 +242,20 @@ const onSearchInput = () => {
   }, 350)
 }
 
+const onSearchEnter = () => {
+  if (debounceTimer) {
+    clearTimeout(debounceTimer)
+    debounceTimer = null
+  }
+  page.value = 1
+  fetchData()
+}
+
 const clearSearch = () => {
+  if (debounceTimer) {
+    clearTimeout(debounceTimer)
+    debounceTimer = null
+  }
   searchInput.value = ''
   page.value = 1
   fetchData()
@@ -263,6 +279,7 @@ const copySite = (site: string) => {
 }
 
 const fetchData = async () => {
+  const reqId = ++currentReqId
   loading.value = true
   try {
     const params: Record<string, any> = {
@@ -280,13 +297,18 @@ const fetchData = async () => {
     }
 
     const res = await HttpUtils.get('api/targetStats', params)
+    if (reqId !== currentReqId) {
+      return
+    }
     if (res.success && res.obj) {
       items.value = res.obj.items || []
       summary.value = res.obj.summary || { totalUp: 0, totalDown: 0, total: 0, totalSites: 0 }
       totalCount.value = res.obj.total || 0
     }
   } finally {
-    loading.value = false
+    if (reqId === currentReqId) {
+      loading.value = false
+    }
   }
 }
 
@@ -313,6 +335,16 @@ onMounted(() => {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.ts-node-hint {
+  font-size: 11px;
+  color: var(--text-3);
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-subtle);
+  white-space: nowrap;
 }
 
 .ts-header-toolbar {

@@ -159,6 +159,10 @@ export default {
     reset: "重置",
     copyAll: "複製全部",
     adopt: "採納",
+    copy: "複製",
+    prev: "上一頁",
+    next: "下一頁",
+    copied: "已複製",
   },
   login: {
     title: "登錄",

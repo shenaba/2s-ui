@@ -500,4 +500,13 @@ export default {
   downloadConfig: "Tải cấu hình sing-box",
   addItem: "Thêm {x}",
   newItem: "{x} mới",
+  targetStats: "Lưu lượng trang web đích",
+  targetSites: "Trang web đích",
+  targetSite: "Trang web đích",
+  targetSitesSub: "Các tên miền đã truy cập và lưu lượng tải lên/tải xuống",
+  siteSearch: "Tìm kiếm trang web đích...",
+  totalTraffic: "Tổng lưu lượng",
+  totalSitesCount: "Tổng số trang web",
+  pageInfo: "Trang {current} / {total}, {count} trang web",
+  localNodeOnly: "Chỉ nút cục bộ",
 }

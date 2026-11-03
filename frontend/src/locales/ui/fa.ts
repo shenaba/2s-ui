@@ -500,4 +500,13 @@ export default {
   downloadConfig: "دانلود پیکربندی sing-box",
   addItem: "افزودن {x}",
   newItem: "{x} جدید",
+  targetStats: "ترافیک سایت‌های مقصد",
+  targetSites: "سایت‌های مقصد",
+  targetSite: "سایت مقصد",
+  targetSitesSub: "دامنه‌های بازدید شده و حجم ارسال/دریافت",
+  siteSearch: "جستجوی سایت مقصد...",
+  totalTraffic: "مجموع ترافیک",
+  totalSitesCount: "مجموع سایت‌ها",
+  pageInfo: "صفحه {current} از {total}، {count} سایت",
+  localNodeOnly: "فقط گره محلی",
 }

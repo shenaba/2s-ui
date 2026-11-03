@@ -500,4 +500,13 @@ export default {
   downloadConfig: "Скачать конфиг sing-box",
   addItem: "Добавить {x}",
   newItem: "Новый {x}",
+  targetStats: "Трафик целевых сайтов",
+  targetSites: "Целевые сайты",
+  targetSite: "Целевой сайт",
+  targetSitesSub: "Посещенные домены и объем отправки/загрузки",
+  siteSearch: "Поиск целевого сайта...",
+  totalTraffic: "Всего трафика",
+  totalSitesCount: "Всего сайтов",
+  pageInfo: "Стр. {current} из {total}, сайтов: {count}",
+  localNodeOnly: "Только локальный узел",
 }
