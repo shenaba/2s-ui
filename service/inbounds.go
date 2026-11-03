@@ -87,7 +87,7 @@ func (s *InboundService) GetAll() (*[]map[string]interface{}, error) {
 			!(inbound.Type == "shadowtls" && shadowtls_version < 3) &&
 			!(inbound.Type == "shadowsocks" && ss_managed) {
 			users := []string{}
-			err = db.Raw("SELECT clients.name FROM clients, json_each(clients.inbounds) as je WHERE je.value = ?", inbound.Id).Scan(&users).Error
+			err = db.Raw("SELECT clients.name FROM clients, "+clientInboundsEach+" AS je WHERE je.value = ?", inbound.Id).Scan(&users).Error
 			if err != nil {
 				return nil, err
 			}
@@ -362,10 +362,10 @@ func (s *InboundService) fetchUsers(db *gorm.DB, inboundType string, condition s
 	// protocol is added to hasUser, so without this the first inbound of a new
 	// type silently comes up with no users at all.
 	err := db.Raw(
-		fmt.Sprintf(`SELECT json_extract(clients.config, "$.%s")
-		FROM clients WHERE enable = true AND %s
-		AND json_extract(clients.config, "$.%s") IS NOT NULL`,
-			inboundType, condition, inboundType), args...).Scan(&users).Error
+		fmt.Sprintf(`SELECT json_extract(%[1]s, '$.%[2]s')
+		FROM clients WHERE enable = true AND %[3]s
+		AND json_extract(%[1]s, '$.%[2]s') IS NOT NULL`,
+			clientConfigText, inboundType, condition), args...).Scan(&users).Error
 	if err != nil {
 		return nil, err
 	}
@@ -407,7 +407,7 @@ func (s *InboundService) addUsers(db *gorm.DB, inboundJson []byte, inboundId uin
 		return nil, err
 	}
 
-	const condition = "? IN (SELECT json_each.value FROM json_each(clients.inbounds))"
+	const condition = "? IN (SELECT je.value FROM " + clientInboundsEach + " AS je)"
 	inbound["users"], err = s.fetchUsers(db, inboundType, condition, inbound, inboundId)
 	if err != nil {
 		return nil, err
@@ -469,7 +469,7 @@ func (s *InboundService) initUsers(db *gorm.DB, inboundJson []byte, clientIds st
 func (s *InboundService) enabledClientNames(tx *gorm.DB, inboundId uint) (map[string]struct{}, error) {
 	var names []string
 	err := tx.Raw(
-		"SELECT clients.name FROM clients, json_each(clients.inbounds) AS je WHERE je.value = ? AND clients.enable = true",
+		"SELECT clients.name FROM clients, "+clientInboundsEach+" AS je WHERE je.value = ? AND clients.enable = true",
 		inboundId).Scan(&names).Error
 	if err != nil {
 		return nil, err

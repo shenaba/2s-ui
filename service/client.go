@@ -794,7 +794,7 @@ func (s *ClientService) UpdateClientsOnInboundAdd(tx *gorm.DB, initIds string, i
 
 func (s *ClientService) UpdateClientsOnInboundDelete(tx *gorm.DB, id uint, tag string) error {
 	var clientIds []uint
-	err := tx.Raw("SELECT clients.id FROM clients, json_each(clients.inbounds) AS je WHERE je.value = ?", id).Scan(&clientIds).Error
+	err := tx.Raw("SELECT clients.id FROM clients, "+clientInboundsEach+" AS je WHERE je.value = ?", id).Scan(&clientIds).Error
 	if err != nil {
 		return err
 	}
@@ -853,7 +853,7 @@ func (s *ClientService) UpdateLinksByInboundChange(tx *gorm.DB, inbounds *[]mode
 	var err error
 	for _, inbound := range *inbounds {
 		var clientIds []uint
-		err = tx.Raw("SELECT clients.id FROM clients, json_each(clients.inbounds) AS je WHERE je.value = ?", inbound.Id).Scan(&clientIds).Error
+		err = tx.Raw("SELECT clients.id FROM clients, "+clientInboundsEach+" AS je WHERE je.value = ?", inbound.Id).Scan(&clientIds).Error
 		if err != nil {
 			return err
 		}
