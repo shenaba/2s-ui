@@ -10,37 +10,22 @@ import (
 	"github.com/shenaba/2s-ui/util/common"
 )
 
-// ApplyProxyProtocol hands the core what it reads per connection and so
-// cannot fetch from the database itself: the proxyProtoTrusted setting, and
-// whether any inbound reads PROXY headers at all -- the dial guard costs
-// clients something (named fronts refused, TCP Fast Open's round trip) and
-// stays off otherwise. Called when the panel starts and after every settings
-// or inbounds save, a failed inbounds save included: the core may have been
-// changed and put back. A failure to read the setting leaves what the core had.
+// ApplyProxyProtocol hands the core the proxyProtoTrusted setting, which it
+// reads per connection and so cannot fetch from the database itself. Called
+// when the panel starts and after every settings save. A failure to read the
+// setting leaves what the core had.
 //
-// Whether one is in use is asked of the running core, not the rows: the core
-// takes a new inbound before its save commits, so the rows read by a save
-// committing in between would switch the guard off under it. A restart under
-// way is not waited for -- the save would answer only once it is done -- and
-// its inbounds turn the guard on themselves as they are built.
+// Whether any inbound reads PROXY headers -- which decides whether the dial
+// guard runs at all -- is the core's own to track: it recomputes that every
+// time its inbounds change, by whatever path.
 func ApplyProxyProtocol() {
 	var settingService SettingService
 	prefixes, err := settingService.GetProxyProtoTrusted()
 	if err != nil {
 		logger.Warning("PROXY protocol: keeping the trusted fronts as they were: ", err)
-	} else {
-		proxyheader.SetTrusted(prefixes)
+		return
 	}
-	proxyheader.RefreshInUse(func() (used, settled bool) {
-		if corePtr == nil {
-			return false, true
-		}
-		if !startMu.TryRLock() {
-			return false, false
-		}
-		defer startMu.RUnlock()
-		return corePtr.ReadsProxyHeaders(), true
-	})
+	proxyheader.SetTrusted(prefixes)
 }
 
 // Narrowest ranges a trusted front may be given. Everything inside one is

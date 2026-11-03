@@ -72,7 +72,7 @@ func TestProxyProtoTrustedReachesTheCore(t *testing.T) {
 		t.Fatal("an unparsable front was saved")
 	}
 	// 0.0.0.0/0 would make every address a front and every dial refused.
-	for _, broad := range []string{"0.0.0.0/0", "10.0.0.0/7", "::/0", "2001::/31"} {
+	for _, broad := range []string{"0.0.0.0/0", "10.0.0.0/7", "::/0", "2001::/31", "::ffff:0:0/96"} {
 		if err := settings.Save(db, json.RawMessage(`{"proxyProtoTrusted":"`+broad+`"}`)); err == nil {
 			t.Fatalf("saved %s as a trusted front", broad)
 		}

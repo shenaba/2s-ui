@@ -1,14 +1,18 @@
 package core
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/shenaba/2s-ui/core/proxyheader"
 
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/transport/v2raywebsocket"
@@ -464,5 +468,148 @@ func TestProxyProtocolEveryCopy(t *testing.T) {
 				t.Fatalf("core recorded the source as %s, want the client 203.0.113.7:51000", got)
 			}
 		})
+	}
+}
+
+// connectRelay is a relay on this host that the core does not run -- a gost
+// or a WARP client an outbound points at -- speaking HTTP CONNECT. It opens
+// the onward connection itself, where the core cannot see it.
+func connectRelay(t *testing.T) M.Socksaddr {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			client, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer client.Close()
+				request, err := http.ReadRequest(bufio.NewReader(client))
+				if err != nil || request.Method != http.MethodConnect {
+					return
+				}
+				upstream, err := net.Dial("tcp", request.Host)
+				if err != nil {
+					io.WriteString(client, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
+					return
+				}
+				defer upstream.Close()
+				if _, err = io.WriteString(client, "HTTP/1.1 200 Connection established\r\n\r\n"); err != nil {
+					return
+				}
+				go io.Copy(upstream, client)
+				io.Copy(client, upstream)
+			}()
+		}
+	}()
+	return M.SocksaddrFromNet(l.Addr())
+}
+
+// A client handed to a relay on this host cannot loop back into a
+// PROXY-enabled inbound through it either: the relay's connection arrives from
+// loopback, and the core never dialed it.
+func TestProxyProtocolRefusesAClientLoopingThroughARelay(t *testing.T) {
+	target := echoServer(t)
+	relay := connectRelay(t)
+	var mixedPort, ppPort int
+	c := startTestCore(t, func() map[string]any {
+		mixedPort, ppPort = freeTCPPort(t), freeTCPPort(t)
+		return map[string]any{
+			"log": map[string]any{"disabled": true},
+			"inbounds": []any{
+				map[string]any{"type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": mixedPort},
+				map[string]any{
+					"type": "vless", "tag": "pp-in", "listen": "127.0.0.1", "listen_port": ppPort,
+					"proxy_protocol": true,
+					"users":          []any{map[string]any{"name": "u", "uuid": proxyTestUUID}},
+				},
+			},
+			"outbounds": []any{map[string]any{"type": "http", "tag": "relay", "server": "127.0.0.1", "server_port": relay.Port}},
+		}
+	})
+	socks, err := proxy.SOCKS5("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(mixedPort)), nil, proxy.Direct)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Control: the relay does reach loopback.
+	echo, err := socks.Dial("tcp", target.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	echo.SetDeadline(time.Now().Add(5 * time.Second))
+	echo.Write([]byte("ping"))
+	if _, err = io.ReadFull(echo, make([]byte, 4)); err != nil {
+		t.Fatalf("control: loopback through the relay failed: %v", err)
+	}
+	echo.Close()
+
+	conn, err := socks.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(ppPort)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err = conn.Write([]byte("PROXY TCP4 198.51.100.9 127.0.0.1 51000 " + strconv.Itoa(ppPort) + "\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	client, err := vless.NewClient(proxyTestUUID, "", logger.NOP())
+	if err != nil {
+		t.Fatal(err)
+	}
+	vconn, err := client.DialConn(conn, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vconn.SetDeadline(time.Now().Add(5 * time.Second))
+	vconn.Write([]byte("ping"))
+	if _, err = io.ReadFull(vconn, make([]byte, 4)); err == nil {
+		t.Fatal("a header sent through a relay on this host was believed")
+	}
+	if sessions := c.GetInstance().ConnTracker().Sessions(func(info *ConnectionInfo) bool { return info.User == "u" }); len(sessions) != 0 {
+		t.Fatalf("the relayed connection was recorded as %s", sessions[0].Source)
+	}
+}
+
+// The dial guard follows the inbounds the core runs, however they change: it
+// goes off when the last PROXY-enabled one is removed or the core stops, and
+// on again when one is added.
+func TestProxyProtocolGuardFollowsTheInbounds(t *testing.T) {
+	if proxyheader.InUse() {
+		t.Fatal("the guard is on before any core runs")
+	}
+	c, addr := proxiedVLESSCore(t, nil)
+	if !proxyheader.InUse() {
+		t.Fatal("the guard is off with a PROXY-enabled inbound running")
+	}
+	if err := c.RemoveInbound("pp-in"); err != nil {
+		t.Fatal(err)
+	}
+	if proxyheader.InUse() {
+		t.Fatal("the guard stayed on after the PROXY-enabled inbound was removed")
+	}
+	raw, err := json.Marshal(map[string]any{
+		"type": "vless", "tag": "pp-in", "listen": "127.0.0.1", "listen_port": addr.Port,
+		"proxy_protocol": true,
+		"users":          []any{map[string]any{"name": "u", "uuid": proxyTestUUID}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = c.AddInbound(raw); err != nil {
+		t.Fatal(err)
+	}
+	if !proxyheader.InUse() {
+		t.Fatal("the guard is off after a PROXY-enabled inbound was added")
+	}
+	if err = c.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if proxyheader.InUse() {
+		t.Fatal("the guard stayed on after the core stopped")
 	}
 }

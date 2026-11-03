@@ -411,10 +411,27 @@ func (s *SettingService) GetProxyProtoTrusted() ([]netip.Prefix, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseTrustedProxies(raw)
+	return parseProxyProtoTrusted(raw)
 }
 
+// parseTrustedProxies reads webTrustedProxies as it always has. A v4-mapped
+// prefix stays one, and so matches nothing (client addresses are unmapped
+// before they are matched): turning a stored one into the IPv4 range it
+// names would make an entry that never trusted anyone -- ::ffff:0:0/96 is
+// 0.0.0.0/0 -- trust peers to speak for panel logins on upgrade.
 func parseTrustedProxies(raw string) ([]netip.Prefix, error) {
+	return parsePrefixes(raw, false)
+}
+
+// parseProxyProtoTrusted reads proxyProtoTrusted, which is new with it and
+// has nothing stored to keep inert: a v4-mapped prefix, as a dual-stack
+// socket shows a front's address, is taken as the IPv4 range it names, and
+// checkProxyProtoFronts then holds it to the same breadth as any other.
+func parseProxyProtoTrusted(raw string) ([]netip.Prefix, error) {
+	return parsePrefixes(raw, true)
+}
+
+func parsePrefixes(raw string, unmap4in6 bool) ([]netip.Prefix, error) {
 	parts := strings.FieldsFunc(raw, func(r rune) bool {
 		return r == ',' || unicode.IsSpace(r)
 	})
@@ -429,10 +446,7 @@ func parseTrustedProxies(raw string) ([]netip.Prefix, error) {
 			addr = addr.Unmap()
 			prefix = netip.PrefixFrom(addr, addr.BitLen())
 		}
-		// Addresses are unmapped before they are matched, and a 4in6 prefix
-		// contains no unmapped one: ::ffff:172.18.0.1/128, copied off a
-		// dual-stack socket, would be stored and never match.
-		if prefix.Addr().Is4In6() {
+		if unmap4in6 && prefix.Addr().Is4In6() {
 			if prefix.Bits() < 96 {
 				return nil, common.NewErrorf("invalid trusted proxy %q: a v4-mapped prefix needs at least 96 bits", part)
 			}
@@ -850,15 +864,18 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 		if isNotifySecretFlag(key) || key == notifyKindsKey {
 			continue
 		}
-		if key == "webTrustedProxies" || key == "proxyProtoTrusted" {
-			var prefixes []netip.Prefix
-			if prefixes, err = parseTrustedProxies(obj); err != nil {
+		if key == "webTrustedProxies" {
+			if _, err = parseTrustedProxies(obj); err != nil {
 				return err
 			}
-			if key == "proxyProtoTrusted" {
-				if err = checkProxyProtoFronts(prefixes); err != nil {
-					return err
-				}
+		}
+		if key == "proxyProtoTrusted" {
+			var prefixes []netip.Prefix
+			if prefixes, err = parseProxyProtoTrusted(obj); err != nil {
+				return err
+			}
+			if err = checkProxyProtoFronts(prefixes); err != nil {
+				return err
 			}
 		}
 		if key == "subCustomHeaders" {

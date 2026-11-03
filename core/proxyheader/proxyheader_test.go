@@ -72,16 +72,14 @@ func TestRead(t *testing.T) {
 	}{
 		{"v1 tcp4", "PROXY TCP4 203.0.113.7 127.0.0.1 51000 443\r\n", "203.0.113.7:51000"},
 		{"v1 tcp6", "PROXY TCP6 2001:db8::7 ::1 51000 443\r\n", "[2001:db8::7]:51000"},
-		{"v1 unknown keeps the source", "PROXY UNKNOWN\r\n", local.String()},
 		{"v2 tcp4", v2(t, proxyproto.HeaderProxyFromAddrs(2, v4, front)), "203.0.113.7:51000"},
 		{"v2 tcp6", v2(t, proxyproto.HeaderProxyFromAddrs(2, v6, front6)), "[2001:db8::7]:51000"},
-		{"v2 local keeps the source", v2(t, &proxyproto.Header{Version: 2, Command: proxyproto.LOCAL, TransportProtocol: proxyproto.UNSPEC}), local.String()},
 		{"v4-mapped source is unwrapped", "PROXY TCP6 ::ffff:203.0.113.7 ::1 51000 443\r\n", "203.0.113.7:51000"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			conn := send(t, c.header+tail)
-			got, err := Read(conn, local)
+			got, err := Read(conn)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -112,7 +110,7 @@ func TestReadRefuses(t *testing.T) {
 				client.Write([]byte(c.data))
 				client.Close()
 			}()
-			if got, err := Read(server, local); err == nil {
+			if got, err := Read(server); err == nil {
 				t.Fatalf("accepted %q as a header naming %s", c.data, got)
 			}
 		})
@@ -124,7 +122,7 @@ func TestReadTimesOut(t *testing.T) {
 	defer server.Close()
 	defer client.Close()
 	start := time.Now()
-	if _, err := readWithin(server, local, 50*time.Millisecond); err == nil {
+	if _, err := readWithin(server, 50*time.Millisecond); err == nil {
 		t.Fatal("a connection that never sent a header was accepted")
 	}
 	if elapsed := time.Since(start); elapsed > time.Second {
@@ -216,6 +214,13 @@ func hostAddrsForTest(t *testing.T, addrs ...string) {
 	t.Cleanup(func() { hostAddrs.snapshot.Store(nil) })
 }
 
+// guardDialT is guardDial with the guard's Release as a func, which is all
+// most tests want of it.
+func guardDialT(conn net.Conn, destination M.Socksaddr, linger time.Duration) (func(), error) {
+	guard, err := guardDial(conn, destination, linger)
+	return guard.Release, err
+}
+
 func TestGuardDial(t *testing.T) {
 	inUseForTest(t)
 	hostAddrsForTest(t, "198.51.100.1", "203.0.113.5")
@@ -242,7 +247,7 @@ func TestGuardDial(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			release, err := guardDial(dialedConn(c.local, c.remote), 0)
+			release, err := guardDialT(dialedConn(c.local, c.remote), M.ParseSocksaddr(c.remote), 0)
 			if (err != nil) != c.refused {
 				t.Fatalf("refused = %v, want %v", err != nil, c.refused)
 			}
@@ -267,10 +272,10 @@ func TestGuardDialIdleWithoutProxyInbounds(t *testing.T) {
 	inUse.Store(false)
 	SetTrusted([]netip.Prefix{netip.MustParsePrefix("172.18.0.1/32")})
 	defer SetTrusted(nil)
-	if _, err := guardDial(dialedConn("172.18.0.2:40030", "172.18.0.1:443"), 0); err != nil {
+	if _, err := guardDialT(dialedConn("172.18.0.2:40030", "172.18.0.1:443"), M.ParseSocksaddr("172.18.0.1:443"), 0); err != nil {
 		t.Fatalf("a named front was refused with no PROXY inbound: %v", err)
 	}
-	release, _ := guardDial(dialedConn("127.0.0.1:40031", "127.0.0.1:10443"), 0)
+	release, _ := guardDialT(dialedConn("127.0.0.1:40031", "127.0.0.1:10443"), M.ParseSocksaddr("127.0.0.1:10443"), 0)
 	defer release()
 	if dialedByCore(M.ParseSocksaddr("127.0.0.1:40031"), M.ParseSocksaddr("127.0.0.1:10443")) {
 		t.Fatal("a loopback dial was remembered with no PROXY inbound")
@@ -364,6 +369,10 @@ func (c *slowConn) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+func (c *slowConn) NeedHandshake() bool {
+	return !c.open
+}
+
 func (c *slowConn) LocalAddr() net.Addr {
 	if !c.open {
 		return M.Socksaddr{}
@@ -387,7 +396,7 @@ func TestGuardDialOpensASlowDialFirst(t *testing.T) {
 	defer SetTrusted(nil)
 
 	loop := &slowConn{local: M.ParseSocksaddr("127.0.0.1:40040").TCPAddr(), remote: M.ParseSocksaddr("127.0.0.1:10443").TCPAddr()}
-	release, err := guardDial(loop, 0)
+	release, err := guardDialT(loop, M.ParseSocksaddr("127.0.0.1:10443"), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +409,7 @@ func TestGuardDialOpensASlowDialFirst(t *testing.T) {
 	}
 
 	front := &slowConn{local: M.ParseSocksaddr("172.18.0.2:40041").TCPAddr(), remote: M.ParseSocksaddr("172.18.0.1:443").TCPAddr()}
-	if _, err := guardDial(front, 0); err == nil {
+	if _, err := guardDialT(front, M.ParseSocksaddr("172.18.0.1:443"), 0); err == nil {
 		t.Fatal("a slow dial to a named front was let through")
 	}
 
@@ -409,7 +418,7 @@ func TestGuardDialOpensASlowDialFirst(t *testing.T) {
 	// request header early.
 	inner := &slowConn{local: M.ParseSocksaddr("127.0.0.1:40042").TCPAddr(), remote: M.ParseSocksaddr("127.0.0.1:10443").TCPAddr()}
 	outer := &protocolConn{slowConn: inner}
-	release, err = guardDial(outer, 0)
+	release, err = guardDialT(outer, M.ParseSocksaddr("127.0.0.1:10443"), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -441,8 +450,8 @@ func (c *protocolConn) Upstream() any {
 // releasing one must not forget the other.
 func TestGuardDialCountsARepeatedConnection(t *testing.T) {
 	inUseForTest(t)
-	first, _ := guardDial(dialedConn("127.0.0.1:40010", "127.0.0.1:10443"), 0)
-	second, _ := guardDial(dialedConn("127.0.0.1:40010", "127.0.0.1:10443"), 0)
+	first, _ := guardDialT(dialedConn("127.0.0.1:40010", "127.0.0.1:10443"), M.ParseSocksaddr("127.0.0.1:10443"), 0)
+	second, _ := guardDialT(dialedConn("127.0.0.1:40010", "127.0.0.1:10443"), M.ParseSocksaddr("127.0.0.1:10443"), 0)
 	source, arrived := M.ParseSocksaddr("127.0.0.1:40010"), M.ParseSocksaddr("127.0.0.1:10443")
 	first()
 	if !dialedByCore(source, arrived) {
@@ -459,7 +468,7 @@ func TestGuardDialCountsARepeatedConnection(t *testing.T) {
 // dial to some other service here. That front is not the core.
 func TestGuardDialTellsAFrontOnASharedPort(t *testing.T) {
 	inUseForTest(t)
-	release, _ := guardDial(dialedConn("198.51.100.1:40011", "198.51.100.1:443"), 0)
+	release, _ := guardDialT(dialedConn("198.51.100.1:40011", "198.51.100.1:443"), M.ParseSocksaddr("198.51.100.1:443"), 0)
 	defer release()
 	if dialedByCore(M.ParseSocksaddr("198.51.100.1:40011"), M.ParseSocksaddr("198.51.100.1:10443")) {
 		t.Fatal("a front sharing a core dial's local port was taken for the core")
@@ -473,7 +482,7 @@ func TestGuardDialOutlivesTheConnection(t *testing.T) {
 	inUseForTest(t)
 	source, arrived := M.ParseSocksaddr("127.0.0.1:40050"), M.ParseSocksaddr("127.0.0.1:10443")
 	// Long enough that no scheduling delay can see it expire.
-	release, err := guardDial(dialedConn(source.String(), arrived.String()), time.Hour)
+	release, err := guardDialT(dialedConn(source.String(), arrived.String()), M.ParseSocksaddr(arrived.String()), time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,7 +498,7 @@ func TestGuardDialOutlivesTheConnection(t *testing.T) {
 
 	// And it does go: a short linger, waited out.
 	source = M.ParseSocksaddr("127.0.0.1:40051")
-	release, err = guardDial(dialedConn(source.String(), arrived.String()), 10*time.Millisecond)
+	release, err = guardDialT(dialedConn(source.String(), arrived.String()), M.ParseSocksaddr(arrived.String()), 10*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -510,7 +519,7 @@ func TestCoresOwnDialIsRefused(t *testing.T) {
 	inUseForTest(t)
 	const header = "PROXY TCP4 198.51.100.9 127.0.0.1 51000 443\r\n"
 	// The inbound's own end is local: it is where the core dialed.
-	release, err := guardDial(dialedConn("127.0.0.1:40020", local.String()), 0)
+	release, err := guardDialT(dialedConn("127.0.0.1:40020", local.String()), M.ParseSocksaddr(local.String()), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -858,5 +867,337 @@ func TestListenGivesUpOnAStalledTransport(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 3*time.Second {
 		t.Fatalf("the connection was held for %s", elapsed)
+	}
+}
+
+// relaysForTest starts a test with no watches, and leaves none behind.
+func relaysForTest(t *testing.T) {
+	reset := func() {
+		relays.Lock()
+		relays.until = make(map[relayKey]time.Time)
+		relays.Unlock()
+	}
+	reset()
+	t.Cleanup(reset)
+}
+
+// A relay on this host -- a local socks server an outbound points at -- opens
+// the onward connection itself, so the core never sees its ends. Asked for
+// somewhere it could reach an inbound by, it is watched; asked for somewhere
+// off this host, it is not.
+func TestRelayOnThisHostIsWatched(t *testing.T) {
+	inUseForTest(t)
+	relaysForTest(t)
+	hostAddrsForTest(t, "198.51.100.1")
+	SetTrusted([]netip.Prefix{netip.MustParsePrefix("172.18.0.1/32")})
+	defer SetTrusted(nil)
+	relay := func() net.Conn { return dialedConn("127.0.0.1:40050", "127.0.0.1:1080") }
+	onward := M.ParseSocksaddr("127.0.0.1:40051")
+
+	cases := []struct {
+		name        string
+		destination string
+		// The connection the relay's onward one would arrive as.
+		source, arrived string
+		watched         bool
+	}{
+		{"loopback", "127.0.0.1:10443", "127.0.0.1:40051", "127.0.0.1:10443", true},
+		{"this host's address", "198.51.100.1:10443", "198.51.100.1:40051", "198.51.100.1:10443", true},
+		{"a name", "localtest.me:10443", "127.0.0.1:40051", "127.0.0.1:10443", true},
+		{"a named front, from the front on any port", "172.18.0.1:8443", "172.18.0.1:40051", "172.18.0.2:443", true},
+		{"off this host", "203.0.113.7:10443", "127.0.0.1:40051", "127.0.0.1:10443", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			relaysForTest(t)
+			guard, err := guardDial(relay(), M.ParseSocksaddr(c.destination), 0)
+			if err != nil {
+				t.Fatalf("a dial to a relay on this host was refused: %v", err)
+			}
+			defer guard.Release()
+			if got := relayed(M.ParseSocksaddr(c.source), M.ParseSocksaddr(c.arrived)); got != c.watched {
+				t.Fatalf("relayed = %v, want %v", got, c.watched)
+			}
+		})
+	}
+
+	// A port watch is on connections from this host: a named front on that
+	// port is someone else's.
+	relaysForTest(t)
+	guard, _ := guardDial(relay(), M.ParseSocksaddr("localtest.me:10443"), 0)
+	defer guard.Release()
+	if relayed(M.ParseSocksaddr("172.18.0.1:40052"), M.ParseSocksaddr("127.0.0.1:10443")) {
+		t.Fatal("a port watch on this host matched a named front")
+	}
+	if relayed(onward, M.ParseSocksaddr("127.0.0.1:10444")) {
+		t.Fatal("a port watch matched another port")
+	}
+}
+
+// A header read off a connection a watch matches is refused, as one the core
+// dialed itself is.
+func TestRelayedHeaderIsRefused(t *testing.T) {
+	inUseForTest(t)
+	relaysForTest(t)
+	guard, err := guardDial(dialedConn("127.0.0.1:40060", "127.0.0.1:1080"), M.ParseSocksaddr("127.0.0.1:10443"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.Release()
+	conn := send(t, "PROXY TCP4 6.6.6.6 127.0.0.1 51000 443\r\n"+tail)
+	if _, err := accept(conn, M.ParseSocksaddr("127.0.0.1:40061"), M.ParseSocksaddr("127.0.0.1:10443")); err == nil {
+		t.Fatal("a forged header through a relay on this host was believed")
+	}
+}
+
+// A watch lapses relayWindow after it starts, and starts over when the
+// client's first bytes go out: a lazy relay connects only then.
+func TestRelayWatchLapsesAndRestartsOnPayload(t *testing.T) {
+	inUseForTest(t)
+	relaysForTest(t)
+	source, arrived := M.ParseSocksaddr("127.0.0.1:40071"), M.ParseSocksaddr("127.0.0.1:10443")
+	guard, _ := guardDial(dialedConn("127.0.0.1:40070", "127.0.0.1:8388"), M.ParseSocksaddr("example.com:10443"), 0)
+	if !guard.WatchesRelay() {
+		t.Fatal("no watch on a relay on this host")
+	}
+	// As if the dial were relayWindow old.
+	relays.Lock()
+	relays.until[relayKey{port: 10443}] = time.Now().Add(-time.Second)
+	relays.Unlock()
+	if relayed(source, arrived) {
+		t.Fatal("a lapsed watch still matched")
+	}
+	guard.Payload()
+	if !relayed(source, arrived) {
+		t.Fatal("the client's first bytes did not start the watch over")
+	}
+}
+
+// An outbound whose server is inside a named range -- an upstream in the same
+// VPC -- is a proxy, not a way back in: the client's bytes reach it wrapped in
+// that protocol. It is dialed; only a relay asked for a way back is watched,
+// and by its own address.
+func TestOutboundServerInANamedRangeIsDialed(t *testing.T) {
+	inUseForTest(t)
+	relaysForTest(t)
+	hostAddrsForTest(t, "10.0.0.2")
+	SetTrusted([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")})
+	defer SetTrusted(nil)
+	upstream := func() net.Conn { return dialedConn("10.0.0.2:40080", "10.0.0.7:443") }
+
+	guard, err := guardDial(upstream(), M.ParseSocksaddr("203.0.113.7:443"), 0)
+	if err != nil {
+		t.Fatalf("an outbound to a server in a named range was refused: %v", err)
+	}
+	if guard.WatchesRelay() {
+		t.Fatal("watched a proxy asked for an address off this host")
+	}
+
+	guard, err = guardDial(upstream(), M.ParseSocksaddr("example.com:443"), 0)
+	if err != nil {
+		t.Fatalf("an outbound to a server in a named range was refused: %v", err)
+	}
+	defer guard.Release()
+	if !relayed(M.ParseSocksaddr("10.0.0.7:40081"), M.ParseSocksaddr("10.0.0.2:10443")) {
+		t.Fatal("a name through a server in a named range was not watched by its address")
+	}
+	if relayed(M.ParseSocksaddr("10.0.0.5:40082"), M.ParseSocksaddr("10.0.0.2:10443")) {
+		t.Fatal("the watch matched another front in the range")
+	}
+
+	// Dialed directly, a named front is still refused.
+	if _, err := guardDial(upstream(), M.ParseSocksaddr("10.0.0.7:443"), 0); err == nil {
+		t.Fatal("a direct dial to a named front was let through")
+	}
+}
+
+// writeConn has no addresses, as a gRPC or HTTP/2 transport's conn has none,
+// and records what is written to it.
+type writeConn struct {
+	addrConn
+	writes int
+}
+
+func (c *writeConn) Write(p []byte) (int, error) {
+	c.writes++
+	return len(p), nil
+}
+
+// A conn without addresses that is not a slow dial is not written to -- an
+// empty write on a gRPC conn sends an empty frame -- and, since where it goes
+// cannot be seen, is watched as a relay on this host.
+func TestAddresslessConnIsNotWrittenTo(t *testing.T) {
+	inUseForTest(t)
+	relaysForTest(t)
+	conn := &writeConn{addrConn: addrConn{local: M.Socksaddr{}, remote: M.Socksaddr{}}}
+	guard, err := guardDial(conn, M.ParseSocksaddr("example.com:10443"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.Release()
+	if conn.writes != 0 {
+		t.Fatalf("written to %d times", conn.writes)
+	}
+	if !relayed(M.ParseSocksaddr("127.0.0.1:40090"), M.ParseSocksaddr("127.0.0.1:10443")) {
+		t.Fatal("a conn whose socket cannot be seen was not watched")
+	}
+}
+
+// A header that names no client -- a v2 LOCAL health check, a v1 UNKNOWN --
+// is consumed and refused: the front's own address is not a client's.
+func TestReadHeaderNamingNoClient(t *testing.T) {
+	for _, header := range []string{
+		"PROXY UNKNOWN\r\n",
+		v2(t, &proxyproto.Header{Version: 2, Command: proxyproto.LOCAL, TransportProtocol: proxyproto.UNSPEC}),
+	} {
+		conn := send(t, header+tail)
+		if _, err := Read(conn); err != errNoClient {
+			t.Fatalf("Read(%q) = %v, want errNoClient", header, err)
+		}
+		assertTail(t, conn)
+	}
+}
+
+// A front's PROXY health check is closed without reaching the inbound, and
+// logged at debug only: one every few seconds is not an error.
+func TestHealthCheckIsQuiet(t *testing.T) {
+	logs := &warnLogger{ContextLogger: log.NewNOPFactory().Logger()}
+	next := &recordHandler{got: make(chan reached, 1)}
+	metadata := adapter.InboundContext{Source: M.ParseSocksaddr("127.0.0.1:40000"), OriginDestination: local}
+	check := v2(t, &proxyproto.Header{Version: 2, Command: proxyproto.LOCAL, TransportProtocol: proxyproto.UNSPEC})
+	closed := make(chan struct{})
+	Handler(next, logs, true).NewConnection(context.Background(), send(t, check), metadata, func(error) { close(closed) })
+	select {
+	case got := <-next.got:
+		t.Fatalf("a health check reached the inbound from %s", got.metadata.Source)
+	case <-closed:
+	}
+	if len(logs.errors) != 0 || len(logs.debugs) != 1 {
+		t.Fatalf("errors = %q, debugs = %q; want it at debug only", logs.errors, logs.debugs)
+	}
+}
+
+// An untrusted connection steps aside for writes from the start -- vision's
+// splice and a half-close reach the socket -- and for reads once its first
+// bytes are seen, however many reads they take.
+func TestSniffStepsAside(t *testing.T) {
+	raw, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	client, err := net.Dial("tcp", raw.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	server, err := raw.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	resetWarnings()
+	logs := &warnLogger{ContextLogger: log.NewNOPFactory().Logger()}
+	conn := sniff(server, logs, M.ParseSocksaddr("203.0.113.9:40000"))
+	if _, ok := N.UnwrapWriter(conn).(*net.TCPConn); !ok {
+		t.Fatal("the TCP socket is not reachable for writes")
+	}
+	if _, ok := N.UnwrapWriter(conn).(N.WriteCloser); !ok {
+		t.Fatal("a half-close cannot reach the socket")
+	}
+
+	// The signature split over two reads.
+	if _, err := client.Write([]byte("PR")); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 2)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatal(err)
+	}
+	if conn.(*sniffConn).ReaderReplaceable() {
+		t.Fatal("stepped aside before the signature could be told")
+	}
+	if _, err := client.Write([]byte("OXY TCP4")); err != nil {
+		t.Fatal(err)
+	}
+	buf = make([]byte, 8)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatal(err)
+	}
+	if !conn.(*sniffConn).ReaderReplaceable() {
+		t.Fatal("still in the way after the signature was seen")
+	}
+	if len(logs.warns) != 1 {
+		t.Fatalf("warnings = %q, want one for a signature split across reads", logs.warns)
+	}
+}
+
+// chanListener hands out the conns sent to it.
+type chanListener struct {
+	conns  chan net.Conn
+	closed chan struct{}
+}
+
+func (l *chanListener) Accept() (net.Conn, error) {
+	select {
+	case conn := <-l.conns:
+		return conn, nil
+	case <-l.closed:
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *chanListener) Close() error {
+	select {
+	case <-l.closed:
+	default:
+		close(l.closed)
+	}
+	return nil
+}
+
+func (l *chanListener) Addr() net.Addr { return M.ParseSocksaddr("198.51.100.1:443").TCPAddr() }
+
+// closeConn records being closed.
+type closeConn struct {
+	addrConn
+	closed chan struct{}
+}
+
+func (c *closeConn) Close() error {
+	close(c.closed)
+	return nil
+}
+
+// An untrusted connection goes from the accept loop straight to Accept, with
+// nothing read; and closing the listener while it waits there closes it.
+func TestListenHandsUntrustedConnsOver(t *testing.T) {
+	inner := &chanListener{conns: make(chan net.Conn), closed: make(chan struct{})}
+	l := Listen(inner, log.NewNOPFactory().Logger(), true)
+	remote := M.ParseSocksaddr("203.0.113.9:40000").TCPAddr()
+	at := M.ParseSocksaddr("198.51.100.1:443").TCPAddr()
+
+	first := &closeConn{addrConn: addrConn{local: at, remote: remote}, closed: make(chan struct{})}
+	inner.conns <- first
+	conn, err := l.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := conn.RemoteAddr().String(); got != remote.String() {
+		t.Fatalf("RemoteAddr = %s, want %s", got, remote)
+	}
+
+	// Nobody accepts this one: Close must still get it closed.
+	second := &closeConn{addrConn: addrConn{local: at, remote: remote}, closed: make(chan struct{})}
+	inner.conns <- second
+	l.Close()
+	select {
+	case <-second.closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a connection waiting for Accept outlived the listener")
+	}
+	if _, err := l.Accept(); err == nil {
+		t.Fatal("Accept succeeded on a closed listener")
 	}
 }

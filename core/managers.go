@@ -200,6 +200,10 @@ type componentTable[T component] struct {
 	added    func(it T)
 	replaced func(old, new T)
 	dropped  func(it T)
+	// settled sees a create, rename or remove finish, whether it changed
+	// the table or not. Called holding neither lock, so it may read the
+	// table through settled().
+	settledHook func()
 }
 
 func newComponentTable[T component](kind string, logger log.ContextLogger, build func(recipe) (T, error)) componentTable[T] {
@@ -263,6 +267,7 @@ func (t *componentTable[T]) options(tag string) any {
 }
 
 func (t *componentTable[T]) create(r recipe) error {
+	defer t.settle()
 	t.mutate.Lock()
 	defer t.mutate.Unlock()
 	t.access.RLock()
@@ -327,6 +332,7 @@ func (t *componentTable[T]) restore(old T, r recipe, hasRecipe bool) error {
 }
 
 func (t *componentTable[T]) remove(tag string) error {
+	defer t.settle()
 	t.mutate.Lock()
 	defer t.mutate.Unlock()
 	it, found := t.get(tag)
@@ -371,6 +377,7 @@ func (t *componentTable[T]) rename(oldTag string, r recipe) error {
 	if oldTag == r.tag {
 		return t.create(r)
 	}
+	defer t.settle()
 	t.mutate.Lock()
 	old, found := t.get(oldTag)
 	if !found {
@@ -406,6 +413,14 @@ func (t *componentTable[T]) rename(oldTag string, r recipe) error {
 	t.swap(old, it, &r)
 	t.lifecycle.referencesChanged()
 	return nil
+}
+
+// settle runs settledHook, once mutate has been released: deferred ahead of
+// the Lock, so it runs after the Unlock deferred behind it.
+func (t *componentTable[T]) settle() {
+	if t.settledHook != nil {
+		t.settledHook()
+	}
 }
 
 func (t *componentTable[T]) catchUp(it T) error {
@@ -486,12 +501,17 @@ type inboundManager struct {
 }
 
 func newInboundManager(logger log.ContextLogger, registry adapter.InboundRegistry, endpoint adapter.EndpointManager) *inboundManager {
-	return &inboundManager{
+	m := &inboundManager{
 		componentTable: newComponentTable("inbound", logger, func(r recipe) (adapter.Inbound, error) {
 			return registry.Create(r.ctx, r.router, r.logger, r.tag, r.componentType, r.options)
 		}),
 		endpoint: endpoint,
 	}
+	// Every path that builds, replaces or drops an inbound comes through the
+	// table -- a hot add, a client save that rebuilds one, a TLS reload -- so
+	// this is where the PROXY dial guard learns it may switch off.
+	m.settledHook = refreshProxyHeaders
+	return m
 }
 
 func (m *inboundManager) Start(stage adapter.StartStage, scope *adapter.Scope) error {

@@ -562,6 +562,9 @@ type wrappedConn struct {
 	// releaseDial ends what proxyheader.GuardDial remembers about this
 	// connection's outbound; dialUntracked once it has been untracked.
 	releaseDial atomic.Pointer[func()]
+	// relayGuard is the guard to tell when the client's first bytes go out,
+	// while that has yet to happen and the outbound is a relay it watches.
+	relayGuard atomic.Pointer[proxyheader.Guard]
 }
 
 var dialUntracked = func() {}
@@ -582,13 +585,19 @@ func (w *wrappedConn) doUntrack() {
 // its front (#260). Then it is passed on to whatever the wrapped connection
 // does with it, as it was before this wrapper took it.
 func (w *wrappedConn) ConnHandshakeSuccess(remote net.Conn) error {
-	release, err := proxyheader.GuardDial(remote)
+	guard, err := proxyheader.GuardDial(remote, w.info.Destination)
 	if err != nil {
 		return err
 	}
-	if !w.releaseDial.CompareAndSwap(nil, &release) {
-		// Untracked already: nothing will release it later.
-		release()
+	if guard != nil {
+		if guard.WatchesRelay() {
+			w.relayGuard.Store(guard)
+		}
+		release := guard.Release
+		if !w.releaseDial.CompareAndSwap(nil, &release) {
+			// Untracked already: nothing will release it later.
+			release()
+		}
 	}
 	return network.ReportConnHandshakeSuccess(w.Conn, remote)
 }
@@ -598,6 +607,11 @@ func (w *wrappedConn) Read(b []byte) (int, error) {
 	if n > 0 {
 		w.info.up.Add(int64(n))
 		w.tracker.touch(w.info)
+		// The client's first bytes, about to be relayed: a lazy relay opens
+		// its onward connection only now (proxyheader.Guard.Payload).
+		if guard := w.relayGuard.Load(); guard != nil && w.relayGuard.CompareAndSwap(guard, nil) {
+			guard.Payload()
+		}
 	}
 	if shouldUntrackIOErr(err) {
 		w.doUntrack()

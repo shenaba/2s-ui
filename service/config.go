@@ -554,10 +554,6 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 		if err != nil {
 			tx.Rollback()
 			startMu.RUnlock()
-			// The core may have taken the inbound and been put back.
-			if obj == "inbounds" {
-				ApplyProxyProtocol()
-			}
 			return
 		}
 		tx.Commit()
@@ -572,7 +568,7 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 		// (same entry, same cseq, so the SPA drops it as not newer).
 		SetLastUpdate(dt)
 		startMu.RUnlock()
-		if obj == "settings" || obj == "inbounds" {
+		if obj == "settings" {
 			ApplyProxyProtocol()
 		}
 		if restartCore {

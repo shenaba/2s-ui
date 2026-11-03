@@ -24,9 +24,29 @@
 // and then send whatever header they like down a connection that arrives from
 // loopback. So the core reports every connection it dials for a client
 // (GuardDial, from the connection tracker), and a header on one it dialed to
-// this host is refused. A dial to a named front is refused outright: past a
-// NAT -- a Docker port mapping -- it arrives from the front's address, with a
-// source port that says nothing about who opened it.
+// this host is refused. A direct dial to a named front is refused outright:
+// past a NAT -- a Docker port mapping -- it arrives from the front's address,
+// with a source port that says nothing about who opened it.
+//
+// The same goes for a relay the core hands a client to: an outbound to a
+// socks or shadowsocks server on this host (a local gost, a WARP client), or
+// at a named front's address. That relay opens the onward connection, so the
+// core never sees its two ends, and it arrives from a trusted address. So a
+// dial to a relay in such a place that asks for an address it could reach
+// back into an inbound by -- a name, this host, a named front -- keeps a
+// watch for a short while (relayWindow): one from this host on the port asked
+// for, or one from the relay's own address (or the named front asked for) on
+// any port. A header on a trusted connection that matches a watch is refused.
+// It is a watch rather than a record: which connection is the relay's cannot
+// be told, so for that while a real front's connection matching it is
+// refused as well. A PROXY-enabled inbound on a port of its own (the usual
+// 127.0.0.1:10443 behind nginx) is never asked for that way.
+//
+// Two paths stay outside this. A relay at this host that a name sends through
+// a named front's NAT and back arrives from the front on another port. And
+// dials the core makes for an inbound rather than for a client -- a REALITY
+// or ShadowTLS handshake server -- are the operator's to point, and never at
+// a PROXY-enabled inbound.
 //
 // A header is read to its exact length and never past it. What follows it is
 // the client's TLS ClientHello, and leaving the connection itself in place
@@ -86,6 +106,17 @@ const (
 	// v2MaxPayload caps what a v2 header may claim to carry. Addresses take at
 	// most 216 bytes (unix); the rest is TLVs, which nginx does not send.
 	v2MaxPayload = 4096
+
+	// relayWindow is how long a watch on a relay lasts, from the dial and
+	// again from the client's first bytes. The relay opens its onward
+	// connection by then -- at the dial for socks and HTTP, on the first bytes
+	// for shadowsocks and the other lazy protocols -- and the inbound has read
+	// the header within readTimeout of accepting it. The rest is the relay's
+	// own dial, which to this host is immediate.
+	relayWindow = 3 * readTimeout
+	// relaySweepAt is how many watches may pile up before the expired ones
+	// are cleared. Ports and named fronts bound them anyway.
+	relaySweepAt = 1024
 )
 
 // Take reports whether options ask for PROXY headers, and clears the request:
@@ -117,9 +148,12 @@ func SetTrusted(prefixes []netip.Prefix) {
 //
 // Building an enabled Handler or Listen sets it (markInUse), before the
 // inbound can accept anything; only RefreshInUse clears it, from what the
-// running core holds. Not from the stored inbounds: the core takes a new
-// inbound before the save that stores it commits, so a scan of the rows by a
-// save committing in between would switch the guard off under a live one.
+// running core holds. The core calls that itself, whenever its inbounds
+// change and whenever it starts or stops, so every path that rebuilds or
+// drops one is covered -- not only the saves that happen to call it. Not from
+// the stored inbounds: the core takes a new inbound before the save that
+// stores it commits, so a scan of the rows by a save committing in between
+// would switch the guard off under a live one.
 var (
 	inUse   atomic.Bool
 	inUseMu sync.Mutex
@@ -127,6 +161,11 @@ var (
 	// RefreshInUse can tell one appeared while it was looking.
 	built uint64
 )
+
+// InUse reports whether the dial guard is on.
+func InUse() bool {
+	return inUse.Load()
+}
 
 func markInUse() {
 	inUseMu.Lock()
@@ -217,11 +256,45 @@ func addrsOf(conn net.Conn) (remote, local M.Socksaddr) {
 	return remote, local
 }
 
+// Guard is what GuardDial keeps about one connection the core dialed for a
+// client. A nil Guard keeps nothing.
+type Guard struct {
+	release func()
+	relay   []relayKey
+}
+
+// Release is called once the connection ends.
+func (g *Guard) Release() {
+	if g != nil && g.release != nil {
+		g.release()
+	}
+}
+
+// WatchesRelay reports whether Payload has anything to do.
+func (g *Guard) WatchesRelay() bool {
+	return g != nil && len(g.relay) > 0
+}
+
+// Payload is called once, when the client's first bytes are relayed down the
+// connection: a lazy relay -- shadowsocks, vmess -- opens its onward
+// connection only then, so the watch on it starts over.
+func (g *Guard) Payload() {
+	if g == nil {
+		return
+	}
+	now := time.Now()
+	for _, key := range g.relay {
+		watchRelay(key, now)
+	}
+}
+
 // GuardDial is told about each connection the core has just dialed for a
-// client. While PROXY protocol is in use, one to a front the operator named is
-// refused, and one an inbound would trust is remembered until readTimeout
-// after release is called, so that a PROXY-enabled inbound it reaches can tell
-// it from a real front (dialedByCore).
+// client, to destination -- the address the client asked for. While PROXY
+// protocol is in use, a direct dial to a front the operator named is refused;
+// one an inbound would trust is remembered until readTimeout after Release,
+// so that a PROXY-enabled inbound it reaches can tell it from a real front
+// (dialedByCore); and one to a relay that could reach back into an inbound
+// starts a watch (see the package comment).
 //
 // The record outlives the connection because the inbound's check can come
 // after it: a client that sends its forged header and resets at once has the
@@ -229,37 +302,59 @@ func addrsOf(conn net.Conn) (remote, local M.Socksaddr) {
 // its buffer. That read started when the inbound accepted, before this dial
 // returned, and ends within readTimeout of it, so readTimeout after the close
 // always covers it.
-func GuardDial(conn net.Conn) (release func(), err error) {
-	return guardDial(conn, readTimeout)
+func GuardDial(conn net.Conn, destination M.Socksaddr) (*Guard, error) {
+	return guardDial(conn, destination, readTimeout)
 }
 
-func guardDial(conn net.Conn, linger time.Duration) (release func(), err error) {
-	release = func() {}
+// earlyConn is a dial that has not opened its socket yet: sing-box's TCP Fast
+// Open dial, which says so through NeedHandshake.
+type earlyConn interface {
+	NeedHandshake() bool
+}
+
+func guardDial(conn net.Conn, destination M.Socksaddr, linger time.Duration) (*Guard, error) {
 	if !inUse.Load() {
-		return release, nil
+		return nil, nil
 	}
-	remote, local := addrsOf(conn)
+	destination = destination.Unwrap()
+	// The socket underneath, not the outermost conn: a proxy protocol's conn
+	// can report the address it was asked for as its remote one.
+	socket := innermost(conn)
+	remote, local := addrsOf(socket)
 	if !remote.Addr.IsValid() || !local.Addr.IsValid() {
 		// A TCP Fast Open dial has no socket yet: it opens one on its first
 		// write, which carries the client's first bytes -- a forged header
 		// among them -- so by the time the addresses exist it is too late to
 		// look at them. A write with no data makes it connect now, the plain
 		// way (tfo-go dials without TFO when there is nothing to send), at the
-		// cost of the round trip TFO saves. Written to the innermost conn:
-		// over a proxy outbound the outer one is that protocol's, and an empty
-		// write there could send its request header ahead of the payload.
-		_, err = innermost(conn).Write(nil)
-		if err != nil {
-			return release, err
-		}
-		remote, local = addrsOf(conn)
-		if !remote.Addr.IsValid() || !local.Addr.IsValid() {
-			return release, nil
+		// cost of the round trip TFO saves. Only that dial is written to: any
+		// other conn an empty write reaches is a protocol's, which could send
+		// a request header or an empty frame ahead of the payload.
+		if early, isEarly := socket.(earlyConn); isEarly && early.NeedHandshake() {
+			_, err := socket.Write(nil)
+			if err != nil {
+				return nil, err
+			}
+			remote, local = addrsOf(innermost(conn))
 		}
 	}
-	here := onThisHost(remote.Addr.Unmap(), local.Addr.Unmap())
-	if !here && namedFront(remote.Addr.Unmap()) {
-		return release, E.New("refused to dial ", remote, ": a trusted PROXY protocol front, which a client could speak through as anyone")
+	if !remote.Addr.IsValid() || !local.Addr.IsValid() {
+		// Where it goes cannot be seen -- a gRPC or HTTP/2 transport keeps
+		// its socket inside its own client -- so it may be a relay on this
+		// host.
+		return relayGuard(nil, true, netip.Addr{}, destination), nil
+	}
+	remoteAddr, localAddr := remote.Addr.Unmap(), local.Addr.Unmap()
+	here := onThisHost(remoteAddr, localAddr)
+	// Direct: the socket goes where the client asked. Anything else is an
+	// outbound's server, which only matters if it relays (relayGuard).
+	direct := destination.IsIP() && endpoint(destination) == endpoint(remote)
+	if direct && !here && namedFront(remoteAddr) {
+		return nil, E.New("refused to dial ", remote, ": a trusted PROXY protocol front, which a client could speak through as anyone")
+	}
+	var guard *Guard
+	if !direct && (here || namedFront(remoteAddr)) {
+		guard = relayGuard(guard, here, remoteAddr, destination)
 	}
 	// Remembered whenever an inbound could read it for a header. One bound
 	// for this host from this host (here) is trusted by the same rule on
@@ -268,30 +363,109 @@ func guardDial(conn net.Conn, linger time.Duration) (release func(), err error) 
 	// only one bound for another of this host's addresses can reach an
 	// inbound: on a cloud VM whose own address is inside the listed VPC
 	// range that is every dial, and the rest are not worth a record each.
-	if here || (namedFront(local.Addr.Unmap()) && hostAddrs.contains(remote.Addr.Unmap())) {
-		key := fourTuple{client: endpoint(local), server: endpoint(remote)}
-		dialed.Lock()
-		dialed.conns[key]++
-		dialed.Unlock()
-		forget := func() {
-			dialed.Lock()
-			if dialed.conns[key]--; dialed.conns[key] <= 0 {
-				delete(dialed.conns, key)
-			}
-			dialed.Unlock()
+	if here || (namedFront(localAddr) && hostAddrs.contains(remoteAddr)) {
+		if guard == nil {
+			guard = &Guard{}
 		}
-		var once sync.Once
-		return func() {
-			once.Do(func() {
-				if linger <= 0 {
-					forget()
-					return
-				}
-				time.AfterFunc(linger, forget)
-			})
-		}, nil
+		guard.release = remember(fourTuple{client: endpoint(local), server: endpoint(remote)}, linger)
 	}
-	return release, nil
+	return guard, nil
+}
+
+// remember records key until linger after the returned release is called.
+func remember(key fourTuple, linger time.Duration) func() {
+	dialed.Lock()
+	dialed.conns[key]++
+	dialed.Unlock()
+	forget := func() {
+		dialed.Lock()
+		if dialed.conns[key]--; dialed.conns[key] <= 0 {
+			delete(dialed.conns, key)
+		}
+		dialed.Unlock()
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			if linger <= 0 {
+				forget()
+				return
+			}
+			time.AfterFunc(linger, forget)
+		})
+	}
+}
+
+// relayKey is one watch on a relay: a connection from this host arriving on
+// port, or one from from arriving on any port.
+type relayKey struct {
+	port uint16
+	from netip.Addr
+}
+
+// relays holds the watches, each until the time it lapses.
+var relays = struct {
+	sync.Mutex
+	until map[relayKey]time.Time
+}{until: make(map[relayKey]time.Time)}
+
+// relayGuard adds to guard the watches a relay needs, if any. The relay is on
+// this host (here) or at relayAt, a named front's address; destination is
+// what the client asked it for. An address off this host and outside the
+// named fronts cannot lead back into an inbound, and needs none. A name can
+// lead anywhere, so it is taken as this host.
+func relayGuard(guard *Guard, here bool, relayAt netip.Addr, destination M.Socksaddr) *Guard {
+	var keys []relayKey
+	asked := destination.Addr.Unmap()
+	switch {
+	case destination.IsIP() && namedFront(asked):
+		// Through the front, whose NAT says nothing about the port.
+		keys = append(keys, relayKey{from: asked})
+	case destination.IsIP() && !asked.IsLoopback() && !hostAddrs.contains(asked):
+		return guard
+	case here:
+		keys = append(keys, relayKey{port: destination.Port})
+	}
+	if !here && relayAt.IsValid() {
+		keys = append(keys, relayKey{from: relayAt})
+	}
+	if len(keys) == 0 {
+		return guard
+	}
+	if guard == nil {
+		guard = &Guard{}
+	}
+	guard.relay = keys
+	guard.Payload()
+	return guard
+}
+
+func watchRelay(key relayKey, now time.Time) {
+	relays.Lock()
+	defer relays.Unlock()
+	if until := now.Add(relayWindow); until.After(relays.until[key]) {
+		relays.until[key] = until
+	}
+	if len(relays.until) > relaySweepAt {
+		for key, until := range relays.until {
+			if !now.Before(until) {
+				delete(relays.until, key)
+			}
+		}
+	}
+}
+
+// relayed reports whether a connection from source that arrived on local
+// matches a watch on a relay.
+func relayed(source, local M.Socksaddr) bool {
+	addr := source.Addr.Unmap()
+	now := time.Now()
+	relays.Lock()
+	defer relays.Unlock()
+	if onThisHost(addr, local.Addr.Unmap()) && now.Before(relays.until[relayKey{port: local.Port}]) {
+		return true
+	}
+	return now.Before(relays.until[relayKey{from: addr}])
 }
 
 // hostAddrs is this host's interface addresses, for telling a dial to one of
@@ -385,28 +559,38 @@ func dialedByCore(source, local M.Socksaddr) bool {
 }
 
 // accept reads the header off a trusted conn from source that arrived on
-// local, and refuses one the core dialed itself. Checked only after the header
-// is read: the core reports its dial before it relays a byte the client sent,
-// so by now it has been told.
+// local, and refuses one the core dialed itself, or one a relay it dialed may
+// have opened. Checked only after the header is read: the core reports its
+// dial before it relays a byte the client sent, so by now it has been told.
 func accept(conn net.Conn, source, local M.Socksaddr) (M.Socksaddr, error) {
-	client, err := Read(conn, source)
+	client, err := Read(conn)
 	if err != nil {
 		return M.Socksaddr{}, err
 	}
 	if dialedByCore(source, local) {
 		return M.Socksaddr{}, E.New("PROXY header on a connection this core dialed for a client")
 	}
+	if relayed(source, local) {
+		return M.Socksaddr{}, E.New("PROXY header on a connection that may be a client's, relayed back by a proxy the core just handed one to; ",
+			"give PROXY-enabled inbounds a port of their own")
+	}
 	return client, nil
 }
 
+// errNoClient is a header that names no client: a v2 LOCAL command, which is
+// how a front health-checks its backend, or a v1 UNKNOWN. Such a connection is
+// closed rather than passed on as the front's own -- which is what refusing a
+// trusted connection without a header is there to prevent -- and quietly: a
+// front checking every few seconds would otherwise fill the log.
+var errNoClient = errors.New("PROXY header names no client (a front's health check)")
+
 // Read consumes the header conn starts with and returns the client address it
-// names. A LOCAL command (a front's own health check) and a v1 UNKNOWN name
-// none, and get source back.
-func Read(conn net.Conn, source M.Socksaddr) (M.Socksaddr, error) {
-	return readWithin(conn, source, readTimeout)
+// names, or errNoClient when it names none.
+func Read(conn net.Conn) (M.Socksaddr, error) {
+	return readWithin(conn, readTimeout)
 }
 
-func readWithin(conn net.Conn, source M.Socksaddr, timeout time.Duration) (M.Socksaddr, error) {
+func readWithin(conn net.Conn, timeout time.Duration) (M.Socksaddr, error) {
 	err := conn.SetReadDeadline(time.Now().Add(timeout))
 	if err != nil {
 		return M.Socksaddr{}, err
@@ -424,11 +608,11 @@ func readWithin(conn net.Conn, source M.Socksaddr, timeout time.Duration) (M.Soc
 		return M.Socksaddr{}, err
 	}
 	if header.Command.IsLocal() || header.SourceAddr == nil {
-		return source, nil
+		return M.Socksaddr{}, errNoClient
 	}
 	client := M.SocksaddrFromNet(header.SourceAddr).Unwrap()
 	if !client.IsValid() {
-		return source, nil
+		return M.Socksaddr{}, errNoClient
 	}
 	return client, nil
 }
@@ -554,10 +738,11 @@ func (h *handler) NewConnection(ctx context.Context, conn net.Conn, metadata ada
 
 // logRefused reports a trusted connection that was refused. One that closed
 // before sending a byte is a port check or a front's own TCP health check,
-// which would otherwise put an error in the log every few seconds.
+// and one whose header names no client is a front's PROXY health check: either
+// would otherwise put an error in the log every few seconds.
 func logRefused(ctx context.Context, logger logger.ContextLogger, source M.Socksaddr, err error) {
 	err = E.Cause(err, "process connection from ", source)
-	if errors.Is(err, io.EOF) {
+	if errors.Is(err, io.EOF) || errors.Is(err, errNoClient) {
 		logger.DebugContext(ctx, err)
 		return
 	}
@@ -568,8 +753,11 @@ func logRefused(ctx context.Context, logger logger.ContextLogger, source M.Socks
 // signature. Such a connection is never read for a header, so the signature
 // goes on to the protocol, which refuses it in terms of its own -- a TLS or
 // VLESS error that says nothing about a front the operator forgot to list.
-// It only looks at what the protocol reads anyway, and steps aside after that
-// first read (ReaderReplaceable), so kTLS and splice still reach the socket.
+// It only looks at what the protocol reads anyway, across as many reads as
+// the first signatureLength bytes take to arrive, and steps aside for reading
+// once it has seen them (ReaderReplaceable). Writes it never looks at, so it
+// steps aside for those from the start (WriterReplaceable): kTLS, vision's
+// splice and a half-close all still reach the socket.
 func sniff(conn net.Conn, logger logger.ContextLogger, source M.Socksaddr) net.Conn {
 	return &sniffConn{Conn: conn, logger: logger, source: source}
 }
@@ -578,7 +766,11 @@ type sniffConn struct {
 	net.Conn
 	logger logger.ContextLogger
 	source M.Socksaddr
-	read   bool
+	// seen and length are the first bytes read so far; only Read touches
+	// them. done is read by whoever unwraps the conn, from any goroutine.
+	seen   [signatureLength]byte
+	length int
+	done   atomic.Bool
 }
 
 // signatureLength is enough of either signature to tell it from the start of
@@ -587,10 +779,15 @@ const signatureLength = 5
 
 func (c *sniffConn) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
-	if !c.read && n > 0 {
-		c.read = true
-		if n >= signatureLength && (bytes.HasPrefix(proxyproto.SIGV1, p[:signatureLength]) || bytes.HasPrefix(proxyproto.SIGV2, p[:signatureLength])) {
+	if n > 0 && !c.done.Load() {
+		c.length += copy(c.seen[c.length:], p[:n])
+		seen := c.seen[:c.length]
+		switch {
+		case !bytes.HasPrefix(proxyproto.SIGV1, seen) && !bytes.HasPrefix(proxyproto.SIGV2, seen):
+			c.done.Store(true)
+		case c.length == signatureLength:
 			untrustedWarning.warn(c.logger, c.source, time.Now())
+			c.done.Store(true)
 		}
 	}
 	return n, err
@@ -601,7 +798,11 @@ func (c *sniffConn) Upstream() any {
 }
 
 func (c *sniffConn) ReaderReplaceable() bool {
-	return c.read
+	return c.done.Load()
+}
+
+func (c *sniffConn) WriterReplaceable() bool {
+	return true
 }
 
 // untrustedWarning spaces out sniff's warning to one per warnInterval, saying
@@ -636,7 +837,9 @@ func (w *warnLimiter) warn(logger logger.ContextLogger, source M.Socksaddr, now 
 // client address from RemoteAddr. Headers are read on a goroutine per
 // connection and only finished ones are handed to Accept: an HTTP server asks
 // for RemoteAddr on its accept loop, so one front that went quiet would
-// otherwise stall every connection behind it.
+// otherwise stall every connection behind it. A connection that is not read
+// for one -- most of them, on a public inbound -- needs none of that, and is
+// handed over from the accept loop itself, as a plain listener would.
 func Listen(l net.Listener, logger logger.ContextLogger, enabled bool) net.Listener {
 	if !enabled {
 		return l
@@ -652,6 +855,7 @@ func listen(l net.Listener, logger logger.ContextLogger, handoff time.Duration) 
 		handoff:  handoff,
 		conns:    make(chan net.Conn),
 		done:     make(chan struct{}),
+		closing:  make(chan struct{}),
 	}
 	go pl.loop()
 	return pl
@@ -659,11 +863,13 @@ func listen(l net.Listener, logger logger.ContextLogger, handoff time.Duration) 
 
 type listener struct {
 	net.Listener
-	logger  logger.ContextLogger
-	handoff time.Duration
-	conns   chan net.Conn
-	done    chan struct{}
-	err     error // set before done is closed
+	logger    logger.ContextLogger
+	handoff   time.Duration
+	conns     chan net.Conn
+	done      chan struct{}
+	err       error // set before done is closed
+	closing   chan struct{}
+	closeOnce sync.Once
 }
 
 func (l *listener) Accept() (net.Conn, error) {
@@ -673,6 +879,13 @@ func (l *listener) Accept() (net.Conn, error) {
 	case <-l.done:
 		return nil, l.err
 	}
+}
+
+// Close also wakes the accept loop if it is waiting to hand a connection
+// over, which closing the listener underneath alone would not.
+func (l *listener) Close() error {
+	l.closeOnce.Do(func() { close(l.closing) })
+	return l.Listener.Close()
 }
 
 func (l *listener) loop() {
@@ -697,29 +910,35 @@ func (l *listener) loop() {
 			return
 		}
 		acceptDelay = 0
-		go l.handshake(conn)
+		source := M.SocksaddrFromNet(conn.RemoteAddr()).Unwrap()
+		local := M.SocksaddrFromNet(conn.LocalAddr()).Unwrap()
+		if Trusted(source, local) {
+			go l.handshake(conn, source, local)
+			continue
+		}
+		select {
+		case l.conns <- sniff(conn, l.logger, source):
+		case <-l.closing:
+			conn.Close()
+		}
 	}
 }
 
-func (l *listener) handshake(conn net.Conn) {
-	source := M.SocksaddrFromNet(conn.RemoteAddr()).Unwrap()
-	local := M.SocksaddrFromNet(conn.LocalAddr()).Unwrap()
-	if Trusted(source, local) {
-		client, err := accept(conn, source, local)
-		if err != nil {
-			conn.Close()
-			logRefused(context.Background(), l.logger, source, err)
-			return
-		}
-		conn = &sourceConn{Conn: conn, remote: client.TCPAddr()}
-	} else {
-		conn = sniff(conn, l.logger, source)
+func (l *listener) handshake(conn net.Conn, source, local M.Socksaddr) {
+	client, err := accept(conn, source, local)
+	if err != nil {
+		conn.Close()
+		logRefused(context.Background(), l.logger, source, err)
+		return
 	}
+	conn = &sourceConn{Conn: conn, remote: client.TCPAddr()}
 	timer := time.NewTimer(l.handoff)
 	defer timer.Stop()
 	select {
 	case l.conns <- conn:
 	case <-l.done:
+		conn.Close()
+	case <-l.closing:
 		conn.Close()
 	case <-timer.C:
 		conn.Close()
