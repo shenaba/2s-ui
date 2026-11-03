@@ -515,8 +515,22 @@ func connectRelay(t *testing.T) M.Socksaddr {
 // from loopback, and the core never dials it, so the core refuses to hand it
 // that port at all.
 func TestProxyProtocolRefusesAClientLoopingThroughARelay(t *testing.T) {
-	target := echoServer(t)
 	relay := connectRelay(t)
+	direct := map[string]any{"type": "direct", "tag": "direct"}
+	http := map[string]any{"type": "http", "tag": "relay", "server": "127.0.0.1", "server_port": relay.Port}
+	t.Run("relay outbound", func(t *testing.T) {
+		testLoopThroughARelay(t, relay, []any{http})
+	})
+	// The router dials what the selector has picked: the guard must judge
+	// that, not the selector.
+	t.Run("relay picked by a selector", func(t *testing.T) {
+		selector := map[string]any{"type": "selector", "tag": "pick", "outbounds": []any{"relay", "direct"}, "default": "relay"}
+		testLoopThroughARelay(t, relay, []any{selector, http, direct})
+	})
+}
+
+func testLoopThroughARelay(t *testing.T, relay M.Socksaddr, outbounds []any) {
+	target := echoServer(t)
 	var mixedPort, ppPort int
 	c := startTestCore(t, func() map[string]any {
 		mixedPort, ppPort = freeTCPPort(t), freeTCPPort(t)
@@ -530,7 +544,7 @@ func TestProxyProtocolRefusesAClientLoopingThroughARelay(t *testing.T) {
 					"users":          []any{map[string]any{"name": "u", "uuid": proxyTestUUID}},
 				},
 			},
-			"outbounds": []any{map[string]any{"type": "http", "tag": "relay", "server": "127.0.0.1", "server_port": relay.Port}},
+			"outbounds": outbounds,
 		}
 	})
 	socks, err := proxy.SOCKS5("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(mixedPort)), nil, proxy.Direct)
@@ -646,4 +660,15 @@ func TestProxyProtocolGuardFollowsTheInbounds(t *testing.T) {
 	if proxyheader.InUse() {
 		t.Fatal("the guard stayed on after the core stopped")
 	}
+}
+
+// readsProxyHeaders reports whether an inbound in the running core reads PROXY
+// protocol headers. It waits out an inbound being added or replaced, which can
+// be accepting before it is listed.
+func (c *Core) readsProxyHeaders() bool {
+	box, err := c.running()
+	if err != nil {
+		return false
+	}
+	return len(proxyHeaderPorts(box.inbound.settled())) > 0
 }

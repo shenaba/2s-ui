@@ -411,7 +411,22 @@ func (s *SettingService) GetProxyProtoTrusted() ([]netip.Prefix, error) {
 	if err != nil {
 		return nil, err
 	}
-	return parseProxyProtoTrusted(raw)
+	return parseProxyProtoFronts(raw)
+}
+
+// parseProxyProtoFronts is a proxyProtoTrusted value as the core may use it:
+// parsed, and held to checkProxyProtoFronts' breadth. Save checks the same, but
+// a value can arrive without a save -- an imported database, a row written by
+// hand -- and one that slipped past would trust the whole internet.
+func parseProxyProtoFronts(raw string) ([]netip.Prefix, error) {
+	prefixes, err := parseProxyProtoTrusted(raw)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkProxyProtoFronts(prefixes); err != nil {
+		return nil, err
+	}
+	return prefixes, nil
 }
 
 // parseTrustedProxies reads webTrustedProxies as it always has. A v4-mapped
@@ -870,11 +885,7 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 			}
 		}
 		if key == "proxyProtoTrusted" {
-			var prefixes []netip.Prefix
-			if prefixes, err = parseProxyProtoTrusted(obj); err != nil {
-				return err
-			}
-			if err = checkProxyProtoFronts(prefixes); err != nil {
+			if _, err = parseProxyProtoFronts(obj); err != nil {
 				return err
 			}
 		}

@@ -89,4 +89,20 @@ func TestProxyProtoTrustedReachesTheCore(t *testing.T) {
 	if !proxyheader.Trusted(gateway, arrived) {
 		t.Fatal("the saved front did not reach the core")
 	}
+
+	// A value that never went through Save -- an imported database, a row
+	// written by hand -- is held to the same breadth when it is applied: too
+	// broad, it is not used at all, rather than trusting the whole internet.
+	for _, stored := range []string{"0.0.0.0/0", "::ffff:0:0/96", "not-an-address"} {
+		if err := db.Model(model.Setting{}).Where("key = ?", "proxyProtoTrusted").Update("value", stored).Error; err != nil {
+			t.Fatal(err)
+		}
+		ApplyProxyProtocol()
+		if proxyheader.Trusted(M.ParseSocksaddr("203.0.113.9:40000"), arrived) {
+			t.Fatalf("a stored %q made a stranger a trusted front", stored)
+		}
+		if proxyheader.Trusted(gateway, arrived) {
+			t.Fatalf("a stored %q kept the fronts of before", stored)
+		}
+	}
 }

@@ -12,17 +12,25 @@ import (
 
 // ApplyProxyProtocol hands the core the proxyProtoTrusted setting, which it
 // reads per connection and so cannot fetch from the database itself. Called
-// when the panel starts and after every settings save. A failure to read the
-// setting leaves what the core had.
+// when the panel starts, after every settings save, and after a database
+// import. A failure to read the setting leaves what the core had. A stored
+// value that does not parse, or is too broad to be fronts, is not used at
+// all: the core then trusts only this host, and says why.
 //
 // Whether any inbound reads PROXY headers -- which decides whether the dial
 // guard runs at all -- is the core's own to track: it recomputes that every
 // time its inbounds change, by whatever path.
 func ApplyProxyProtocol() {
 	var settingService SettingService
-	prefixes, err := settingService.GetProxyProtoTrusted()
+	raw, err := settingService.getString("proxyProtoTrusted")
 	if err != nil {
 		logger.Warning("PROXY protocol: keeping the trusted fronts as they were: ", err)
+		return
+	}
+	prefixes, err := parseProxyProtoFronts(raw)
+	if err != nil {
+		logger.Error("PROXY protocol: ignoring the stored trusted fronts, trusting only this host: ", err)
+		proxyheader.SetTrusted(nil)
 		return
 	}
 	proxyheader.SetTrusted(prefixes)

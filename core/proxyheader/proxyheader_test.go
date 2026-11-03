@@ -344,7 +344,8 @@ func TestAddrCache(t *testing.T) {
 // look at all.
 func TestRefreshInUse(t *testing.T) {
 	t.Cleanup(func() { inUse.Store(nil) })
-	inUseForTest(t, 10443)
+	// As an inbound's Handler does when it is built.
+	markInUse(10443)
 	RefreshInUse(func() []uint16 { return nil })
 	if InUse() {
 		t.Fatal("still in use with no inbound reading headers")
@@ -364,6 +365,24 @@ func TestRefreshInUse(t *testing.T) {
 	if !InUse() || !(*inUse.Load()).has(10445) {
 		t.Fatal("dropped the port of an inbound built while the core was looked at")
 	}
+}
+
+// With no PROXY-enabled inbound ever built, a refresh does not even look.
+func TestRefreshInUseIdle(t *testing.T) {
+	inUseMu.Lock()
+	saved := built
+	built = 0
+	inUseMu.Unlock()
+	t.Cleanup(func() {
+		inUseMu.Lock()
+		built = saved
+		inUseMu.Unlock()
+	})
+	inUse.Store(nil)
+	RefreshInUse(func() []uint16 {
+		t.Fatal("looked at the cores with nothing to find")
+		return nil
+	})
 }
 
 // Port 0 is an inbound that picked its own port: every port is its.

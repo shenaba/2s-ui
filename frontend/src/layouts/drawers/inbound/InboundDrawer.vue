@@ -257,7 +257,7 @@ const proxyProtocolOffered = computed((): boolean =>
 // Behind a front, the inbound's own port is not the one clients dial, and
 // links are generated from it unless a Multi Domain row says otherwise (#260).
 const proxyWithoutAddrs = computed((): boolean =>
-  inbound.value.proxy_protocol == true && HasInData.includes(inbound.value.type) && addrsList.value.length == 0)
+  inbound.value.proxy_protocol == true && hasInData.value && addrsList.value.length == 0)
 
 // What this client config can dial through: the ShadowTLS listeners, whose
 // client half carries no proxy of its own and is only ever ridden (#255).

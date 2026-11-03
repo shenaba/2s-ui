@@ -45,11 +45,23 @@
 // within relayWindow is refused. An upstream is not usually also a front, so
 // the watch costs a real front nothing.
 //
-// Two paths stay outside this. A relay on this host that a name sends through
-// a named front's NAT and back arrives from the front on another port. And
-// dials the core makes for an inbound rather than for a client -- a REALITY
-// or ShadowTLS handshake server -- are the operator's to point, and never at
-// a PROXY-enabled inbound.
+// Some paths stay outside this. A relay on this host that a name sends
+// through a named front's NAT and back arrives from the front on another port.
+// A NAT on this host itself -- an iptables REDIRECT or DNAT in OUTPUT that
+// turns a dial to one port into a connection on another -- does the same to
+// the core's own dials: the inbound no longer sees the two ends the core
+// dialed, so neither the record nor the port check can match. A
+// PROXY-enabled inbound must not be the target of such a rule. And dials the
+// core makes for an inbound rather than for a client -- a REALITY or
+// ShadowTLS handshake server -- are the operator's to point, and never at a
+// PROXY-enabled inbound.
+//
+// On a transport that speaks HTTP (ws, http, httpupgrade, grpc lite) the
+// header names the client to the transport, as its RemoteAddr; sing-box's
+// transport server then prefers an X-Forwarded-For the request carries, as it
+// does with no PROXY protocol at all. Behind a CDN that is the address worth
+// having; without one it is the client's to choose, on these transports with
+// or without a front. The raw TCP listener has no such header to defer to.
 //
 // A header is read to its exact length and never past it. What follows it is
 // the client's TLS ClientHello, and leaving the connection itself in place
@@ -212,7 +224,13 @@ func markInUse(port uint16) {
 func RefreshInUse(running func() []uint16) {
 	inUseMu.Lock()
 	since := built
+	idle := since == 0 && inUse.Load() == nil
 	inUseMu.Unlock()
+	if idle {
+		// No PROXY-enabled inbound was ever built: nothing to look for, and a
+		// panel that never turned the switch on is spared the scan.
+		return
+	}
 	found := running()
 	inUseMu.Lock()
 	defer inUseMu.Unlock()

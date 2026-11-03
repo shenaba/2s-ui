@@ -81,10 +81,10 @@ func proxyHeaderPorts(inbounds []adapter.Inbound) []uint16 {
 }
 
 // proxyRoute is what proxyheader.GuardDial needs to know about the outbound a
-// client was routed to: whether it is direct, and where its server is. A group
-// is followed to what it has selected; it can change its mind before the dial,
-// which GuardDial checks for itself. A direct outbound with a detour dials
-// through another outbound, and is not direct.
+// client is dialed through -- the last of the chain the router resolved, so
+// never a group -- whether it is direct, and where its server is. A group is
+// still followed, for a tracker called without a chain. A direct outbound with
+// a detour dials through another outbound, and is not direct.
 func (m *outboundManager) proxyRoute(outbound adapter.Outbound) proxyheader.Route {
 	for range 8 {
 		group, isGroup := outbound.(adapter.OutboundGroup)
@@ -111,15 +111,4 @@ func (m *outboundManager) proxyRoute(outbound adapter.Outbound) proxyheader.Rout
 		route.Server = server.Build()
 	}
 	return route
-}
-
-// readsProxyHeaders reports whether an inbound in the running core reads PROXY
-// protocol headers. It waits out an inbound being added or replaced, which can
-// be accepting before it is listed.
-func (c *Core) readsProxyHeaders() bool {
-	box, err := c.running()
-	if err != nil {
-		return false
-	}
-	return len(proxyHeaderPorts(box.inbound.settled())) > 0
 }
