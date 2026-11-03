@@ -102,3 +102,52 @@ func TestTargetStatsQueries(t *testing.T) {
 		t.Errorf("month total sites: got %d, want 4", resMonth.Total)
 	}
 }
+
+func TestTargetStatsHourPeriodBoundary(t *testing.T) {
+	if err := database.InitDB(filepath.Join(t.TempDir(), "target_stats_hour.db")); err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.CloseDBForTest(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	})
+
+	now := time.Now().Unix()
+	currentHourBucket := now - (now % 3600)
+	prevHourBucket := currentHourBucket - 3600
+	twoHoursAgoBucket := currentHourBucket - 7200
+
+	db := database.GetDB()
+	testRows := []model.TargetStats{
+		{DateTime: prevHourBucket, User: "alice", Target: "prev-hour.com", Up: 100, Down: 200},
+		{DateTime: currentHourBucket, User: "alice", Target: "curr-hour.com", Up: 300, Down: 400},
+		{DateTime: twoHoursAgoBucket, User: "alice", Target: "old-hour.com", Up: 500, Down: 600},
+	}
+	if err := db.Create(&testRows).Error; err != nil {
+		t.Fatalf("create test rows: %v", err)
+	}
+
+	svc := &StatsService{}
+	res, err := svc.GetTargetStats(TargetStatsQuery{
+		Period: "hour",
+	})
+	if err != nil {
+		t.Fatalf("GetTargetStats hour: %v", err)
+	}
+
+	// Should cover both previous hour bucket and current hour bucket (2 items), excluding older ones
+	if res.Total != 2 {
+		t.Errorf("expected 2 sites across hour boundary (previous + current bucket), got %d", res.Total)
+	}
+	if res.Summary.Total != 1000 {
+		t.Errorf("expected summary total 1000, got %d", res.Summary.Total)
+	}
+
+	// Verify old-hour.com is not included
+	for _, item := range res.Items {
+		if item.Target == "old-hour.com" {
+			t.Errorf("old-hour.com (>1h ago) should not be included in hour period")
+		}
+	}
+}

@@ -254,21 +254,35 @@ var (
 // reaches.
 const maxPendingStats = 50000
 
+func takePendingLocked[T any](dest *[]T) []T {
+	held := *dest
+	*dest = nil
+	return held
+}
+
+func keepPendingLocked[T any](batch []T, dest *[]T, warn bool) {
+	if len(batch) > maxPendingStats {
+		dropped := len(batch) - maxPendingStats
+		if warn {
+			logger.Warning("stats: dropping ", dropped,
+				" undelivered rows; the database has been refusing writes for a while")
+		}
+		batch = batch[dropped:]
+	}
+	*dest = batch
+}
+
 // takePending returns the rows still owed to the database and clears the buffer.
 func takePending() []model.Stats {
 	pendingMu.Lock()
 	defer pendingMu.Unlock()
-	held := pendingStats
-	pendingStats = nil
-	return held
+	return takePendingLocked(&pendingStats)
 }
 
 func takePendingTargets() []model.TargetStats {
 	pendingMu.Lock()
 	defer pendingMu.Unlock()
-	held := pendingTargetStats
-	pendingTargetStats = nil
-	return held
+	return takePendingLocked(&pendingTargetStats)
 }
 
 // holdPending keeps a batch that failed to commit. It goes in front of whatever
@@ -277,46 +291,26 @@ func takePendingTargets() []model.TargetStats {
 func holdPending(batch []model.Stats) {
 	pendingMu.Lock()
 	defer pendingMu.Unlock()
-	keepPendingLocked(append(batch, pendingStats...))
+	keepPendingLocked(append(batch, pendingStats...), &pendingStats, true)
 }
 
 func holdPendingTargets(batch []model.TargetStats) {
 	pendingMu.Lock()
 	defer pendingMu.Unlock()
-	keepPendingTargetsLocked(append(batch, pendingTargetStats...))
+	keepPendingLocked(append(batch, pendingTargetStats...), &pendingTargetStats, false)
 }
 
 // carryPending adds rows newer than everything already held.
 func carryPending(rows []model.Stats) {
 	pendingMu.Lock()
 	defer pendingMu.Unlock()
-	keepPendingLocked(append(pendingStats, rows...))
+	keepPendingLocked(append(pendingStats, rows...), &pendingStats, true)
 }
 
 func carryPendingTargets(rows []model.TargetStats) {
 	pendingMu.Lock()
 	defer pendingMu.Unlock()
-	keepPendingTargetsLocked(append(pendingTargetStats, rows...))
-}
-
-// keepPendingLocked stores batch, oldest first, dropping the oldest rows if it
-// has grown past the cap. The caller holds pendingMu.
-func keepPendingLocked(batch []model.Stats) {
-	if len(batch) > maxPendingStats {
-		dropped := len(batch) - maxPendingStats
-		logger.Warning("stats: dropping ", dropped,
-			" undelivered rows; the database has been refusing writes for a while")
-		batch = batch[dropped:]
-	}
-	pendingStats = batch
-}
-
-func keepPendingTargetsLocked(batch []model.TargetStats) {
-	if len(batch) > maxPendingStats {
-		dropped := len(batch) - maxPendingStats
-		batch = batch[dropped:]
-	}
-	pendingTargetStats = batch
+	keepPendingLocked(append(pendingTargetStats, rows...), &pendingTargetStats, false)
 }
 
 // carryOverStats takes what the running core has counted since the last flush
@@ -383,6 +377,7 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 	if corePtr != nil && corePtr.IsRunning() {
 		if box := corePtr.GetInstance(); box != nil {
 			if st := box.StatsTracker(); st != nil {
+				st.SetTrafficEnabled(enableTraffic)
 				drained = st.GetStats()
 				drainedTargets = st.GetTargetStats()
 			}
@@ -531,7 +526,6 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 		for i := range targetBatch {
 			targetBatch[i].DateTime = targetBucket
 		}
-		targetBatch = mergeTargetStats(targetBatch)
 		err = tx.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "user"}, {Name: "target"}, {Name: "date_time"}},
 			DoUpdates: clause.Assignments(map[string]interface{}{
@@ -596,26 +590,50 @@ func mergeStats(rows []model.Stats) []model.Stats {
 	return merged
 }
 
+func periodDuration(period string, defaultPeriod string) int64 {
+	p := period
+	if p == "" {
+		p = defaultPeriod
+	}
+	switch p {
+	case "hour":
+		return 3600
+	case "day":
+		return 86400
+	case "month":
+		return 86400 * 30
+	case "60day":
+		return 86400 * 60
+	case "90day":
+		return 86400 * 90
+	default:
+		if defaultPeriod == "hour" {
+			return 3600
+		}
+		return 86400
+	}
+}
+
+func periodStart(period string, defaultPeriod string, alignBucket int64) int64 {
+	now := time.Now().Unix()
+	duration := periodDuration(period, defaultPeriod)
+	startTime := now - duration
+	if alignBucket > 1 {
+		startTime -= startTime % alignBucket
+	}
+	return startTime
+}
+
 func (s *StatsService) GetStats(resource string, tag string, period string) ([]model.Stats, error) {
 	now := time.Now().Unix()
 	var bucketSec int64
-	var startTime int64
 	switch period {
 	case "day":
 		bucketSec = 3600
-		startTime = now - 86400
-	case "month":
+	case "month", "60day", "90day":
 		bucketSec = 86400
-		startTime = now - 86400*30
-	case "60day":
-		bucketSec = 86400
-		startTime = now - 86400*60
-	case "90day":
-		bucketSec = 86400
-		startTime = now - 86400*90
 	default: // "hour"
 		bucketSec = 60
-		startTime = now - 3600
 	}
 
 	// Never read with a finer resolution than samples are stored at
@@ -624,6 +642,8 @@ func (s *StatsService) GetStats(resource string, tag string, period string) ([]m
 	if storedBucket, _ := (&SettingService{}).GetStatsBucketSeconds(); storedBucket > bucketSec {
 		bucketSec = storedBucket
 	}
+
+	startTime := periodStart(period, "hour", bucketSec)
 
 	db := database.GetDB()
 	resources := []string{resource}
@@ -844,22 +864,7 @@ type TargetStatsResponse struct {
 }
 
 func (s *StatsService) GetTargetStats(query TargetStatsQuery) (*TargetStatsResponse, error) {
-	now := time.Now().Unix()
-	var startTime int64
-	switch query.Period {
-	case "hour":
-		startTime = now - 3600
-	case "day":
-		startTime = now - 86400
-	case "month":
-		startTime = now - 86400*30
-	case "60day":
-		startTime = now - 86400*60
-	case "90day":
-		startTime = now - 86400*90
-	default:
-		startTime = now - 86400
-	}
+	startTime := periodStart(query.Period, "day", 3600)
 
 	db := database.GetDB()
 	filterQuery := func(tx *gorm.DB) *gorm.DB {
@@ -909,10 +914,6 @@ func (s *StatsService) GetTargetStats(query TargetStatsQuery) (*TargetStatsRespo
 		sortCol = "SUM(up)"
 	case "down":
 		sortCol = "SUM(down)"
-	case "total":
-		sortCol = "(SUM(up) + SUM(down))"
-	default:
-		sortCol = "(SUM(up) + SUM(down))"
 	}
 	sortOrder := "DESC"
 	if strings.ToUpper(query.SortOrder) == "ASC" {
