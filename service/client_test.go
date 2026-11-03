@@ -736,3 +736,33 @@ func TestClientEventsKeepDescriptionsFromClients(t *testing.T) {
 		}
 	}
 }
+
+// Deleting a client's only inbound used to store `"inbounds": null` (and
+// `"links": null`): the filtered slice started nil and marshals to null. The
+// edit drawer then failed to render its inbounds selector (issue #264).
+func TestInboundDeleteLeavesEmptyArrays(t *testing.T) {
+	db := newTestDB(t)
+	client := model.Client{
+		Name:     "solo",
+		Config:   json.RawMessage(`{}`),
+		Inbounds: json.RawMessage(`[7]`),
+		Links:    json.RawMessage(`[{"type":"local","remark":"in-7","uri":"vless://x@example.com:443"}]`),
+	}
+	if err := db.Create(&client).Error; err != nil {
+		t.Fatalf("seed client: %v", err)
+	}
+	var svc ClientService
+	if err := svc.UpdateClientsOnInboundDelete(db, 7, "in-7"); err != nil {
+		t.Fatalf("UpdateClientsOnInboundDelete: %v", err)
+	}
+	var after model.Client
+	if err := db.First(&after, client.Id).Error; err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if got := strings.TrimSpace(string(after.Inbounds)); got != "[]" {
+		t.Errorf("inbounds stored as %q, want []", got)
+	}
+	if got := strings.TrimSpace(string(after.Links)); got != "[]" {
+		t.Errorf("links stored as %q, want []", got)
+	}
+}
