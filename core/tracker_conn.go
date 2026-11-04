@@ -599,9 +599,9 @@ func (w *wrappedConn) doUntrack() {
 // its front (#260). Then it is passed on to whatever the wrapped connection
 // does with it, as it was before this wrapper took it.
 func (w *wrappedConn) ConnHandshakeSuccess(remote net.Conn) error {
-	var route proxyheader.Route
-	if w.tracker.route != nil && w.outbound != nil && proxyheader.InUse() {
-		route = w.tracker.route(w.outbound)
+	var route func() proxyheader.Route
+	if w.tracker.route != nil && w.outbound != nil {
+		route = func() proxyheader.Route { return w.tracker.route(w.outbound) }
 	}
 	guard, err := proxyheader.GuardDial(remote, w.info.Destination, route)
 	if err != nil {

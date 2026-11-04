@@ -64,6 +64,12 @@ func checkProxyProtoFronts(prefixes []netip.Prefix) error {
 		if prefix.Bits() < least {
 			return common.NewErrorf("trusted PROXY protocol front %s is too broad: every address in it would be believed for any client, and the core would refuse to dial it; name the fronts themselves (at least /%d)", prefix, least)
 		}
+		// This host is trusted without being listed. Listed, its loopback
+		// would also count as a named front, which a client is refused when
+		// it asks a relay for it -- every port of 127.0.0.1 through a relay.
+		if addr := prefix.Masked().Addr(); addr.IsLoopback() || addr.IsUnspecified() {
+			return common.NewErrorf("trusted PROXY protocol front %s is this host, which is always trusted; list only fronts elsewhere", prefix)
+		}
 	}
 	return nil
 }
@@ -81,16 +87,19 @@ var proxyProtocolTypes = map[string]bool{
 }
 
 // checkProxyProtocol refuses a PROXY protocol request the core cannot honour,
-// before the core is touched. accept_no_header is refused outright: a local
+// before the core is touched: an inbound type without the hook, or the QUIC
+// transport, which serves only UDP -- the switch would save, read nothing, and
+// still turn the dial guard on.
+//
+// accept_no_header is dropped from the options rather than refused: a local
 // connection must carry a header and a remote one is never read for one, so
-// there is nothing left for it to relax. So is the QUIC transport, which
-// serves only UDP: the switch would save, read nothing, and still turn the
-// dial guard on.
+// there is nothing for it to relax, and the core ignores it (proxyheader.Take).
+// Refusing it left an inbound that arrived with it -- an imported database --
+// impossible to save from the form, which has no switch for it.
 func checkProxyProtocol(inbound *model.Inbound) error {
 	var listen struct {
-		ProxyProtocol  bool `json:"proxy_protocol"`
-		AcceptNoHeader bool `json:"proxy_protocol_accept_no_header"`
-		Transport      struct {
+		ProxyProtocol bool `json:"proxy_protocol"`
+		Transport     struct {
 			Type string `json:"type"`
 		} `json:"transport"`
 	}
@@ -98,14 +107,30 @@ func checkProxyProtocol(inbound *model.Inbound) error {
 	if len(inbound.Options) == 0 || json.Unmarshal(inbound.Options, &listen) != nil {
 		return nil
 	}
-	if listen.AcceptNoHeader {
-		return common.NewErrorf("inbound %s: proxy_protocol_accept_no_header is not supported; a connection from this host must carry a PROXY header", inbound.Tag)
-	}
 	if listen.ProxyProtocol && !proxyProtocolTypes[inbound.Type] {
 		return common.NewErrorf("inbound %s: PROXY protocol is only supported on vless, vmess, trojan and anytls inbounds, not %s", inbound.Tag, inbound.Type)
 	}
 	if listen.ProxyProtocol && listen.Transport.Type == "quic" {
 		return common.NewErrorf("inbound %s: PROXY protocol is not supported over the QUIC transport, which carries no TCP connection to read a header from", inbound.Tag)
 	}
+	return dropAcceptNoHeader(inbound)
+}
+
+// dropAcceptNoHeader removes proxy_protocol_accept_no_header from the
+// inbound's options, when it is there at all.
+func dropAcceptNoHeader(inbound *model.Inbound) error {
+	var options map[string]json.RawMessage
+	if json.Unmarshal(inbound.Options, &options) != nil {
+		return nil
+	}
+	if _, found := options["proxy_protocol_accept_no_header"]; !found {
+		return nil
+	}
+	delete(options, "proxy_protocol_accept_no_header")
+	raw, err := json.Marshal(options)
+	if err != nil {
+		return err
+	}
+	inbound.Options = raw
 	return nil
 }

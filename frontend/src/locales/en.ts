@@ -710,6 +710,7 @@ export default {
     tcpKeepAliveInterval: "TCP Keep Alive Interval",
     proxyProtocol: "PROXY protocol",
     proxyProtocolHint: "Reads the client's real address from the PROXY header a front sends. Connections from this host, and from the fronts listed under Settings › Interface › Trusted PROXY Protocol Fronts, are read and must carry a header; any other connection is served as usual. Listen on 127.0.0.1 (under Docker, keep :: and publish the port on 127.0.0.1 instead), and enter the public port under Multi Domain, or links will use this one.",
+    proxyProtocolCommonPort: "Port {port} is one clients commonly ask for. A client sent through a proxy on this host (an outbound to a local socks, gost or WARP) is refused this port under any name, so that it cannot reach this inbound and name its own address. Listen on a port clients do not use, such as 10443, and let the front take {port}.",
   },
   dial: {
     bindIf: "Bind to Network Interface",

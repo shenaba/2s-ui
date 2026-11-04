@@ -1346,3 +1346,25 @@ func TestHandlerConnNamesTheClient(t *testing.T) {
 	}
 	assertTail(t, conn)
 }
+
+// GuardDial asks for the route only once it has read the guard as on, and the
+// route it gets is what the dial is judged by.
+func TestGuardDialAsksForTheRouteWhenOn(t *testing.T) {
+	inUse.Store(nil)
+	asked := false
+	if _, err := GuardDial(dialedConn("127.0.0.1:40090", "127.0.0.1:10443"), M.ParseSocksaddr("localhost:10443"), func() Route {
+		asked = true
+		return Route{}
+	}); err != nil || asked {
+		t.Fatalf("with the guard off: err = %v, route asked = %v", err, asked)
+	}
+	inUseForTest(t, 10443)
+	guard, err := GuardDial(dialedConn("127.0.0.1:40091", "127.0.0.1:10443"), M.ParseSocksaddr("localhost:10443"), func() Route {
+		asked = true
+		return Route{Direct: true}
+	})
+	if err != nil || !asked {
+		t.Fatalf("with the guard on: err = %v, route asked = %v; want a direct dial recorded", err, asked)
+	}
+	guard.Release()
+}

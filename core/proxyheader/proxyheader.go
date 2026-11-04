@@ -360,8 +360,20 @@ func (g *Guard) Release() {
 // its buffer. That read started when the inbound accepted, before this dial
 // returned, and ends within readTimeout of it, so readTimeout after the close
 // always covers it.
-func GuardDial(conn net.Conn, destination M.Socksaddr, route Route) (*Guard, error) {
-	return guardDial(conn, destination, route, readTimeout)
+//
+// route is asked only once the guard is known to be on, from the same reading
+// of it the dial is judged by: a guard that switched on just before would
+// otherwise judge a direct dial with no route, as a relay.
+func GuardDial(conn net.Conn, destination M.Socksaddr, route func() Route) (*Guard, error) {
+	ports := inUse.Load()
+	if ports == nil {
+		return nil, nil
+	}
+	var r Route
+	if route != nil {
+		r = route()
+	}
+	return guardPorts(conn, destination, r, *ports, readTimeout)
 }
 
 // earlyConn is a dial that has not opened its socket yet: sing-box's TCP Fast
@@ -375,6 +387,10 @@ func guardDial(conn net.Conn, destination M.Socksaddr, route Route, linger time.
 	if ports == nil {
 		return nil, nil
 	}
+	return guardPorts(conn, destination, route, *ports, linger)
+}
+
+func guardPorts(conn net.Conn, destination M.Socksaddr, route Route, ports portSet, linger time.Duration) (*Guard, error) {
 	destination = destination.Unwrap()
 	// The socket underneath, not the outermost conn: a proxy protocol's conn
 	// can report the address it was asked for as its remote one.
@@ -403,7 +419,7 @@ func guardDial(conn net.Conn, destination M.Socksaddr, route Route, linger time.
 		if route.Direct || !serverMayRelay(route.Server) {
 			return nil, nil
 		}
-		return nil, relayGuard(*ports, destination)
+		return nil, relayGuard(ports, destination)
 	}
 	remoteAddr, localAddr := plain(remote.Addr), plain(local.Addr)
 	here := onThisHost(remoteAddr, localAddr)
@@ -415,7 +431,7 @@ func guardDial(conn net.Conn, destination M.Socksaddr, route Route, linger time.
 	case direct && !here && namedFront(remoteAddr):
 		return nil, E.New("refused to dial ", remote, ": a trusted PROXY protocol front, which a client could speak through as anyone")
 	case !direct && (here || namedFront(remoteAddr)):
-		if err := relayGuard(*ports, destination); err != nil {
+		if err := relayGuard(ports, destination); err != nil {
 			return nil, err
 		}
 	}

@@ -26,11 +26,9 @@ func TestCheckProxyProtocol(t *testing.T) {
 		{"shadowsocks switched off", `{"type":"shadowsocks","tag":"s","listen_port":1,"proxy_protocol":false}`, true},
 		{"shadowsocks with it", `{"type":"shadowsocks","tag":"s","listen_port":1,"proxy_protocol":true}`, false},
 		{"hysteria2 with it", `{"type":"hysteria2","tag":"h","listen_port":1,"proxy_protocol":true}`, false},
-		{"accept_no_header on a supported type", `{"type":"vless","tag":"v","listen_port":1,"proxy_protocol":true,"proxy_protocol_accept_no_header":true}`, false},
 		{"vless over ws with it", `{"type":"vless","tag":"v","listen_port":1,"proxy_protocol":true,"transport":{"type":"ws"}}`, true},
 		{"vless over quic with it", `{"type":"vless","tag":"v","listen_port":1,"proxy_protocol":true,"transport":{"type":"quic"}}`, false},
 		{"vless over quic without it", `{"type":"vless","tag":"v","listen_port":1,"transport":{"type":"quic"}}`, true},
-		{"accept_no_header alone", `{"type":"vless","tag":"v","listen_port":1,"proxy_protocol_accept_no_header":true}`, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -46,6 +44,33 @@ func TestCheckProxyProtocol(t *testing.T) {
 				t.Fatal("accepted")
 			}
 		})
+	}
+}
+
+// accept_no_header has nothing to relax and the core ignores it: an inbound
+// that arrived with it -- an imported database -- saves, without it.
+func TestCheckProxyProtocolDropsAcceptNoHeader(t *testing.T) {
+	for _, raw := range []string{
+		`{"type":"vless","tag":"v","listen_port":1,"proxy_protocol":true,"proxy_protocol_accept_no_header":true}`,
+		`{"type":"vless","tag":"v","listen_port":1,"proxy_protocol_accept_no_header":false}`,
+	} {
+		var inbound model.Inbound
+		if err := inbound.UnmarshalJSON([]byte(raw)); err != nil {
+			t.Fatal(err)
+		}
+		if err := checkProxyProtocol(&inbound); err != nil {
+			t.Fatalf("refused %s: %v", raw, err)
+		}
+		var options map[string]any
+		if err := json.Unmarshal(inbound.Options, &options); err != nil {
+			t.Fatal(err)
+		}
+		if _, kept := options["proxy_protocol_accept_no_header"]; kept {
+			t.Fatalf("kept accept_no_header in %s", inbound.Options)
+		}
+		if options["listen_port"] != float64(1) {
+			t.Fatalf("lost the rest of the options: %s", inbound.Options)
+		}
 	}
 }
 
@@ -75,6 +100,13 @@ func TestProxyProtoTrustedReachesTheCore(t *testing.T) {
 	for _, broad := range []string{"0.0.0.0/0", "10.0.0.0/8", "172.16.0.0/12", "10.0.0.0/15", "::/0", "2001:db8::/32", "2001:db8::/47", "::ffff:0:0/96", "::ffff:10.0.0.0/111"} {
 		if err := settings.Save(db, json.RawMessage(`{"proxyProtoTrusted":"`+broad+`"}`)); err == nil {
 			t.Fatalf("saved %s as a trusted front", broad)
+		}
+	}
+	// This host is always trusted; listed, its loopback would also be refused
+	// to every client through a relay.
+	for _, self := range []string{"127.0.0.1", "127.0.0.0/16", "::1", "0.0.0.0/32", "::/48"} {
+		if err := settings.Save(db, json.RawMessage(`{"proxyProtoTrusted":"`+self+`"}`)); err == nil {
+			t.Fatalf("saved %s, this host, as a trusted front", self)
 		}
 	}
 	// The narrowest ranges a whole Docker network or site can need still fit.

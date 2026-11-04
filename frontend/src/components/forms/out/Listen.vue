@@ -35,6 +35,10 @@
     </div>
 
     <MHint v-if="proxyProtocol && optionProxyProtocol" style="margin-bottom: 14px;">{{ $t('listen.proxyProtocolHint') }}</MHint>
+    <!-- A relay on this host is refused a PROXY-enabled inbound's port by any
+         name (core/proxyheader): on a port clients use, that is all their
+         traffic to it through such a relay. -->
+    <MHint v-if="proxyProtocol && optionProxyProtocol && CommonPorts.includes(Number(d().listen_port))" style="margin-bottom: 14px;">{{ $t('listen.proxyProtocolCommonPort', { port: d().listen_port }) }}</MHint>
 
     <div v-if="optionTCP || optionUDP" style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 14px;">
       <SwitchLabel v-if="optionTCP" v-model="tcpFastOpen" label="TCP Fast Open" />
@@ -74,6 +78,9 @@ import { valueField } from '@/plugins/formField'
 // offered otherwise -- except to turn it off where it is already on, which
 // the save would refuse.
 const props = defineProps<{ data: any; inTags?: string[]; proxyProtocol?: boolean }>()
+// Ports clients ask for all the time, which a PROXY-enabled inbound should
+// leave to its front.
+const CommonPorts = [80, 443]
 
 const d = () => props.data
 
