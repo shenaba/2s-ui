@@ -599,6 +599,11 @@ func (w *wrappedConn) doUntrack() {
 // its front (#260). Then it is passed on to whatever the wrapped connection
 // does with it, as it was before this wrapper took it.
 func (w *wrappedConn) ConnHandshakeSuccess(remote net.Conn) error {
+	// Off, nothing to guard -- and nothing it could have reached: an inbound
+	// that reads headers switches the guard on before it listens.
+	if !proxyheader.InUse() {
+		return network.ReportConnHandshakeSuccess(w.Conn, remote)
+	}
 	var route func() proxyheader.Route
 	if w.tracker.route != nil && w.outbound != nil {
 		route = func() proxyheader.Route { return w.tracker.route(w.outbound) }

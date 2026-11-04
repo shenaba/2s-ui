@@ -51,7 +51,12 @@
 // Some paths stay outside this. A relay that reaches this inbound through a
 // port mapping that changes the port -- a Docker host's relay asked for the
 // published 8443 of a container's 443 -- asks for a port the check does not
-// know; a mapping that keeps the port (443:443) is caught.
+// know; a mapping that keeps the port (443:443) is caught. So does a direct
+// dial, from a container, to the host's public address on a port Docker
+// publishes on every interface: the hairpin NAT delivers it from the bridge's
+// gateway, a trusted front, and the container cannot see the host's public
+// address to tell. Publish a PROXY-enabled inbound's port on 127.0.0.1 only,
+// which is what the form says.
 // A NAT on this host itself -- an iptables REDIRECT or DNAT in OUTPUT that
 // turns a dial to one port into a connection on another -- does the same to
 // the core's own dials: the inbound no longer sees the two ends the core
@@ -107,6 +112,14 @@ const (
 	// its header. A front sends it before anything else, so this only ever
 	// runs out on a connection that was never going to send one.
 	readTimeout = 5 * time.Second
+	// dialLinger is how long the record of a dial the core made to this host
+	// outlives the connection (GuardDial). The inbound's read of the header
+	// ends readTimeout after it accepts, but it may accept late: a backlog
+	// under load, or an accept loop backing off when out of file
+	// descriptors, holds the connection -- forged header and all -- after
+	// the core has closed it. A record costs a map entry; a minute covers
+	// any accept that still means to happen.
+	dialLinger = time.Minute
 	// handoffTimeout bounds how long a connection whose header is read waits
 	// for Accept. A transport that stopped serving without closing its
 	// listener would otherwise leave one goroutine and one socket behind for
@@ -232,32 +245,43 @@ func RefreshInUse(running func() []uint16) {
 	// box started -- would switch the guard off under that box's inbounds.
 	refreshMu.Lock()
 	defer refreshMu.Unlock()
-	inUseMu.Lock()
-	since := built
-	idle := since == 0 && inUse.Load() == nil
-	inUseMu.Unlock()
-	if idle {
-		// No PROXY-enabled inbound was ever built: nothing to look for, and a
-		// panel that never turned the switch on is spared the scan.
-		return
-	}
-	found := running()
-	inUseMu.Lock()
-	defer inUseMu.Unlock()
-	ports := make(portSet, len(found))
-	for _, port := range found {
-		ports[port] = struct{}{}
-	}
-	if current := inUse.Load(); built != since && current != nil {
-		for port := range *current {
+	for attempt := 1; ; attempt++ {
+		inUseMu.Lock()
+		since := built
+		idle := since == 0 && inUse.Load() == nil
+		inUseMu.Unlock()
+		if idle {
+			// No PROXY-enabled inbound was ever built: nothing to look for,
+			// and a panel that never turned the switch on is spared the scan.
+			return
+		}
+		found := running()
+		inUseMu.Lock()
+		// One built while looking may be in a core the look missed. Look
+		// again rather than keep every port: those could be gone, and
+		// nothing else would come to clear them. A few tries, then keep
+		// them -- on, not off, is the side to err on.
+		if built != since && attempt < 3 {
+			inUseMu.Unlock()
+			continue
+		}
+		ports := make(portSet, len(found))
+		for _, port := range found {
 			ports[port] = struct{}{}
 		}
-	}
-	if len(ports) == 0 {
-		inUse.Store(nil)
+		if current := inUse.Load(); built != since && current != nil {
+			for port := range *current {
+				ports[port] = struct{}{}
+			}
+		}
+		if len(ports) == 0 {
+			inUse.Store(nil)
+		} else {
+			inUse.Store(&ports)
+		}
+		inUseMu.Unlock()
 		return
 	}
-	inUse.Store(&ports)
 }
 
 func namedFront(addr netip.Addr) bool {
@@ -356,10 +380,8 @@ func (g *Guard) Release() {
 //
 // The record outlives the connection because the inbound's check can come
 // after it: a client that sends its forged header and resets at once has the
-// core close both ends, while the inbound may still be reading the header off
-// its buffer. That read started when the inbound accepted, before this dial
-// returned, and ends within readTimeout of it, so readTimeout after the close
-// always covers it.
+// core close both ends, while the inbound may not even have accepted yet, and
+// still reads the header off its buffer when it does (dialLinger).
 //
 // route is asked only once the guard is known to be on, from the same reading
 // of it the dial is judged by: a guard that switched on just before would
@@ -373,21 +395,13 @@ func GuardDial(conn net.Conn, destination M.Socksaddr, route func() Route) (*Gua
 	if route != nil {
 		r = route()
 	}
-	return guardPorts(conn, destination, r, *ports, readTimeout)
+	return guardPorts(conn, destination, r, *ports, dialLinger)
 }
 
 // earlyConn is a dial that has not opened its socket yet: sing-box's TCP Fast
 // Open dial, which says so through NeedHandshake.
 type earlyConn interface {
 	NeedHandshake() bool
-}
-
-func guardDial(conn net.Conn, destination M.Socksaddr, route Route, linger time.Duration) (*Guard, error) {
-	ports := inUse.Load()
-	if ports == nil {
-		return nil, nil
-	}
-	return guardPorts(conn, destination, route, *ports, linger)
 }
 
 func guardPorts(conn net.Conn, destination M.Socksaddr, route Route, ports portSet, linger time.Duration) (*Guard, error) {

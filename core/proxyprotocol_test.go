@@ -660,6 +660,28 @@ func TestProxyProtocolGuardFollowsTheInbounds(t *testing.T) {
 	if proxyheader.InUse() {
 		t.Fatal("the guard stayed on after the core stopped")
 	}
+
+	// A core that builds a PROXY-enabled inbound and then fails to start
+	// leaves the guard as it found it.
+	failing, err := json.Marshal(map[string]any{
+		"log": map[string]any{"disabled": true},
+		"inbounds": []any{map[string]any{
+			"type": "vless", "tag": "pp-in", "listen": "127.0.0.1", "listen_port": addr.Port,
+			"proxy_protocol": true,
+			"users":          []any{map[string]any{"name": "u", "uuid": proxyTestUUID}},
+		}},
+		// Built after the inbounds, and refused there: a cipher that is none.
+		"outbounds": []any{map[string]any{"type": "shadowsocks", "tag": "bad", "server": "127.0.0.1", "server_port": 1, "method": "no-such-cipher", "password": "p"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = NewCore().Start(failing); err == nil {
+		t.Fatal("a core with an outbound it cannot build started")
+	}
+	if proxyheader.InUse() {
+		t.Fatal("the guard stayed on after a core failed to start")
+	}
 }
 
 // readsProxyHeaders reports whether an inbound in the running core reads PROXY

@@ -703,7 +703,7 @@ export default {
     tcpKeepAlive: "TCP Keep Alive",
     tcpKeepAliveInterval: "TCP Keep Alive 間隔",
     proxyProtocol: "PROXY protocol",
-    proxyProtocolHint: "從前置送來的 PROXY 標頭中讀取用戶端真實位址。來自本機、以及「設置 › 界面 › 可信 PROXY 前置」中所列位址的連線會被解析，且必須帶標頭；其他連線照常處理。建議監聽 127.0.0.1（使用 Docker 時保持 ::，改為只把連接埠映射到主機的 127.0.0.1），並在「多域名」中填寫對外連接埠，否則連結會使用這裡的連接埠。",
+    proxyProtocolHint: "從前置送來的 PROXY 標頭中讀取用戶端真實位址。來自本機、以及「設置 › 界面 › 可信 PROXY 前置」中所列位址的連線會被解析，且必須帶標頭；其他連線照常處理。建議監聽 127.0.0.1（使用 Docker 時保持 ::，改為只把連接埠映射到主機的 127.0.0.1），並在「多域名」中填寫對外連接埠，否則連結會使用這裡的連接埠。若映射到所有網卡，用戶端可以經本伺服器的公網位址繞回，從受信任的 Docker 閘道進來。",
     proxyProtocolCommonPort: "連接埠 {port} 是用戶端常存取的連接埠。經本機代理（指向本地 socks、gost 或 WARP 的 outbound）轉發的用戶端，無論用什麼網域都會被拒絕存取這個連接埠，以免它連進本 inbound 並自報位址。請監聽一個用戶端不會用的連接埠（如 10443），把 {port} 留給前置。",
   },
   dial: {

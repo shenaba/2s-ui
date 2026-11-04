@@ -703,7 +703,7 @@ export default {
     tcpKeepAlive: "TCP Keep Alive",
     tcpKeepAliveInterval: "Khoảng thời gian TCP Keep Alive",
     proxyProtocol: "PROXY protocol",
-    proxyProtocolHint: "Đọc địa chỉ thật của client từ header PROXY do front gửi đến. Kết nối từ chính máy này và từ các front trong «Cài đặt › Giao diện › Front PROXY tin cậy» được đọc và bắt buộc phải có header; các kết nối khác được phục vụ như bình thường. Hãy lắng nghe trên 127.0.0.1 (với Docker, giữ :: và chỉ publish cổng trên 127.0.0.1) và nhập cổng công khai trong «Nhiều Tên miền», nếu không liên kết sẽ dùng cổng này.",
+    proxyProtocolHint: "Đọc địa chỉ thật của client từ header PROXY do front gửi đến. Kết nối từ chính máy này và từ các front trong «Cài đặt › Giao diện › Front PROXY tin cậy» được đọc và bắt buộc phải có header; các kết nối khác được phục vụ như bình thường. Hãy lắng nghe trên 127.0.0.1 (với Docker, giữ :: và chỉ publish cổng trên 127.0.0.1) và nhập cổng công khai trong «Nhiều Tên miền», nếu không liên kết sẽ dùng cổng này. Nếu publish trên mọi giao diện, client có thể vòng lại qua địa chỉ công khai của máy chủ và đi vào từ gateway Docker vốn được tin cậy.",
     proxyProtocolCommonPort: "Cổng {port} là cổng client hay truy cập. Client đi qua proxy trên máy này (outbound tới socks, gost hoặc WARP cục bộ) sẽ bị từ chối cổng này dù dùng tên miền nào, để nó không vào được inbound này và tự khai địa chỉ. Hãy lắng nghe một cổng client không dùng, ví dụ 10443, và để {port} cho front.",
   },
   dial: {

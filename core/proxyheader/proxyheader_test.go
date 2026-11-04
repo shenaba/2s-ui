@@ -226,6 +226,16 @@ func hostAddrsForTest(t *testing.T, addrs ...string) {
 	t.Cleanup(func() { hostAddrs.snapshot.Store(nil) })
 }
 
+// guardDial is GuardDial with the route given rather than asked for, and the
+// record's linger chosen by the test.
+func guardDial(conn net.Conn, destination M.Socksaddr, route Route, linger time.Duration) (*Guard, error) {
+	ports := inUse.Load()
+	if ports == nil {
+		return nil, nil
+	}
+	return guardPorts(conn, destination, route, *ports, linger)
+}
+
 // guardDialT is guardDial for a direct outbound, with the guard's Release as
 // a func, which is all most tests want of it.
 func guardDialT(conn net.Conn, destination M.Socksaddr, linger time.Duration) (func(), error) {
@@ -364,6 +374,26 @@ func TestRefreshInUse(t *testing.T) {
 	})
 	if !InUse() || !(*inUse.Load()).has(10445) {
 		t.Fatal("dropped the port of an inbound built while the core was looked at")
+	}
+}
+
+// One built while a refresh looks makes it look again, rather than keep every
+// port it had: a port no inbound reads any more would otherwise stay.
+func TestRefreshInUseLooksAgain(t *testing.T) {
+	t.Cleanup(func() { inUse.Store(nil) })
+	markInUse(1111) // an inbound since gone
+	looks := 0
+	RefreshInUse(func() []uint16 {
+		looks++
+		if looks == 1 {
+			Handler(&recordHandler{}, log.NewNOPFactory().Logger(), Settings{Enabled: true, Port: 2222})
+			return nil
+		}
+		return []uint16{2222}
+	})
+	ports := inUse.Load()
+	if looks != 2 || ports == nil || !ports.has(2222) || ports.has(1111) {
+		t.Fatalf("looks = %d, ports = %v; want a second look finding only 2222", looks, ports)
 	}
 }
 

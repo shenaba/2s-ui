@@ -703,7 +703,7 @@ export default {
     tcpKeepAlive: "TCP Keep Alive",
     tcpKeepAliveInterval: "TCP Keep Alive 间隔",
     proxyProtocol: "PROXY protocol",
-    proxyProtocolHint: "从前置发来的 PROXY 头中读取客户端真实地址。来自本机、以及「设置 › 界面 › 可信 PROXY 前置」中所列地址的连接会被解析，且必须带头；其他连接照常处理。建议监听 127.0.0.1（用 Docker 时保持 ::，改为只把端口映射到宿主机的 127.0.0.1），并在「多域名」中填写对外端口，否则链接会使用这里的端口。",
+    proxyProtocolHint: "从前置发来的 PROXY 头中读取客户端真实地址。来自本机、以及「设置 › 界面 › 可信 PROXY 前置」中所列地址的连接会被解析，且必须带头；其他连接照常处理。建议监听 127.0.0.1（用 Docker 时保持 ::，改为只把端口映射到宿主机的 127.0.0.1），并在「多域名」中填写对外端口，否则链接会使用这里的端口。若映射到所有网卡，客户端可以经本服务器的公网地址绕回，从受信任的 Docker 网关进来。",
     proxyProtocolCommonPort: "端口 {port} 是客户端常访问的端口。经本机代理（指向本地 socks、gost 或 WARP 的 outbound）转发的客户端，无论用什么域名都会被拒绝访问这个端口，以免它连进本 inbound 并自报地址。请监听一个客户端不会用的端口（如 10443），把 {port} 留给前置。",
   },
   dial: {
