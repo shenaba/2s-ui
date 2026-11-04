@@ -602,6 +602,49 @@ func TestTake(t *testing.T) {
 	if options.ProxyProtocol {
 		t.Fatal("left the request set, which sing-box's listener refuses to start with")
 	}
+	// A row that arrived without a save can carry accept_no_header too.
+	//nolint:staticcheck
+	options.ProxyProtocol, options.ProxyProtocolAcceptNoHeader = true, true
+	Take(&options)
+	//nolint:staticcheck
+	if options.ProxyProtocolAcceptNoHeader {
+		t.Fatal("left accept_no_header set, which sing-box's listener refuses to start with")
+	}
+}
+
+// Refreshes run one at a time: one that looked before another stored cannot
+// store after it.
+func TestRefreshInUseIsSerialized(t *testing.T) {
+	t.Cleanup(func() { inUse.Store(nil) })
+	markInUse(10443)
+	looking := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		RefreshInUse(func() []uint16 {
+			close(looking)
+			<-release
+			return nil // an old look: the box with 8443 had not started yet
+		})
+	}()
+	<-looking
+	second := make(chan struct{})
+	go func() {
+		defer close(second)
+		RefreshInUse(func() []uint16 { return []uint16{8443} })
+	}()
+	select {
+	case <-second:
+		t.Fatal("a second refresh ran while the first was looking")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	<-done
+	<-second
+	if ports := inUse.Load(); ports == nil || !ports.has(8443) {
+		t.Fatal("the later refresh did not have the last word")
+	}
 }
 
 // reached is what the inbound behind Handler saw: the metadata it was handed

@@ -43,14 +43,14 @@ func ApplyProxyProtocol() {
 	proxyheader.SetTrusted(prefixes)
 }
 
-// Narrowest ranges a trusted front may be given. Everything inside one is
+// Widest ranges a trusted front may be given. Everything inside one is
 // believed when it names a client, and is an address the core refuses to dial
-// for clients: 0.0.0.0/0 would refuse every client without a header and every
-// dial off this host, which stops the whole panel from relaying, and a range
-// that wide is never one front.
+// for clients. A /16 holds a Docker bridge network or a VPC subnet; a /48 is
+// a whole site's IPv6. Anything wider is never one front, and would let
+// millions of hosts name any client to the IP limit and the online list.
 const (
-	minFrontBits4 = 8
-	minFrontBits6 = 32
+	minFrontBits4 = 16
+	minFrontBits6 = 48
 )
 
 // checkProxyProtoFronts refuses a proxyProtoTrusted value whose ranges are too

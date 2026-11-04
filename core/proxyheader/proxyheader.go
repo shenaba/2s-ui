@@ -42,6 +42,11 @@
 // inbound on a port clients do ask for (443) takes that port away from them
 // through such a relay. A relay asked for a named front's address is refused
 // outright, as a direct dial there is: through a NAT the port says nothing.
+// A tunnel outbound (WireGuard, Tailscale) is judged by the same rule, from
+// the addresses its in-tunnel conn reports: asked for loopback on a PROXY
+// port it is refused even where that means the peer's own loopback, because
+// asked for this host's own tunnel address it really does come back in, from
+// an address this host trusts.
 //
 // Some paths stay outside this. A relay that reaches this inbound through a
 // port mapping that changes the port -- a Docker host's relay asked for the
@@ -133,13 +138,20 @@ type Settings struct {
 }
 
 // Take reports what options ask of PROXY protocol, and clears the request:
-// sing-box's own listener refuses to start while it is set. The copies call it
-// before building their listener, and keep the answer themselves.
+// sing-box's own listener refuses to start while either field is set. The
+// copies call it before building their listener, and keep the answer
+// themselves. accept_no_header is cleared without effect: a save refuses it,
+// but a row can arrive without one (an imported database), and a connection
+// from this host must carry a header regardless -- the stricter reading, and
+// one that leaves the core starting rather than failing on sing-box's
+// "removed in 1.6.0".
 func Take(options *option.ListenOptions) Settings {
 	//nolint:staticcheck
 	enabled := options.ProxyProtocol
 	//nolint:staticcheck
 	options.ProxyProtocol = false
+	//nolint:staticcheck
+	options.ProxyProtocolAcceptNoHeader = false
 	return Settings{Enabled: enabled, Port: options.ListenPort}
 }
 
@@ -174,6 +186,9 @@ var (
 	// built counts the enabled Handlers and Listens ever built, so that
 	// RefreshInUse can tell one appeared while it was looking.
 	built uint64
+	// refreshMu serializes RefreshInUse. Held while the cores are looked at,
+	// which takes their inbound tables' locks: it is never taken under one.
+	refreshMu sync.Mutex
 )
 
 // portSet is the PROXY-enabled inbounds' ports. Never modified once stored.
@@ -212,6 +227,11 @@ func markInUse(port uint16) {
 // ports of a Handler or Listen built while running looks are kept -- it may
 // be in a core running did not see.
 func RefreshInUse(running func() []uint16) {
+	// One at a time, from the look to the store: two running at once could
+	// otherwise finish in the wrong order, and an older look -- taken before a
+	// box started -- would switch the guard off under that box's inbounds.
+	refreshMu.Lock()
+	defer refreshMu.Unlock()
 	inUseMu.Lock()
 	since := built
 	idle := since == 0 && inUse.Load() == nil

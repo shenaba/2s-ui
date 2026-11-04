@@ -72,9 +72,15 @@ func TestProxyProtoTrustedReachesTheCore(t *testing.T) {
 		t.Fatal("an unparsable front was saved")
 	}
 	// 0.0.0.0/0 would make every address a front and every dial refused.
-	for _, broad := range []string{"0.0.0.0/0", "10.0.0.0/7", "::/0", "2001::/31", "::ffff:0:0/96"} {
+	for _, broad := range []string{"0.0.0.0/0", "10.0.0.0/8", "172.16.0.0/12", "10.0.0.0/15", "::/0", "2001:db8::/32", "2001:db8::/47", "::ffff:0:0/96", "::ffff:10.0.0.0/111"} {
 		if err := settings.Save(db, json.RawMessage(`{"proxyProtoTrusted":"`+broad+`"}`)); err == nil {
 			t.Fatalf("saved %s as a trusted front", broad)
+		}
+	}
+	// The narrowest ranges a whole Docker network or site can need still fit.
+	for _, wide := range []string{"172.18.0.0/16", "2001:db8::/48", "::ffff:172.18.0.0/112"} {
+		if err := settings.Save(db, json.RawMessage(`{"proxyProtoTrusted":"`+wide+`"}`)); err != nil {
+			t.Fatalf("refused %s: %v", wide, err)
 		}
 	}
 	if err := settings.Save(db, json.RawMessage(`{"proxyProtoTrusted":"172.18.0.1"}`)); err != nil {
