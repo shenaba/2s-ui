@@ -284,26 +284,14 @@ func testLoopThroughTheCore(t *testing.T, tfo bool) {
 	}
 	echo.Close()
 
-	conn, err := socks.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(ppPort)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	if _, err = conn.Write([]byte("PROXY TCP4 198.51.100.9 127.0.0.1 51000 " + strconv.Itoa(ppPort) + "\r\n")); err != nil {
-		t.Fatal(err)
-	}
-	client, err := vless.NewClient(proxyTestUUID, "", logger.NOP())
-	if err != nil {
-		t.Fatal(err)
-	}
-	vconn, err := client.DialConn(conn, target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	vconn.SetDeadline(time.Now().Add(5 * time.Second))
-	vconn.Write([]byte("ping"))
-	if _, err = io.ReadFull(vconn, make([]byte, 4)); err == nil {
-		t.Fatal("a header sent through the core's own outbound was believed")
+	// Refused at the dial, by any name for this host: no byte the client
+	// sends reaches the inbound, so no header it forges can be read there.
+	for _, host := range []string{"127.0.0.1", "localhost"} {
+		conn, err := socks.Dial("tcp", net.JoinHostPort(host, strconv.Itoa(ppPort)))
+		if err == nil {
+			conn.Close()
+			t.Fatalf("the direct outbound was let dial %s:%d, a PROXY-enabled inbound's port", host, ppPort)
+		}
 	}
 	if sessions := c.GetInstance().ConnTracker().Sessions(func(info *ConnectionInfo) bool { return info.User == "u" }); len(sessions) != 0 {
 		t.Fatalf("the looped connection was recorded as %s", sessions[0].Source)
@@ -579,8 +567,8 @@ func testLoopThroughARelay(t *testing.T, relay M.Socksaddr, outbounds []any) {
 }
 
 // A client asking the direct outbound for a PROXY-enabled inbound by name is
-// dialed by the core itself, and recorded exactly: the front's own
-// connections to that inbound, at the same time, still get through.
+// refused, however often: the front's own connections to that inbound, at the
+// same time, still get through.
 func TestProxyProtocolDirectDialByNameLeavesTheFrontAlone(t *testing.T) {
 	target := echoServer(t)
 	var mixedPort, ppPort int
@@ -603,10 +591,14 @@ func TestProxyProtocolDirectDialByNameLeavesTheFrontAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Held open, never sending a header: it would only time out.
-	loop, err := socks.Dial("tcp", net.JoinHostPort("localhost", strconv.Itoa(ppPort)))
-	if err == nil {
-		defer loop.Close()
+	// Refused, again and again: enough dials to cycle through ephemeral
+	// ports a front's connection might also draw. Nothing they leave behind
+	// may catch the front.
+	for i := 0; i < 200; i++ {
+		if loop, err := socks.Dial("tcp", net.JoinHostPort("localhost", strconv.Itoa(ppPort))); err == nil {
+			loop.Close()
+			t.Fatal("the direct outbound was let dial the PROXY-enabled inbound's port by name")
+		}
 	}
 
 	front := headerDialer{header: "PROXY TCP4 203.0.113.7 127.0.0.1 51000 " + strconv.Itoa(ppPort) + "\r\n"}

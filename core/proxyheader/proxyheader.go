@@ -23,10 +23,16 @@
 // A proxy user can ask the direct outbound for 127.0.0.1 and the PROXY port,
 // and then send whatever header they like down a connection that arrives from
 // loopback. So the core reports every connection it dials for a client
-// (GuardDial, from the connection tracker), and a header on one it dialed to
-// this host is refused. A direct dial to a named front is refused outright:
-// past a NAT -- a Docker port mapping -- it arrives from the front's address,
-// with a source port that says nothing about who opened it.
+// (GuardDial, from the connection tracker), and one that landed on this host
+// on a PROXY-enabled inbound's port is refused before a byte of the client's
+// goes down it: no client has a reason to ask its proxy for the panel's own
+// front-facing port. It is decided at the dial rather than recognised at the
+// inbound, by a record of the dial's two ends, because such a record can be
+// made to match the front's own connections: a client dialing in a loop
+// cycles the ephemeral ports to that address, which the front's connections
+// draw from too. A direct dial to a named front is refused outright: past a
+// NAT -- a Docker port mapping -- it arrives from the front's address, on a
+// port that says nothing about where it was headed.
 //
 // The same goes for a relay the core hands a client to: an outbound to a
 // socks or shadowsocks server on this host (a local gost, a WARP client), or
@@ -35,7 +41,7 @@
 // connection, so the core never sees its two ends, and it arrives from a
 // trusted address. Which outbound is direct is the router's to say (Route): a
 // name a client asks the direct outbound for is dialed by the core itself,
-// and its record is exact. A client asking a relay in either place for a
+// and judged by where its socket went. A client asking a relay in either place for a
 // PROXY-enabled inbound's port, by a name or by an address that lands on this
 // host, is refused -- only that client, and only on those ports, so a real
 // front at the same address is never caught up in it. A PROXY-enabled
@@ -60,7 +66,7 @@
 // A NAT on this host itself -- an iptables REDIRECT or DNAT in OUTPUT that
 // turns a dial to one port into a connection on another -- does the same to
 // the core's own dials: the inbound no longer sees the two ends the core
-// dialed, so neither the record nor the port check can match. A
+// dialed, so the port check cannot match. A
 // PROXY-enabled inbound must not be the target of such a rule. And dials the
 // core makes for an inbound rather than for a client -- a REALITY or
 // ShadowTLS handshake server -- are the operator's to point, and never at a
@@ -112,14 +118,6 @@ const (
 	// its header. A front sends it before anything else, so this only ever
 	// runs out on a connection that was never going to send one.
 	readTimeout = 5 * time.Second
-	// dialLinger is how long the record of a dial the core made to this host
-	// outlives the connection (GuardDial). The inbound's read of the header
-	// ends readTimeout after it accepts, but it may accept late: a backlog
-	// under load, or an accept loop backing off when out of file
-	// descriptors, holds the connection -- forged header and all -- after
-	// the core has closed it. A record costs a map entry; a minute covers
-	// any accept that still means to happen.
-	dialLinger = time.Minute
 	// handoffTimeout bounds how long a connection whose header is read waits
 	// for Accept. A transport that stopped serving without closing its
 	// listener would otherwise leave one goroutine and one socket behind for
@@ -153,7 +151,7 @@ type Settings struct {
 // Take reports what options ask of PROXY protocol, and clears the request:
 // sing-box's own listener refuses to start while either field is set. The
 // copies call it before building their listener, and keep the answer
-// themselves. accept_no_header is cleared without effect: a save refuses it,
+// themselves. accept_no_header is cleared without effect: a save drops it,
 // but a row can arrive without one (an imported database), and a connection
 // from this host must carry a header regardless -- the stricter reading, and
 // one that leaves the core starting rather than failing on sing-box's
@@ -312,24 +310,6 @@ func Trusted(source, local M.Socksaddr) bool {
 	return onThisHost(addr, plain(local.Addr)) || namedFront(addr)
 }
 
-// dialed counts the connections the core has open to this host on a client's
-// behalf, by both ends. The local end alone is not enough: Linux hands one
-// ephemeral port to connections bound for different destinations, so a front's
-// connection to the inbound can leave from the very address and port of a core
-// dial to some other service here, and would be refused as the core's own.
-// From this host there is no NAT in between, so the inbound sees the same two
-// ends the dial does. A count rather than a set: a four-tuple can come back
-// while the record of its last use is still lingering.
-var dialed = struct {
-	sync.Mutex
-	conns map[fourTuple]int
-}{conns: make(map[fourTuple]int)}
-
-// fourTuple is a connection by its client end and its server end.
-type fourTuple struct {
-	client, server netip.AddrPort
-}
-
 func endpoint(addr M.Socksaddr) netip.AddrPort {
 	return netip.AddrPortFrom(addr.Addr.Unmap(), addr.Port)
 }
@@ -356,46 +336,27 @@ type Route struct {
 	Server M.Socksaddr
 }
 
-// Guard is what GuardDial keeps about one connection the core dialed for a
-// client. A nil Guard keeps nothing.
-type Guard struct {
-	release func()
-}
-
-// Release is called once the connection ends.
-func (g *Guard) Release() {
-	if g != nil && g.release != nil {
-		g.release()
-	}
-}
-
 // GuardDial is told about each connection the core has just dialed for a
 // client, to destination -- the address the client asked for -- along the
-// route the router chose. While PROXY protocol is in use, a direct dial to a
-// front the operator named is refused, and one an inbound would trust is
-// remembered until readTimeout after Release, so that a PROXY-enabled inbound
-// it reaches can tell it from a real front (dialedByCore). A dial to a relay
-// that could carry the client back into a PROXY-enabled inbound is refused
-// (see the package comment).
-//
-// The record outlives the connection because the inbound's check can come
-// after it: a client that sends its forged header and resets at once has the
-// core close both ends, while the inbound may not even have accepted yet, and
-// still reads the header off its buffer when it does (dialLinger).
+// route the router chose, before a byte of the client's goes down it. While
+// PROXY protocol is in use, it refuses a dial that landed on this host on a
+// PROXY-enabled inbound's port, a direct dial to a front the operator named,
+// and a dial to a relay that could carry the client back into a
+// PROXY-enabled inbound (see the package comment).
 //
 // route is asked only once the guard is known to be on, from the same reading
 // of it the dial is judged by: a guard that switched on just before would
 // otherwise judge a direct dial with no route, as a relay.
-func GuardDial(conn net.Conn, destination M.Socksaddr, route func() Route) (*Guard, error) {
+func GuardDial(conn net.Conn, destination M.Socksaddr, route func() Route) error {
 	ports := inUse.Load()
 	if ports == nil {
-		return nil, nil
+		return nil
 	}
 	var r Route
 	if route != nil {
 		r = route()
 	}
-	return guardPorts(conn, destination, r, *ports, dialLinger)
+	return guardPorts(conn, destination, r, *ports)
 }
 
 // earlyConn is a dial that has not opened its socket yet: sing-box's TCP Fast
@@ -404,7 +365,7 @@ type earlyConn interface {
 	NeedHandshake() bool
 }
 
-func guardPorts(conn net.Conn, destination M.Socksaddr, route Route, ports portSet, linger time.Duration) (*Guard, error) {
+func guardPorts(conn net.Conn, destination M.Socksaddr, route Route, ports portSet) error {
 	destination = destination.Unwrap()
 	// The socket underneath, not the outermost conn: a proxy protocol's conn
 	// can report the address it was asked for as its remote one.
@@ -422,7 +383,7 @@ func guardPorts(conn net.Conn, destination M.Socksaddr, route Route, ports portS
 		if early, isEarly := socket.(earlyConn); isEarly && early.NeedHandshake() {
 			_, err := socket.Write(nil)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			remote, local = addrsOf(innermost(conn))
 		}
@@ -431,35 +392,30 @@ func guardPorts(conn net.Conn, destination M.Socksaddr, route Route, ports portS
 		// Where the socket goes cannot be seen -- a gRPC or HTTP/2 transport
 		// keeps it inside its own client -- so the configured server says.
 		if route.Direct || !serverMayRelay(route.Server) {
-			return nil, nil
+			return nil
 		}
-		return nil, relayGuard(ports, destination)
+		return relayGuard(ports, destination)
 	}
 	remoteAddr, localAddr := plain(remote.Addr), plain(local.Addr)
-	here := onThisHost(remoteAddr, localAddr)
+	// Landed on this host: loopback, the address it left from, or another of
+	// this host's own -- which a direct outbound bound inside a named range
+	// (inet4_bind_address) reaches from a trusted source.
+	here := onThisHost(remoteAddr, localAddr) || hostAddrs.contains(remoteAddr)
 	// A direct outbound whose socket went somewhere else than the address
 	// asked for is not direct: the group it was picked from changed its mind
 	// between routing and dialing.
 	direct := route.Direct && (!destination.IsIP() || endpoint(destination) == endpoint(remote))
 	switch {
+	case direct && here && ports.has(remote.Port):
+		// From this host there is no NAT: the port dialed is the port the
+		// inbound listens on.
+		return E.New("refused to dial ", remote, ": a PROXY-enabled inbound on this host, which would believe a header the client sent")
 	case direct && !here && namedFront(remoteAddr):
-		return nil, E.New("refused to dial ", remote, ": a trusted PROXY protocol front, which a client could speak through as anyone")
+		return E.New("refused to dial ", remote, ": a trusted PROXY protocol front, which a client could speak through as anyone")
 	case !direct && (here || namedFront(remoteAddr)):
-		if err := relayGuard(ports, destination); err != nil {
-			return nil, err
-		}
+		return relayGuard(ports, destination)
 	}
-	// Remembered whenever an inbound could read it for a header. One bound
-	// for this host from this host (here) is trusted by the same rule on
-	// arrival. So is one leaving from a named front's address -- a direct
-	// outbound bound inside a named range with inet4_bind_address -- but
-	// only one bound for another of this host's addresses can reach an
-	// inbound: on a cloud VM whose own address is inside the listed VPC
-	// range that is every dial, and the rest are not worth a record each.
-	if here || (namedFront(localAddr) && hostAddrs.contains(remoteAddr)) {
-		return &Guard{release: remember(fourTuple{client: endpoint(local), server: endpoint(remote)}, linger)}, nil
-	}
-	return nil, nil
+	return nil
 }
 
 // plain is addr as matched against this host's and the named fronts'
@@ -491,30 +447,6 @@ func serverMayRelay(server M.Socksaddr) bool {
 	}
 	addr := plain(server.Addr)
 	return onThisHostAsked(addr) || namedFront(addr)
-}
-
-// remember records key until linger after the returned release is called.
-func remember(key fourTuple, linger time.Duration) func() {
-	dialed.Lock()
-	dialed.conns[key]++
-	dialed.Unlock()
-	forget := func() {
-		dialed.Lock()
-		if dialed.conns[key]--; dialed.conns[key] <= 0 {
-			delete(dialed.conns, key)
-		}
-		dialed.Unlock()
-	}
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			if linger <= 0 {
-				forget()
-				return
-			}
-			time.AfterFunc(linger, forget)
-		})
-	}
 }
 
 // relayGuard decides a dial to a relay, which opens the onward connection
@@ -583,7 +515,8 @@ func (c *addrCache) contains(addr netip.Addr) bool {
 		c.reload.Unlock()
 	}
 	if snapshot.unknown {
-		// Cannot tell: remembered, which costs a record, not a client.
+		// Cannot tell: taken as this host's, which costs at most a refused
+		// dial to a PROXY-enabled inbound's port.
 		return true
 	}
 	_, found := snapshot.addrs[addr]
@@ -621,28 +554,6 @@ func innermost(conn net.Conn) net.Conn {
 		}
 		conn = next
 	}
-}
-
-// dialedByCore reports whether a connection from source that arrived on local
-// is one the core dialed for a client.
-func dialedByCore(source, local M.Socksaddr) bool {
-	dialed.Lock()
-	defer dialed.Unlock()
-	return dialed.conns[fourTuple{client: endpoint(source), server: endpoint(local)}] > 0
-}
-
-// accept reads the header off a trusted conn from source that arrived on
-// local, and refuses one the core dialed itself. Checked only after the header is read: the core reports its
-// dial before it relays a byte the client sent, so by now it has been told.
-func accept(conn net.Conn, source, local M.Socksaddr) (M.Socksaddr, error) {
-	client, err := Read(conn)
-	if err != nil {
-		return M.Socksaddr{}, err
-	}
-	if dialedByCore(source, local) {
-		return M.Socksaddr{}, E.New("PROXY header on a connection this core dialed for a client")
-	}
-	return client, nil
 }
 
 // errNoClient is a header that names no client: a v2 LOCAL command, which is
@@ -791,7 +702,7 @@ func (h *handler) NewConnection(ctx context.Context, conn net.Conn, metadata ada
 		h.next.NewConnection(ctx, sniff(conn, h.logger, metadata.Source), metadata, onClose)
 		return
 	}
-	client, err := accept(conn, metadata.Source, metadata.OriginDestination)
+	client, err := Read(conn)
 	if err != nil {
 		N.CloseOnHandshakeFailure(conn, onClose, err)
 		logRefused(ctx, h.logger, metadata.Source, err)
@@ -983,7 +894,7 @@ func (l *listener) loop() {
 		source := M.SocksaddrFromNet(conn.RemoteAddr()).Unwrap()
 		local := M.SocksaddrFromNet(conn.LocalAddr()).Unwrap()
 		if Trusted(source, local) {
-			go l.handshake(conn, source, local)
+			go l.handshake(conn, source)
 			continue
 		}
 		select {
@@ -994,8 +905,8 @@ func (l *listener) loop() {
 	}
 }
 
-func (l *listener) handshake(conn net.Conn, source, local M.Socksaddr) {
-	client, err := accept(conn, source, local)
+func (l *listener) handshake(conn net.Conn, source M.Socksaddr) {
+	client, err := Read(conn)
 	if err != nil {
 		conn.Close()
 		logRefused(context.Background(), l.logger, source, err)

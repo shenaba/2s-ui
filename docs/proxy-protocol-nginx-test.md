@@ -87,7 +87,9 @@ curl -v -x socks5h://127.0.0.1:1080 --haproxy-protocol --haproxy-clientip 6.6.6.
 ```
 
 - `--haproxy-clientip` 需要 curl 8.2 及以上；版本低就去掉它，只用 `--haproxy-protocol`。
-- 预期：请求失败，服务端日志出现 `PROXY header on a connection this core dialed for a client`，在线列表里始终没有 `6.6.6.6`。
+- 预期：连接在拨号时就被拒绝（curl 报 SOCKS 连接失败），服务端日志出现 `refused to dial 127.0.0.1:10443: a PROXY-enabled inbound on this host`，在线列表里始终没有 `6.6.6.6`。
+- 用 `localhost:10443` 代替 `127.0.0.1:10443` 再试一次，结果应相同。
+- 测试期间前端（nginx）转来的正常连接不受影响：T6 反复跑几百次，T1 的客户端照常可用。
 - 如果路由规则本来就拦截了内网目标，请求会更早失败，这一项就测不到伪造头的检查。可以先临时放开这条规则。
 
 ### T7 经本机中转伪造会被拒（如果有 WARP 或本地 socks outbound）

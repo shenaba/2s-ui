@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -226,25 +227,25 @@ func hostAddrsForTest(t *testing.T, addrs ...string) {
 	t.Cleanup(func() { hostAddrs.snapshot.Store(nil) })
 }
 
-// guardDial is GuardDial with the route given rather than asked for, and the
-// record's linger chosen by the test.
-func guardDial(conn net.Conn, destination M.Socksaddr, route Route, linger time.Duration) (*Guard, error) {
+// guardDial is GuardDial with the route given rather than asked for.
+func guardDial(conn net.Conn, destination M.Socksaddr, route Route) error {
 	ports := inUse.Load()
 	if ports == nil {
-		return nil, nil
+		return nil
 	}
-	return guardPorts(conn, destination, route, *ports, linger)
+	return guardPorts(conn, destination, route, *ports)
 }
 
-// guardDialT is guardDial for a direct outbound, with the guard's Release as
-// a func, which is all most tests want of it.
-func guardDialT(conn net.Conn, destination M.Socksaddr, linger time.Duration) (func(), error) {
-	guard, err := guardDial(conn, destination, Route{Direct: true}, linger)
-	return guard.Release, err
+// guardDirect is guardDial for a direct outbound.
+func guardDirect(conn net.Conn, destination M.Socksaddr) error {
+	return guardDial(conn, destination, Route{Direct: true})
 }
 
+// A direct dial that landed on this host on a PROXY-enabled inbound's port is
+// refused at the dial, before a byte of the client's goes down it, and so is
+// one to a named front; anything else is left alone.
 func TestGuardDial(t *testing.T) {
-	inUseForTest(t)
+	inUseForTest(t, 10443)
 	hostAddrsForTest(t, "198.51.100.1", "203.0.113.5")
 	SetTrusted([]netip.Prefix{netip.MustParsePrefix("172.18.0.1/32")})
 	defer SetTrusted(nil)
@@ -253,54 +254,39 @@ func TestGuardDial(t *testing.T) {
 		local   string
 		remote  string
 		refused bool
-		marked  bool
 	}{
-		{"loopback is remembered", "127.0.0.1:40001", "127.0.0.1:10443", false, true},
-		{"v4-mapped loopback is remembered", "[::ffff:127.0.0.1]:40002", "[::ffff:127.0.0.1]:10443", false, true},
-		{"this host's own address is remembered", "198.51.100.1:40003", "198.51.100.1:10443", false, true},
-		{"anywhere else is left alone", "198.51.100.1:40004", "203.0.113.7:443", false, false},
-		{"a named front is refused", "172.18.0.2:40005", "172.18.0.1:443", true, false},
-		// A direct outbound bound to an address inside a named range: the
-		// inbound trusts that source, so a dial to another of this host's
-		// addresses must be remembered too ...
-		{"a source inside a named range is remembered", "172.18.0.1:40006", "203.0.113.5:10443", false, true},
-		// ... and one leaving the host from there need not be.
-		{"a source inside a named range dialing out is left alone", "172.18.0.1:40007", "203.0.113.9:443", false, false},
+		{"loopback on the PROXY port", "127.0.0.1:40001", "127.0.0.1:10443", true},
+		{"v4-mapped loopback on the PROXY port", "[::ffff:127.0.0.1]:40002", "[::ffff:127.0.0.1]:10443", true},
+		{"this host's own address on the PROXY port", "198.51.100.1:40003", "198.51.100.1:10443", true},
+		{"loopback on another port", "127.0.0.1:40008", "127.0.0.1:8080", false},
+		{"anywhere else", "198.51.100.1:40004", "203.0.113.7:443", false},
+		{"a named front", "172.18.0.2:40005", "172.18.0.1:443", true},
+		// A direct outbound bound to an address inside a named range, dialing
+		// another of this host's addresses: that arrives from a trusted source.
+		{"a source inside a named range, to this host", "172.18.0.1:40006", "203.0.113.5:10443", true},
+		{"a source inside a named range, dialing out", "172.18.0.1:40007", "203.0.113.9:443", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			release, err := guardDialT(dialedConn(c.local, c.remote), M.ParseSocksaddr(c.remote), 0)
+			err := guardDirect(dialedConn(c.local, c.remote), M.ParseSocksaddr(c.remote))
 			if (err != nil) != c.refused {
-				t.Fatalf("refused = %v, want %v", err != nil, c.refused)
-			}
-			// What the inbound sees is the dial's two ends, unmapped.
-			source := M.ParseSocksaddr(c.local).Unwrap()
-			arrived := M.ParseSocksaddr(c.remote).Unwrap()
-			if got := dialedByCore(source, arrived); got != c.marked {
-				t.Fatalf("dialedByCore(%s, %s) = %v, want %v", source, arrived, got, c.marked)
-			}
-			release()
-			release() // a second release must not take another dial's count
-			if dialedByCore(source, arrived) {
-				t.Fatal("still remembered after release")
+				t.Fatalf("refused = %v (%v), want %v", err != nil, err, c.refused)
 			}
 		})
 	}
 }
 
 // With no inbound reading PROXY headers, the guard costs clients nothing: a
-// named front is dialed like anywhere else, and nothing is remembered.
+// named front and this host are dialed like anywhere else.
 func TestGuardDialIdleWithoutProxyInbounds(t *testing.T) {
 	inUse.Store(nil)
 	SetTrusted([]netip.Prefix{netip.MustParsePrefix("172.18.0.1/32")})
 	defer SetTrusted(nil)
-	if _, err := guardDialT(dialedConn("172.18.0.2:40030", "172.18.0.1:443"), M.ParseSocksaddr("172.18.0.1:443"), 0); err != nil {
+	if err := guardDirect(dialedConn("172.18.0.2:40030", "172.18.0.1:443"), M.ParseSocksaddr("172.18.0.1:443")); err != nil {
 		t.Fatalf("a named front was refused with no PROXY inbound: %v", err)
 	}
-	release, _ := guardDialT(dialedConn("127.0.0.1:40031", "127.0.0.1:10443"), M.ParseSocksaddr("127.0.0.1:10443"), 0)
-	defer release()
-	if dialedByCore(M.ParseSocksaddr("127.0.0.1:40031"), M.ParseSocksaddr("127.0.0.1:10443")) {
-		t.Fatal("a loopback dial was remembered with no PROXY inbound")
+	if err := guardDirect(dialedConn("127.0.0.1:40031", "127.0.0.1:10443"), M.ParseSocksaddr("127.0.0.1:10443")); err != nil {
+		t.Fatalf("a loopback dial was refused with no PROXY inbound: %v", err)
 	}
 }
 
@@ -462,25 +448,20 @@ func (c *slowConn) RemoteAddr() net.Addr {
 // it -- a forged header among them -- before anything could look at where it
 // goes. The guard opens it first, empty, and judges it like any other.
 func TestGuardDialOpensASlowDialFirst(t *testing.T) {
-	inUseForTest(t)
+	inUseForTest(t, 10443)
 	SetTrusted([]netip.Prefix{netip.MustParsePrefix("172.18.0.1/32")})
 	defer SetTrusted(nil)
 
 	loop := &slowConn{local: M.ParseSocksaddr("127.0.0.1:40040").TCPAddr(), remote: M.ParseSocksaddr("127.0.0.1:10443").TCPAddr()}
-	release, err := guardDialT(loop, M.ParseSocksaddr("127.0.0.1:10443"), 0)
-	if err != nil {
-		t.Fatal(err)
+	if err := guardDirect(loop, M.ParseSocksaddr("127.0.0.1:10443")); err == nil {
+		t.Fatal("a slow dial to this host's PROXY port was let through")
 	}
-	defer release()
 	if !loop.open || len(loop.written) != 0 {
 		t.Fatalf("open = %v, wrote %q; want it opened with nothing sent", loop.open, loop.written)
 	}
-	if !dialedByCore(M.ParseSocksaddr("127.0.0.1:40040"), M.ParseSocksaddr("127.0.0.1:10443")) {
-		t.Fatal("a slow dial to this host was not remembered")
-	}
 
 	front := &slowConn{local: M.ParseSocksaddr("172.18.0.2:40041").TCPAddr(), remote: M.ParseSocksaddr("172.18.0.1:443").TCPAddr()}
-	if _, err := guardDialT(front, M.ParseSocksaddr("172.18.0.1:443"), 0); err == nil {
+	if err := guardDirect(front, M.ParseSocksaddr("172.18.0.1:443")); err == nil {
 		t.Fatal("a slow dial to a named front was let through")
 	}
 
@@ -489,16 +470,11 @@ func TestGuardDialOpensASlowDialFirst(t *testing.T) {
 	// request header early.
 	inner := &slowConn{local: M.ParseSocksaddr("127.0.0.1:40042").TCPAddr(), remote: M.ParseSocksaddr("127.0.0.1:10443").TCPAddr()}
 	outer := &protocolConn{slowConn: inner}
-	release, err = guardDialT(outer, M.ParseSocksaddr("127.0.0.1:10443"), 0)
-	if err != nil {
-		t.Fatal(err)
+	if err := guardDirect(outer, M.ParseSocksaddr("127.0.0.1:10443")); err == nil {
+		t.Fatal("a slow dial under a protocol conn to this host's PROXY port was let through")
 	}
-	defer release()
 	if outer.wrote || !inner.open {
 		t.Fatalf("protocol conn written = %v, inner opened = %v; want only the inner one opened", outer.wrote, inner.open)
-	}
-	if !dialedByCore(M.ParseSocksaddr("127.0.0.1:40042"), M.ParseSocksaddr("127.0.0.1:10443")) {
-		t.Fatal("a slow dial under a protocol conn was not remembered")
 	}
 }
 
@@ -517,104 +493,29 @@ func (c *protocolConn) Upstream() any {
 	return c.slowConn
 }
 
-// A four-tuple can come back while the record of its last use still lingers:
-// releasing one must not forget the other.
-func TestGuardDialCountsARepeatedConnection(t *testing.T) {
-	inUseForTest(t)
-	first, _ := guardDialT(dialedConn("127.0.0.1:40010", "127.0.0.1:10443"), M.ParseSocksaddr("127.0.0.1:10443"), 0)
-	second, _ := guardDialT(dialedConn("127.0.0.1:40010", "127.0.0.1:10443"), M.ParseSocksaddr("127.0.0.1:10443"), 0)
-	source, arrived := M.ParseSocksaddr("127.0.0.1:40010"), M.ParseSocksaddr("127.0.0.1:10443")
-	first()
-	if !dialedByCore(source, arrived) {
-		t.Fatal("releasing one use forgot the other")
-	}
-	second()
-	if dialedByCore(source, arrived) {
-		t.Fatal("still remembered after both were released")
-	}
-}
-
-// Linux gives connections to different destinations the same ephemeral port,
-// so a front can reach the inbound from the very address and port of a core
-// dial to some other service here. That front is not the core.
-func TestGuardDialTellsAFrontOnASharedPort(t *testing.T) {
-	inUseForTest(t)
-	release, _ := guardDialT(dialedConn("198.51.100.1:40011", "198.51.100.1:443"), M.ParseSocksaddr("198.51.100.1:443"), 0)
-	defer release()
-	if dialedByCore(M.ParseSocksaddr("198.51.100.1:40011"), M.ParseSocksaddr("198.51.100.1:10443")) {
-		t.Fatal("a front sharing a core dial's local port was taken for the core")
-	}
-}
-
-// A client that sends its forged header and resets at once gets the core to
-// close both ends while the inbound may still be reading that header: the
-// dial has to stay remembered past its release, until the read is over.
-func TestGuardDialOutlivesTheConnection(t *testing.T) {
-	inUseForTest(t)
-	source, arrived := M.ParseSocksaddr("127.0.0.1:40050"), M.ParseSocksaddr("127.0.0.1:10443")
-	// Long enough that no scheduling delay can see it expire.
-	release, err := guardDialT(dialedConn(source.String(), arrived.String()), M.ParseSocksaddr(arrived.String()), time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	release()
-	if !dialedByCore(source, arrived) {
-		t.Fatal("forgotten the moment the connection closed")
-	}
-	t.Cleanup(func() {
-		dialed.Lock()
-		delete(dialed.conns, fourTuple{client: endpoint(source), server: endpoint(arrived)})
-		dialed.Unlock()
-	})
-
-	// And it does go: a short linger, waited out.
-	source = M.ParseSocksaddr("127.0.0.1:40051")
-	release, err = guardDialT(dialedConn(source.String(), arrived.String()), M.ParseSocksaddr(arrived.String()), 10*time.Millisecond)
-	if err != nil {
-		t.Fatal(err)
-	}
-	release()
-	deadline := time.Now().Add(5 * time.Second)
-	for dialedByCore(source, arrived) {
-		if time.Now().After(deadline) {
-			t.Fatal("never forgotten")
+// However many times clients have been refused this host's PROXY port, the
+// front's own connections from this host -- on whatever ephemeral port Linux
+// hands them, the refused dials' among them -- are read as before: nothing
+// about those dials outlives them for a front's connection to match.
+func TestRefusedDialsNeverCatchTheFront(t *testing.T) {
+	inUseForTest(t, 10443)
+	for port := 40020; port < 40120; port++ {
+		from := "127.0.0.1:" + strconv.Itoa(port)
+		if err := guardDirect(dialedConn(from, "127.0.0.1:10443"), M.ParseSocksaddr("localhost:10443")); err == nil {
+			t.Fatalf("a client dial from %s to the PROXY port was let through", from)
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
-}
-
-// A header arriving on a connection the core dialed itself is a client
-// looping back through the direct outbound, not a front, and is refused --
-// on both listeners.
-func TestCoresOwnDialIsRefused(t *testing.T) {
-	inUseForTest(t)
 	const header = "PROXY TCP4 198.51.100.9 127.0.0.1 51000 443\r\n"
-	// The inbound's own end is local: it is where the core dialed.
-	release, err := guardDialT(dialedConn("127.0.0.1:40020", local.String()), M.ParseSocksaddr(local.String()), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	next := &recordHandler{size: len(tail), got: make(chan reached, 1)}
-	metadata := adapter.InboundContext{Source: M.ParseSocksaddr("127.0.0.1:40020"), OriginDestination: local}
-	closed := make(chan struct{})
-	Handler(next, log.NewNOPFactory().Logger(), on).NewConnection(context.Background(), send(t, header+tail), metadata, func(error) { close(closed) })
-	select {
-	case got := <-next.got:
-		t.Fatalf("the core's own dial reached the inbound as %s", got.metadata.Source)
-	case <-closed:
-	}
-
-	// Once that connection is gone, the same endpoint is a front again.
-	release()
+	metadata := adapter.InboundContext{Source: M.ParseSocksaddr("127.0.0.1:40020"), OriginDestination: M.ParseSocksaddr("127.0.0.1:10443")}
 	Handler(next, log.NewNOPFactory().Logger(), on).NewConnection(context.Background(), send(t, header+tail), metadata, nil)
 	select {
 	case got := <-next.got:
 		if got.metadata.Source.String() != "198.51.100.9:51000" {
 			t.Fatalf("source = %s, want 198.51.100.9:51000", got.metadata.Source)
 		}
-	default:
-		t.Fatal("a front's connection was refused")
+	case <-time.After(2 * time.Second):
+		t.Fatal("the front's connection was refused")
 	}
 }
 
@@ -1014,8 +915,7 @@ func TestRelayOnThisHost(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.destination, func(t *testing.T) {
-			guard, err := guardDial(dialedConn("127.0.0.1:40050", "127.0.0.1:1080"), M.ParseSocksaddr(c.destination), through, 0)
-			defer guard.Release()
+			err := guardDial(dialedConn("127.0.0.1:40050", "127.0.0.1:1080"), M.ParseSocksaddr(c.destination), through)
 			if (err != nil) != c.refused {
 				t.Fatalf("refused = %v (%v), want %v", err != nil, err, c.refused)
 			}
@@ -1034,19 +934,18 @@ func TestRelayAtANamedFront(t *testing.T) {
 	defer SetTrusted(nil)
 	relay := func() net.Conn { return dialedConn("172.17.0.2:40080", "172.17.0.1:40000") }
 	for _, destination := range []string{"example.com:443", "203.0.113.7:10443"} {
-		guard, err := guardDial(relay(), M.ParseSocksaddr(destination), through, 0)
+		err := guardDial(relay(), M.ParseSocksaddr(destination), through)
 		if err != nil {
 			t.Fatalf("a relay at the gateway was refused %s: %v", destination, err)
 		}
-		guard.Release()
 	}
 	for _, destination := range []string{"example.com:10443", "172.17.0.2:10443", "172.17.0.1:8443"} {
-		if _, err := guardDial(relay(), M.ParseSocksaddr(destination), through, 0); err == nil {
+		if err := guardDial(relay(), M.ParseSocksaddr(destination), through); err == nil {
 			t.Fatalf("a relay at the gateway was handed %s", destination)
 		}
 	}
 	conn := send(t, "PROXY TCP4 203.0.113.7 172.17.0.2 51000 10443\r\n"+tail)
-	client, err := accept(conn, M.ParseSocksaddr("172.17.0.1:40081"), M.ParseSocksaddr("172.17.0.2:10443"))
+	client, err := Read(conn)
 	if err != nil {
 		t.Fatalf("the front's own connection was refused: %v", err)
 	}
@@ -1055,20 +954,16 @@ func TestRelayAtANamedFront(t *testing.T) {
 	}
 }
 
-// What a client asks the direct outbound for, the core dials itself: a name
-// that lands on this host is recorded exactly, and refuses no one else.
-func TestDirectDialByNameIsRecorded(t *testing.T) {
+// What a client asks the direct outbound for, the core dials itself, and is
+// judged by where the socket went: a name that lands on this host's PROXY
+// port is refused, one on another port is not.
+func TestDirectDialByName(t *testing.T) {
 	inUseForTest(t, 10443)
-	guard, err := guardDial(dialedConn("127.0.0.1:40055", "127.0.0.1:10443"), M.ParseSocksaddr("localhost:10443"), Route{Direct: true}, 0)
-	if err != nil {
-		t.Fatal(err)
+	if err := guardDirect(dialedConn("127.0.0.1:40055", "127.0.0.1:10443"), M.ParseSocksaddr("localhost:10443")); err == nil {
+		t.Fatal("a direct dial by name to this host's PROXY port was let through")
 	}
-	defer guard.Release()
-	if !dialedByCore(M.ParseSocksaddr("127.0.0.1:40055"), M.ParseSocksaddr("127.0.0.1:10443")) {
-		t.Fatal("a direct dial by name to this host was not recorded")
-	}
-	if dialedByCore(M.ParseSocksaddr("127.0.0.1:40056"), M.ParseSocksaddr("127.0.0.1:10443")) {
-		t.Fatal("a front's connection on the same port matched the record")
+	if err := guardDirect(dialedConn("127.0.0.1:40056", "127.0.0.1:8080"), M.ParseSocksaddr("localhost:8080")); err != nil {
+		t.Fatalf("a direct dial by name to another port here was refused: %v", err)
 	}
 }
 
@@ -1076,7 +971,7 @@ func TestDirectDialByNameIsRecorded(t *testing.T) {
 // for is judged as a relay.
 func TestDirectThatWentElsewhereIsARelay(t *testing.T) {
 	inUseForTest(t, 10443)
-	if _, err := guardDial(dialedConn("127.0.0.1:40057", "127.0.0.1:1080"), M.ParseSocksaddr("127.0.0.1:10443"), Route{Direct: true}, 0); err == nil {
+	if err := guardDial(dialedConn("127.0.0.1:40057", "127.0.0.1:1080"), M.ParseSocksaddr("127.0.0.1:10443"), Route{Direct: true}); err == nil {
 		t.Fatal("a dial to a relay on this host, routed as direct, was let through")
 	}
 }
@@ -1086,7 +981,7 @@ func TestDirectDialToANamedFrontByName(t *testing.T) {
 	inUseForTest(t)
 	SetTrusted([]netip.Prefix{netip.MustParsePrefix("172.18.0.1/32")})
 	defer SetTrusted(nil)
-	if _, err := guardDial(dialedConn("172.18.0.2:40058", "172.18.0.1:443"), M.ParseSocksaddr("gateway.example:443"), Route{Direct: true}, 0); err == nil {
+	if err := guardDial(dialedConn("172.18.0.2:40058", "172.18.0.1:443"), M.ParseSocksaddr("gateway.example:443"), Route{Direct: true}); err == nil {
 		t.Fatal("a direct dial by name to a named front was let through")
 	}
 }
@@ -1099,11 +994,10 @@ func TestOutboundServerInANamedRangeIsDialed(t *testing.T) {
 	SetTrusted([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")})
 	defer SetTrusted(nil)
 	for _, destination := range []string{"203.0.113.7:443", "example.com:443"} {
-		guard, err := guardDial(dialedConn("10.0.0.2:40080", "10.0.0.7:443"), M.ParseSocksaddr(destination), through, 0)
+		err := guardDial(dialedConn("10.0.0.2:40080", "10.0.0.7:443"), M.ParseSocksaddr(destination), through)
 		if err != nil {
 			t.Fatalf("an outbound to a server in a named range was refused %s: %v", destination, err)
 		}
-		guard.Release()
 	}
 }
 
@@ -1155,8 +1049,7 @@ func TestAddresslessConn(t *testing.T) {
 			if c.server != "" {
 				route.Server = M.ParseSocksaddr(c.server)
 			}
-			guard, err := guardDial(conn, M.ParseSocksaddr("example.com:10443"), route, 0)
-			defer guard.Release()
+			err := guardDial(conn, M.ParseSocksaddr("example.com:10443"), route)
 			if (err != nil) != c.refused {
 				t.Fatalf("refused = %v (%v), want %v", err != nil, err, c.refused)
 			}
@@ -1382,19 +1275,19 @@ func TestHandlerConnNamesTheClient(t *testing.T) {
 func TestGuardDialAsksForTheRouteWhenOn(t *testing.T) {
 	inUse.Store(nil)
 	asked := false
-	if _, err := GuardDial(dialedConn("127.0.0.1:40090", "127.0.0.1:10443"), M.ParseSocksaddr("localhost:10443"), func() Route {
+	if err := GuardDial(dialedConn("127.0.0.1:40090", "127.0.0.1:10443"), M.ParseSocksaddr("localhost:10443"), func() Route {
 		asked = true
 		return Route{}
 	}); err != nil || asked {
 		t.Fatalf("with the guard off: err = %v, route asked = %v", err, asked)
 	}
 	inUseForTest(t, 10443)
-	guard, err := GuardDial(dialedConn("127.0.0.1:40091", "127.0.0.1:10443"), M.ParseSocksaddr("localhost:10443"), func() Route {
+	// Judged by the route it was handed: direct, to another port here.
+	err := GuardDial(dialedConn("127.0.0.1:40091", "127.0.0.1:8080"), M.ParseSocksaddr("localhost:8080"), func() Route {
 		asked = true
 		return Route{Direct: true}
 	})
 	if err != nil || !asked {
-		t.Fatalf("with the guard on: err = %v, route asked = %v; want a direct dial recorded", err, asked)
+		t.Fatalf("with the guard on: err = %v, route asked = %v; want a direct dial let through", err, asked)
 	}
-	guard.Release()
 }

@@ -97,35 +97,29 @@ var proxyProtocolTypes = map[string]bool{
 // Refusing it left an inbound that arrived with it -- an imported database --
 // impossible to save from the form, which has no switch for it.
 func checkProxyProtocol(inbound *model.Inbound) error {
-	var listen struct {
-		ProxyProtocol bool `json:"proxy_protocol"`
-		Transport     struct {
-			Type string `json:"type"`
-		} `json:"transport"`
-	}
+	// One decode serves both the checks and the drop.
+	var options map[string]json.RawMessage
 	// An Options that does not parse is the core's to report, as before.
-	if len(inbound.Options) == 0 || json.Unmarshal(inbound.Options, &listen) != nil {
+	if len(inbound.Options) == 0 || json.Unmarshal(inbound.Options, &options) != nil {
 		return nil
 	}
-	if listen.ProxyProtocol && !proxyProtocolTypes[inbound.Type] {
+	var enabled bool
+	_ = json.Unmarshal(options["proxy_protocol"], &enabled)
+	var transport struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(options["transport"], &transport)
+	if enabled && !proxyProtocolTypes[inbound.Type] {
 		return common.NewErrorf("inbound %s: PROXY protocol is only supported on vless, vmess, trojan and anytls inbounds, not %s", inbound.Tag, inbound.Type)
 	}
-	if listen.ProxyProtocol && listen.Transport.Type == "quic" {
+	if enabled && transport.Type == "quic" {
 		return common.NewErrorf("inbound %s: PROXY protocol is not supported over the QUIC transport, which carries no TCP connection to read a header from", inbound.Tag)
-	}
-	return dropAcceptNoHeader(inbound)
-}
-
-// dropAcceptNoHeader removes proxy_protocol_accept_no_header from the
-// inbound's options, when it is there at all.
-func dropAcceptNoHeader(inbound *model.Inbound) error {
-	var options map[string]json.RawMessage
-	if json.Unmarshal(inbound.Options, &options) != nil {
-		return nil
 	}
 	if _, found := options["proxy_protocol_accept_no_header"]; !found {
 		return nil
 	}
+	// Only now re-encoded, so an inbound without the field is stored
+	// byte for byte as it came.
 	delete(options, "proxy_protocol_accept_no_header")
 	raw, err := json.Marshal(options)
 	if err != nil {

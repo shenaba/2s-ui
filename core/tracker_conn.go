@@ -573,22 +573,14 @@ type wrappedConn struct {
 	tracker     *ConnTracker
 	info        *ConnectionInfo
 	untrackOnce sync.Once
-	// releaseDial ends what proxyheader.GuardDial remembers about this
-	// connection's outbound; dialUntracked once it has been untracked.
-	releaseDial atomic.Pointer[func()]
 	// outbound is the one this connection is dialed through, for
 	// proxyheader.GuardDial. Written before the wrapper is handed out.
 	outbound adapter.Outbound
 }
 
-var dialUntracked = func() {}
-
 func (w *wrappedConn) doUntrack() {
 	w.untrackOnce.Do(func() {
 		w.tracker.untrackConnection(w.info.ID)
-		if release := w.releaseDial.Swap(&dialUntracked); release != nil {
-			(*release)()
-		}
 	})
 }
 
@@ -608,16 +600,8 @@ func (w *wrappedConn) ConnHandshakeSuccess(remote net.Conn) error {
 	if w.tracker.route != nil && w.outbound != nil {
 		route = func() proxyheader.Route { return w.tracker.route(w.outbound) }
 	}
-	guard, err := proxyheader.GuardDial(remote, w.info.Destination, route)
-	if err != nil {
+	if err := proxyheader.GuardDial(remote, w.info.Destination, route); err != nil {
 		return err
-	}
-	if guard != nil {
-		release := guard.Release
-		if !w.releaseDial.CompareAndSwap(nil, &release) {
-			// Untracked already: nothing will release it later.
-			release()
-		}
 	}
 	return network.ReportConnHandshakeSuccess(w.Conn, remote)
 }
