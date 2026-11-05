@@ -329,6 +329,7 @@ export default {
     timeLoc: "Vị trí múi giờ",
     subEncode: "Kích hoạt mã hóa",
     subInfo: "Kích hoạt thông tin khách hàng",
+    subRemarkPrefix: "Thêm ghi chú khách hàng vào trước tên node",
     subCustomHeaders: "Tiêu đề tùy chỉnh",
     subCustomHeadersHint: "Thêm vào mọi phản hồi đăng ký, mỗi dòng một \"Name: value\"; dòng bắt đầu bằng # bị bỏ qua. Không thể ghi đè các tiêu đề do bảng điều khiển tự đặt.",
     path: "Đường dẫn mặc định",

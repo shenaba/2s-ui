@@ -119,6 +119,7 @@
       </SRow>
       <ToggleRow v-model="subEncode" :label="$t('setting.subEncode')" />
       <ToggleRow v-model="subShowInfo" :label="$t('setting.subInfo')" />
+      <ToggleRow v-model="subRemarkPrefix" :label="$t('setting.subRemarkPrefix')" />
       <SRow :label="$t('setting.update')" :hint="$t('date.h')">
         <input class="input mono" type="number" min="0" v-model.number="subUpdates" />
       </SRow>
@@ -465,6 +466,7 @@ const settings = ref({
   subUpdates: "12",
   subEncode: "true",
   subShowInfo: "false",
+  subRemarkPrefix: "true",
   subURI: "",
   subJsonExt: "",
   subClashExt: "",
@@ -994,6 +996,11 @@ const waitReachable = async (url: string) => {
 const subEncode = computed({
   get: () => { return settings.value.subEncode == "true" },
   set: (v: boolean) => { settings.value.subEncode = v ? "true" : "false" }
+})
+
+const subRemarkPrefix = computed({
+  get: () => { return settings.value.subRemarkPrefix != "false" },
+  set: (v: boolean) => { settings.value.subRemarkPrefix = v ? "true" : "false" }
 })
 
 const subShowInfo = computed({

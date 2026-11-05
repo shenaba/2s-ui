@@ -329,6 +329,7 @@ export default {
     timeLoc: "时区",
     subEncode: "启用 Base64 编码",
     subInfo: "启用用户信息",
+    subRemarkPrefix: "节点名前加用户备注",
     subCustomHeaders: "自定义响应头",
     subCustomHeadersHint: "附加到每个订阅响应，每行一个 \"Name: value\"，以 # 开头的行会被忽略。面板自己设置的响应头不能覆盖。",
     path: "默认路径",

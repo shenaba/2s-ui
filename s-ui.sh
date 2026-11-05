@@ -557,9 +557,14 @@ reset_admin() {
 
 set_admin() {
     echo "$(t warn_set_admin)"
-    read -p "$(t prompt_username)" config_account
-    read -p "$(t prompt_password)" config_password
-    /usr/local/s-ui/sui admin -username ${config_account} -password ${config_password}
+    read -r -p "$(t prompt_username)" config_account
+    read -r -s -p "$(t prompt_password)" config_password
+    echo
+    if [[ -z "$config_account" || -z "$config_password" ]]; then
+        LOGE "Username and password can not be empty."
+    else
+        /usr/local/s-ui/sui admin -username "${config_account}" -password "${config_password}"
+    fi
     before_show_menu
 }
 

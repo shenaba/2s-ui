@@ -329,6 +329,7 @@ export default {
     timeLoc: "時區",
     subEncode: "啟用編碼",
     subInfo: "啟用用戶信息",
+    subRemarkPrefix: "節點名前加用戶備註",
     subCustomHeaders: "自訂回應標頭",
     subCustomHeadersHint: "附加到每個訂閱回應，每行一個 \"Name: value\"，以 # 開頭的行會被忽略。面板自行設定的標頭無法覆寫。",
     path: "默認路徑",

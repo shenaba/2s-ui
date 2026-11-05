@@ -901,6 +901,7 @@ func (s *NodeSyncService) refreshNodeLinks(node *model.Node) {
 	}
 
 	prefix := nodeLinkPrefix(node.Name)
+	remarkPrefix := (&SettingService{}).SubRemarkPrefix(db)
 	touched := false
 
 	for i := range clients {
@@ -914,7 +915,9 @@ func (s *NodeSyncService) refreshNodeLinks(node *model.Node) {
 			if !ok {
 				continue
 			}
-			for _, uri := range genNodeReplicaLinks(rep, c) {
+			linkClient := *c
+			linkClient.Remark = linkRemark(remarkPrefix, c.Remark)
+			for _, uri := range genNodeReplicaLinks(rep, &linkClient) {
 				desired = append(desired, map[string]string{
 					"remark": prefix + rep.Tag,
 					"type":   "external",

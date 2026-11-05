@@ -584,3 +584,54 @@ func TestFillOutJsonKeepsTheEndpointTlsToItself(t *testing.T) {
 		t.Errorf("cleaning the stored template must keep the endpoint's TLS, left %v", stored)
 	}
 }
+
+func TestFillOutJsonHysteria2Realm(t *testing.T) {
+	inbound := &model.Inbound{
+		Type: "hysteria2",
+		Tag:  "hy2-in",
+		Options: json.RawMessage(`{"listen_port": 443, "realm": {
+			"server_url": "https://realm.example.com", "token": "server-token", "realm_id": "home",
+			"stun_servers": ["stun.example.com"], "port_mapping": {"enabled": true}}}`),
+		OutJson: json.RawMessage(`{"server_ports": ["2000:3000"], "hop_interval": "30s", "realm": {"token": "client-token", "realm_id": "stale"}}`),
+	}
+
+	if err := FillOutJson(inbound, "example.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	var out map[string]interface{}
+	if err := json.Unmarshal(inbound.OutJson, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"server", "server_port", "server_ports", "hop_interval"} {
+		if v, ok := out[key]; ok {
+			t.Errorf("%s conflicts with realm, got %v", key, v)
+		}
+	}
+	realm, _ := out["realm"].(map[string]interface{})
+	if realm["server_url"] != "https://realm.example.com" || realm["realm_id"] != "home" {
+		t.Errorf("realm not taken from the inbound: %v", realm)
+	}
+	if realm["token"] != "client-token" {
+		t.Errorf("token = %v, want the client token kept from out_json", realm["token"])
+	}
+	if _, ok := realm["port_mapping"]; ok {
+		t.Errorf("port_mapping is the server's gateway setting and must not reach clients")
+	}
+
+	// Dropping the realm on the inbound brings the server address back.
+	inbound.Options = json.RawMessage(`{"listen_port": 443}`)
+	if err := FillOutJson(inbound, "example.com"); err != nil {
+		t.Fatal(err)
+	}
+	out = nil
+	if err := json.Unmarshal(inbound.OutJson, &out); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := out["realm"]; ok {
+		t.Errorf("realm survived its removal from the inbound")
+	}
+	if out["server"] != "example.com" {
+		t.Errorf("server = %v, want example.com", out["server"])
+	}
+}

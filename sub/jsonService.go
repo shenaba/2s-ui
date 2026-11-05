@@ -56,7 +56,7 @@ func (j *JsonService) GetJson(subId string, format string) (*string, []string, e
 		return nil, nil, err
 	}
 
-	outbounds, outTags, links, err := j.getOutbounds(client.Config, inDatas, client.Remark)
+	outbounds, outTags, links, err := j.getOutbounds(client.Config, inDatas, nodeRemark(&j.SettingService, client))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -354,7 +354,10 @@ func (j *JsonService) getOutbounds(clientConfig json.RawMessage, inbounds []*mod
 // inbound's own when it has none.
 func addrCopies(e *subEntry, clientRemark string) []subCopy {
 	outbound, tag := e.outbound, e.inTag
-	if len(e.addrs) == 0 {
+	// A realm client finds the server through the realm, so the inbound's
+	// addresses have nothing to override.
+	_, viaRealm := outbound["realm"]
+	if len(e.addrs) == 0 || viaRealm {
 		outbound["tag"] = util.JoinRemark(clientRemark, tag)
 		return []subCopy{{outs: splitMixed(e.protocol, outbound)}}
 	}
@@ -766,4 +769,13 @@ func splitMixed(protocol string, out map[string]interface{}) []map[string]interf
 	socksOut["tag"] = fmt.Sprintf("%s-socks", out["tag"])
 	httpOut["tag"] = fmt.Sprintf("%s-http", out["tag"])
 	return []map[string]interface{}{socksOut, httpOut}
+}
+
+// nodeRemark is the remark node names are prefixed with: the client's own, or
+// none when the subRemarkPrefix setting turns the prefix off.
+func nodeRemark(settings *service.SettingService, client *model.Client) string {
+	if !settings.SubRemarkPrefix(database.GetDB()) {
+		return ""
+	}
+	return client.Remark
 }
