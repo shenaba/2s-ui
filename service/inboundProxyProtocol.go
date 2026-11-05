@@ -70,7 +70,10 @@ func checkProxyProtoFronts(prefixes []netip.Prefix) error {
 		}
 		// A NAT64 prefix carries IPv4 addresses inside it, so its breadth is
 		// that of the IPv4 part: 64:ff9b::/96 is every IPv4 host, seen from
-		// an IPv6-only machine. Held to an IPv4 /16 there.
+		// an IPv6-only machine. Held to an IPv4 /16 there. Only the
+		// well-known prefixes can be told: one a network chose for its own
+		// translator is an ordinary IPv6 range to this check, and listing it
+		// trusts every IPv4 client behind it.
 		for _, nat64 := range nat64Prefixes {
 			if prefix.Overlaps(nat64) {
 				least = max(least, 128-32+minFrontBits4)
@@ -142,4 +145,34 @@ func checkProxyProtocol(inbound *model.Inbound) error {
 	}
 	inbound.Options = raw
 	return nil
+}
+
+// dropUnsupportedProxyProtocol removes the PROXY protocol request from an
+// inbound of a type that cannot honour it, on its way to the core. A save
+// refuses one, but a row can arrive without one (an imported database), and
+// sing-box's listener refuses to start with it -- which fails the whole core,
+// every inbound with it. Dropped, that inbound serves as it would without.
+func dropUnsupportedProxyProtocol(inboundJson []byte, inboundType string) []byte {
+	if proxyProtocolTypes[inboundType] {
+		return inboundJson
+	}
+	var options map[string]json.RawMessage
+	if json.Unmarshal(inboundJson, &options) != nil {
+		return inboundJson
+	}
+	_, asked := options["proxy_protocol"]
+	_, acceptNoHeader := options["proxy_protocol_accept_no_header"]
+	if !asked && !acceptNoHeader {
+		return inboundJson
+	}
+	delete(options, "proxy_protocol")
+	delete(options, "proxy_protocol_accept_no_header")
+	raw, err := json.Marshal(options)
+	if err != nil {
+		return inboundJson
+	}
+	var tag string
+	_ = json.Unmarshal(options["tag"], &tag)
+	logger.Warning("inbound ", tag, ": PROXY protocol is not supported on ", inboundType, " inbounds; started without it")
+	return raw
 }

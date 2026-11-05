@@ -1060,18 +1060,53 @@ func TestAddresslessConn(t *testing.T) {
 	}
 }
 
-// A header that names no client -- a v2 LOCAL health check, a v1 UNKNOWN --
-// is consumed and refused: the front's own address is not a client's.
+// A v2 LOCAL header is a front's health check and names no client. A v1
+// UNKNOWN, or a v2 PROXY for a family other than IPv4 and IPv6, says it
+// carries a client it cannot name. Both are consumed, and told apart.
 func TestReadHeaderNamingNoClient(t *testing.T) {
-	for _, header := range []string{
-		"PROXY UNKNOWN\r\n",
-		v2(t, &proxyproto.Header{Version: 2, Command: proxyproto.LOCAL, TransportProtocol: proxyproto.UNSPEC}),
-	} {
-		conn := send(t, header+tail)
-		if _, err := Read(conn); err != errNoClient {
-			t.Fatalf("Read(%q) = %v, want errNoClient", header, err)
+	cases := []struct {
+		header string
+		want   error
+	}{
+		{v2(t, &proxyproto.Header{Version: 2, Command: proxyproto.LOCAL, TransportProtocol: proxyproto.UNSPEC}), errNoClient},
+		{"PROXY UNKNOWN\r\n", errUnknownSource},
+		{v2(t, &proxyproto.Header{
+			Version: 2, Command: proxyproto.PROXY, TransportProtocol: proxyproto.UnixStream,
+			SourceAddr:      &net.UnixAddr{Name: "/run/front.sock", Net: "unix"},
+			DestinationAddr: &net.UnixAddr{Name: "/run/inbound.sock", Net: "unix"},
+		}), errUnknownSource},
+	}
+	for _, c := range cases {
+		conn := send(t, c.header+tail)
+		if _, err := Read(conn); err != c.want {
+			t.Fatalf("Read(%q) = %v, want %v", c.header, err, c.want)
 		}
 		assertTail(t, conn)
+	}
+}
+
+// A client the header cannot name -- nginx's PROXY UNKNOWN for one that came
+// over a unix socket -- is served, as the front's own address, with a warning
+// that the IP limit now sees them all as one.
+func TestUnknownSourceIsServedAsTheFront(t *testing.T) {
+	unknownWarning.Lock()
+	unknownWarning.last, unknownWarning.suppressed = time.Time{}, 0
+	unknownWarning.Unlock()
+	logs := &warnLogger{ContextLogger: log.NewNOPFactory().Logger()}
+	next := &recordHandler{size: len(tail), got: make(chan reached, 1)}
+	front := M.ParseSocksaddr("127.0.0.1:40140")
+	metadata := adapter.InboundContext{Source: front, OriginDestination: local}
+	Handler(next, logs, on).NewConnection(context.Background(), send(t, "PROXY UNKNOWN\r\n"+tail), metadata, nil)
+	select {
+	case got := <-next.got:
+		if got.metadata.Source != front || got.data != tail {
+			t.Fatalf("source = %s, data = %q; want the front, and the client's bytes", got.metadata.Source, got.data)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a client of unknown address was refused")
+	}
+	if len(logs.warns) != 1 {
+		t.Fatalf("warnings = %q, want one", logs.warns)
 	}
 }
 
@@ -1312,20 +1347,18 @@ func TestRelayToThisHostInsideANamedRange(t *testing.T) {
 	}
 }
 
-// A front may leave from any of this host's addresses, not only the one the
-// connection arrived on -- but only from one known to be this host's.
+// Another of this host's addresses is not trusted unlisted: an address the
+// host takes by a local route (IPv6 AnyIP) is reached from one, by a dial the
+// guard sees as leaving the host. Listed, it is a front like any other.
 func TestTrustedFromAnotherOfThisHostsAddresses(t *testing.T) {
 	hostAddrsForTest(t, "198.51.100.1", "198.51.100.2")
-	if !Trusted(M.ParseSocksaddr("198.51.100.2:40000"), M.ParseSocksaddr("198.51.100.1:10443")) {
-		t.Fatal("a front leaving from another of this host's addresses was not trusted")
-	}
-	if Trusted(M.ParseSocksaddr("203.0.113.9:40000"), M.ParseSocksaddr("198.51.100.1:10443")) {
-		t.Fatal("a stranger was trusted")
-	}
-	// Unreadable, the addresses vouch for no one.
-	hostAddrs.snapshot.Store(&addrSnapshot{unknown: true, loaded: time.Now().Add(time.Hour)})
 	if Trusted(M.ParseSocksaddr("198.51.100.2:40000"), M.ParseSocksaddr("198.51.100.1:10443")) {
-		t.Fatal("trusted an address when this host's could not be read")
+		t.Fatal("trusted another of this host's addresses without its being listed")
+	}
+	SetTrusted([]netip.Prefix{netip.MustParsePrefix("198.51.100.2/32")})
+	defer SetTrusted(nil)
+	if !Trusted(M.ParseSocksaddr("198.51.100.2:40000"), M.ParseSocksaddr("198.51.100.1:10443")) {
+		t.Fatal("a listed front at another of this host's addresses was not trusted")
 	}
 }
 
@@ -1383,5 +1416,15 @@ func TestFallbackDial(t *testing.T) {
 	}
 	if err := guardDirect(dialedConn("172.18.0.2:40122", "172.18.0.1:80"), M.ParseSocksaddr("172.18.0.1:80")); err == nil {
 		t.Fatal("a client's own dial to a named front was let through")
+	}
+}
+
+// Whatever the route says, a socket that landed on this host's PROXY port is
+// refused: a direct outbound's override, or an outbound pointed at the
+// inbound, sends the client's bytes there as surely as a direct dial does.
+func TestSocketOnThePROXYPortWhateverTheRoute(t *testing.T) {
+	inUseForTest(t, 10443)
+	if err := guardDial(dialedConn("127.0.0.1:40130", "127.0.0.1:10443"), M.ParseSocksaddr("203.0.113.7:443"), through); err == nil {
+		t.Fatal("a socket on this host's PROXY port, for a client asking elsewhere, was let through")
 	}
 }

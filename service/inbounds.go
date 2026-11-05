@@ -400,7 +400,18 @@ func (s *InboundService) fetchUsers(db *gorm.DB, inboundType string, condition s
 	return usersJson, nil
 }
 
+// addUsers is an inbound's config as the core takes it: its users added, and
+// a PROXY protocol request its type cannot honour dropped. Every path that
+// hands an inbound to the core comes through here.
 func (s *InboundService) addUsers(db *gorm.DB, inboundJson []byte, inboundId uint, inboundType string) ([]byte, error) {
+	withUsers, err := s.addInboundUsers(db, inboundJson, inboundId, inboundType)
+	if err != nil {
+		return nil, err
+	}
+	return dropUnsupportedProxyProtocol(withUsers, inboundType), nil
+}
+
+func (s *InboundService) addInboundUsers(db *gorm.DB, inboundJson []byte, inboundId uint, inboundType string) ([]byte, error) {
 	if !s.hasUser(inboundType) {
 		return inboundJson, nil
 	}

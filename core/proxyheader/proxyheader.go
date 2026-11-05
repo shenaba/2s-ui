@@ -319,12 +319,13 @@ func Trusted(source, local M.Socksaddr) bool {
 	if !addr.IsValid() {
 		return false
 	}
-	// Any of this host's addresses, not only the one it arrived on: a front
-	// on a host with several (nginx with proxy_bind) can leave from another,
-	// and the dial guard counts them all as this host too. Only addresses
-	// known to be this host's: when they cannot be read, none is taken as
-	// one here, where taking one would trust a stranger.
-	return onThisHost(addr, plain(local.Addr)) || hostAddrs.known(addr) || namedFront(addr)
+	// Loopback or the address it arrived on, not any of this host's: a
+	// connection to an address the host takes by a local route (an IPv6
+	// AnyIP /64) arrives from another of its addresses, and a dial the core
+	// made there looks like one off the host to the guard. A front that
+	// leaves from another of this host's addresses (proxy_bind) is listed
+	// under the trusted fronts instead.
+	return onThisHost(addr, plain(local.Addr)) || namedFront(addr)
 }
 
 func endpoint(addr M.Socksaddr) netip.AddrPort {
@@ -438,9 +439,11 @@ func guardPorts(conn net.Conn, destination M.Socksaddr, route Route, ports portS
 	// between routing and dialing.
 	direct := route.Direct && (!destination.IsIP() || endpoint(destination) == endpoint(remote))
 	switch {
-	case direct && here && ports.has(remote.Port):
-		// From this host there is no NAT: the port dialed is the port the
-		// inbound listens on.
+	case here && ports.has(remote.Port):
+		// The socket itself landed on a PROXY-enabled inbound, whatever the
+		// route: a direct dial, one an override sent there, or an outbound
+		// whose server is that inbound. From this host there is no NAT: the
+		// port dialed is the port the inbound listens on.
 		return E.New("refused to dial ", remote, ": a PROXY-enabled inbound on this host, which would believe a header the client sent")
 	case direct && !here && namedFront(remoteAddr) && !route.Fallback:
 		return E.New("refused to dial ", remote, ": a trusted PROXY protocol front, which a client could speak through as anyone")
@@ -535,18 +538,6 @@ type addrSnapshot struct {
 	loaded  time.Time
 }
 
-// known reports whether addr is one of the addresses last read, and false
-// when they could not be read: contains for where guessing yes is the safe
-// side, known for where it is not.
-func (c *addrCache) known(addr netip.Addr) bool {
-	snapshot := c.current()
-	if snapshot.unknown {
-		return false
-	}
-	_, found := snapshot.addrs[addr]
-	return found
-}
-
 func (c *addrCache) contains(addr netip.Addr) bool {
 	snapshot := c.current()
 	if snapshot.unknown {
@@ -617,8 +608,32 @@ func innermost(conn net.Conn) net.Conn {
 // front checking every few seconds would otherwise fill the log.
 var errNoClient = errors.New("PROXY header names no client (a front's health check)")
 
+// errUnknownSource is a header that says it carries a client but cannot name
+// one: a v1 UNKNOWN, or a v2 PROXY command for a family other than IPv4 and
+// IPv6. nginx sends it for a client that reached it over a unix socket. The
+// spec has such a connection served as the front's own, and it is -- the
+// front is trusted, and nothing was forged -- with a warning that every such
+// client shares the front's address.
+var errUnknownSource = errors.New("PROXY header names a client of unknown address")
+
+// unknownWarning spaces out the warning about errUnknownSource.
+var unknownWarning warnLimiter
+
+// served is a header's client for serving: the front's own address, with a
+// warning, when the header could not name one.
+func served(logger logger.ContextLogger, client, source M.Socksaddr, err error) (M.Socksaddr, error) {
+	if !errors.Is(err, errUnknownSource) {
+		return client, err
+	}
+	unknownWarning.warnf(logger, time.Now(), "PROXY header from ", source, heldBack{}, " names no client address (PROXY UNKNOWN: ",
+		"a front that took the client over a unix socket?), so its clients are served as the front's own address, ",
+		"which the online list and the IP limit then share")
+	return source, nil
+}
+
 // Read consumes the header conn starts with and returns the client address it
-// names, or errNoClient when it names none.
+// names; errNoClient for a health check, errUnknownSource for a client it
+// could not name.
 func Read(conn net.Conn) (M.Socksaddr, error) {
 	return readWithin(conn, readTimeout)
 }
@@ -640,12 +655,17 @@ func readWithin(conn net.Conn, timeout time.Duration) (M.Socksaddr, error) {
 	if err != nil {
 		return M.Socksaddr{}, err
 	}
-	if header.Command.IsLocal() || header.SourceAddr == nil {
+	// go-proxyproto reads a v1 UNKNOWN as LOCAL; told apart by version.
+	if header.Command.IsLocal() && header.Version == 2 {
 		return M.Socksaddr{}, errNoClient
 	}
+	if header.SourceAddr == nil {
+		return M.Socksaddr{}, errUnknownSource
+	}
+	// Only an IP is a client's address: a unix one comes back as a name.
 	client := M.SocksaddrFromNet(header.SourceAddr).Unwrap()
-	if !client.IsValid() {
-		return M.Socksaddr{}, errNoClient
+	if !client.IsIP() {
+		return M.Socksaddr{}, errUnknownSource
 	}
 	return client, nil
 }
@@ -757,6 +777,7 @@ func (h *handler) NewConnection(ctx context.Context, conn net.Conn, metadata ada
 		return
 	}
 	client, err := Read(conn)
+	client, err = served(h.logger, client, metadata.Source, err)
 	if err != nil {
 		N.CloseOnHandshakeFailure(conn, onClose, err)
 		logRefused(ctx, h.logger, metadata.Source, err)
@@ -851,6 +872,15 @@ type warnLimiter struct {
 }
 
 func (w *warnLimiter) warn(logger logger.ContextLogger, source M.Socksaddr, now time.Time) {
+	w.warnf(logger, now, "PROXY header from ", source, heldBack{}, ", which is not a trusted front, passed on as data: ",
+		"if this is your front, add it under Settings > Interface > Trusted PROXY Protocol Fronts")
+}
+
+// heldBack stands, among warnf's args, for how many warnings were held back.
+type heldBack struct{}
+
+// warnf logs args, unless a warning went out within warnInterval.
+func (w *warnLimiter) warnf(logger logger.ContextLogger, now time.Time, args ...any) {
 	w.Lock()
 	if !w.last.IsZero() && now.Sub(w.last) < warnInterval {
 		w.suppressed++
@@ -864,8 +894,12 @@ func (w *warnLimiter) warn(logger logger.ContextLogger, source M.Socksaddr, now 
 	if suppressed > 0 {
 		held = " (and " + strconv.Itoa(suppressed) + " more since the last warning)"
 	}
-	logger.Warn("PROXY header from ", source, held, ", which is not a trusted front, passed on as data: ",
-		"if this is your front, add it under Settings > Interface > Trusted PROXY Protocol Fronts")
+	for i, arg := range args {
+		if _, isHeld := arg.(heldBack); isHeld {
+			args[i] = held
+		}
+	}
+	logger.Warn(args...)
 }
 
 // Listen is Handler for the listener a V2Ray transport serves, which takes the
@@ -961,6 +995,7 @@ func (l *listener) loop() {
 
 func (l *listener) handshake(conn net.Conn, source M.Socksaddr) {
 	client, err := Read(conn)
+	client, err = served(l.logger, client, source, err)
 	if err != nil {
 		conn.Close()
 		logRefused(context.Background(), l.logger, source, err)

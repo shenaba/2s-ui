@@ -127,3 +127,6 @@ T1、T3、T5、T6 都符合预期，就说明核心功能和安全修复都验�
 - 端口映射到所有网卡时的 Docker 回环 NAT；
 - 本机上指向 PROXY inbound 的 iptables REDIRECT/DNAT；
 - ws、http、httpupgrade、grpc lite 传输优先使用客户端可伪造的 `X-Forwarded-For`（#279，main 上已存在）。
+- 自建 NAT64/SIIT 翻译器用的 IPv6 前缀（非 `64:ff9b::/96`、`64:ff9b:1::/48`）无法识别，不要把它填成可信前置，否则它背后的所有 IPv4 客户端都会被信任。
+
+另外：前置从本机另一个地址连进来（如 nginx 用 `proxy_bind` 指定了别的本机地址）时，需要把那个地址填进可信前置，本机地址不会自动全部信任。

@@ -144,3 +144,31 @@ func TestProxyProtoTrustedReachesTheCore(t *testing.T) {
 		}
 	}
 }
+
+// An inbound of a type that cannot read PROXY headers, arrived with the
+// request anyway (an imported database), reaches the core without it: left
+// in, sing-box's listener refuses it and the whole core with it.
+func TestDropUnsupportedProxyProtocol(t *testing.T) {
+	raw := []byte(`{"type":"shadowsocks","tag":"s","listen_port":1,"proxy_protocol":true,"proxy_protocol_accept_no_header":true}`)
+	var options map[string]any
+	if err := json.Unmarshal(dropUnsupportedProxyProtocol(raw, "shadowsocks"), &options); err != nil {
+		t.Fatal(err)
+	}
+	if _, kept := options["proxy_protocol"]; kept {
+		t.Fatal("kept proxy_protocol on a shadowsocks inbound")
+	}
+	if _, kept := options["proxy_protocol_accept_no_header"]; kept {
+		t.Fatal("kept proxy_protocol_accept_no_header on a shadowsocks inbound")
+	}
+	if options["listen_port"] != float64(1) {
+		t.Fatal("lost the rest of the options")
+	}
+	vless := []byte(`{"type":"vless","tag":"v","listen_port":1,"proxy_protocol":true}`)
+	if got := dropUnsupportedProxyProtocol(vless, "vless"); string(got) != string(vless) {
+		t.Fatalf("touched a vless inbound: %s", got)
+	}
+	plain := []byte(`{"type":"shadowsocks","tag":"s","listen_port":1}`)
+	if got := dropUnsupportedProxyProtocol(plain, "shadowsocks"); string(got) != string(plain) {
+		t.Fatalf("rewrote an inbound without the request: %s", got)
+	}
+}
