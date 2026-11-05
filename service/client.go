@@ -1711,6 +1711,22 @@ func (s *ClientService) findInboundsChanges(tx *gorm.DB, client *model.Client, f
 	return diffInbounds, nil
 }
 
+// RebuildLocalLinks regenerates every client's local links from the local
+// inbounds, for a setting that changes how all of them are built.
+//
+// node_id IS NULL, as in updateLinksWithFixedInbounds: a local link for a node
+// replica would carry THIS panel's hostname. Replica links are the node's own
+// "external" entries, rebuilt by refreshNodeLinks on the next reconcile.
+func (s *ClientService) RebuildLocalLinks(tx *gorm.DB, hostname string) error {
+	var inbounds []model.Inbound
+	err := tx.Model(model.Inbound{}).Preload("Tls").
+		Where("type in ? and node_id IS NULL", util.InboundTypeWithLink).Find(&inbounds).Error
+	if err != nil {
+		return err
+	}
+	return s.UpdateLinksByInboundChange(tx, &inbounds, hostname, "")
+}
+
 // linkRemark is the remark stored links are prefixed with: the client's own,
 // or none when the subRemarkPrefix setting turns the prefix off.
 func linkRemark(prefix bool, remark string) string {
