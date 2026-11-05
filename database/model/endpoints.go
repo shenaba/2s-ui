@@ -32,7 +32,7 @@ func (o *Endpoint) UnmarshalJSON(data []byte) error {
 	delete(raw, "id")
 	o.Type, _ = raw["type"].(string)
 	delete(raw, "type")
-	o.Tag = raw["tag"].(string)
+	o.Tag, _ = raw["tag"].(string)
 	delete(raw, "tag")
 	if val, exists := raw["tls_id"].(float64); exists {
 		o.TlsId = uint(val)

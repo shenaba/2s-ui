@@ -719,7 +719,6 @@ func TestClashUdpRespectsTcpOnlyListener(t *testing.T) {
 	}
 }
 
-
 // runAddHTTPClients drives addHTTPClients over a settings template the way
 // addOthers does, and hands back both halves it can write to.
 //
@@ -1199,5 +1198,50 @@ func TestGetJsonKeepsRouteFromTemplate(t *testing.T) {
 	}
 	if len(cfg.Route.Rules) != 1 || cfg.Route.Rules[0]["action"] != "sniff" {
 		t.Errorf("the template's rules must survive, got %v", cfg.Route.Rules)
+	}
+}
+
+// A hysteria2 outbound with a realm must carry none of server, server_port or
+// server_ports: sing-box refuses it outright ("realm conflicts with server,
+// server_port, and server_ports"), which takes the whole subscription down.
+// Runs the inbound through FillOutJson first, as saving it does, so the
+// address fields the panel adds on its own are covered too.
+func TestGetOutboundsRealmIgnoresAddrs(t *testing.T) {
+	for _, addrs := range []string{
+		`[]`,
+		`[{"server": "a.example.com", "server_port": 443}, {"server": "b.example.com", "server_port": 443}]`,
+	} {
+		inbound := &model.Inbound{
+			Type: "hysteria2",
+			Tag:  "hy2",
+			Options: json.RawMessage(`{"listen_port": 443, "realm": {
+				"server_url": "https://realm.example.com", "realm_id": "home"}}`),
+			OutJson: json.RawMessage(`{"server_ports": ["2000:3000"]}`),
+			Addrs:   json.RawMessage(addrs),
+		}
+		if err := util.FillOutJson(inbound, "panel.example.com"); err != nil {
+			t.Fatal(err)
+		}
+		clientConfig := json.RawMessage(`{"hysteria2": {"name": "user", "password": "secret"}}`)
+
+		outbounds, _, _, err := (&JsonService{}).getOutbounds(clientConfig, []*model.Inbound{inbound}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(*outbounds) != 1 {
+			t.Fatalf("addrs %s: got %d outbounds, want one realm outbound", addrs, len(*outbounds))
+		}
+		out := (*outbounds)[0]
+		for _, key := range []string{"server", "server_port", "server_ports"} {
+			if v, ok := out[key]; ok {
+				t.Errorf("addrs %s: %s conflicts with realm, got %v", addrs, key, v)
+			}
+		}
+		if realm, _ := out["realm"].(map[string]interface{}); realm["realm_id"] != "home" {
+			t.Errorf("addrs %s: realm = %v", addrs, out["realm"])
+		}
+		if out["password"] != "secret" {
+			t.Errorf("addrs %s: password = %v, want the client's", addrs, out["password"])
+		}
 	}
 }

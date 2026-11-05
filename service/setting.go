@@ -108,6 +108,7 @@ var defaultValueMap = map[string]string{
 	"subAcmeEmail":       "",
 	"subUpdates":         "12",
 	"subEncode":          "true",
+	"subRemarkPrefix":    "true",
 	"subShowInfo":        "false",
 	"subURI":             "",
 	"subJsonExt":         "",
@@ -752,6 +753,19 @@ func (s *SettingService) GetConfig() (string, error) {
 
 func (s *SettingService) SetConfig(config string) error {
 	return s.setString("config", config)
+}
+
+// SubRemarkPrefix reports whether node names in subscriptions and stored
+// client links are prefixed with the client's remark. It reads through the
+// caller's db so it sees a value saved earlier in the same transaction.
+func (s *SettingService) SubRemarkPrefix(db *gorm.DB) bool {
+	setting := &model.Setting{}
+	value := defaultValueMap["subRemarkPrefix"]
+	if err := db.Model(model.Setting{}).Where("key = ?", "subRemarkPrefix").First(setting).Error; err == nil {
+		value = setting.Value
+	}
+	enabled, err := strconv.ParseBool(value)
+	return err != nil || enabled
 }
 
 func (s *SettingService) SaveConfig(tx *gorm.DB, config json.RawMessage) error {

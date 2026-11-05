@@ -607,7 +607,13 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 		}
 		restartCore = true
 	case "settings":
+		remarkPrefix := s.SettingService.SubRemarkPrefix(tx)
 		err = s.SettingService.Save(tx, data)
+		// Stored client links carry the remark prefix, so flipping it has to
+		// rebuild them, the way a TLS edit does.
+		if err == nil && s.SettingService.SubRemarkPrefix(tx) != remarkPrefix {
+			err = s.ClientService.RebuildLocalLinks(tx, hostname)
+		}
 	case "nodes":
 		// Nodes are a panel-local concept: no corePtr involvement, so saving
 		// one never disturbs the running sing-box.
