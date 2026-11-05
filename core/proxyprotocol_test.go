@@ -7,8 +7,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -685,4 +687,91 @@ func (c *Core) readsProxyHeaders() bool {
 		return false
 	}
 	return len(proxyHeaderPorts(box.inbound.settled())) > 0
+}
+
+// fixedConn is an outbound's socket as far as the dial guard looks: two ends
+// and nothing else.
+type fixedConn struct {
+	net.Conn
+	local, remote net.Addr
+}
+
+func (c fixedConn) LocalAddr() net.Addr  { return c.local }
+func (c fixedConn) RemoteAddr() net.Addr { return c.remote }
+
+// A trojan connection that fails authentication falls back where the operator
+// pointed it, and a trusted front there -- the Docker host's site, at the
+// gateway -- is not refused. A client asking for the same address is.
+func TestProxyProtocolTrojanFallbackToAFront(t *testing.T) {
+	proxyheader.SetTrusted([]netip.Prefix{netip.MustParsePrefix("172.18.0.1/32")})
+	t.Cleanup(func() { proxyheader.SetTrusted(nil) })
+	fallback := M.ParseSocksaddr("172.18.0.1:80")
+	c := startTestCore(t, func() map[string]any {
+		return map[string]any{
+			"log": map[string]any{"disabled": true},
+			"inbounds": []any{
+				map[string]any{
+					"type": "vless", "tag": "pp-in", "listen": "127.0.0.1", "listen_port": freeTCPPort(t),
+					"proxy_protocol": true,
+					"users":          []any{map[string]any{"name": "u", "uuid": proxyTestUUID}},
+				},
+				map[string]any{
+					"type": "trojan", "tag": "tr-in", "listen": "127.0.0.1", "listen_port": freeTCPPort(t),
+					"users":    []any{map[string]any{"name": "u", "password": "p"}},
+					"fallback": map[string]any{"server": "172.18.0.1", "server_port": 80},
+				},
+			},
+			"outbounds": []any{map[string]any{"type": "direct", "tag": "direct"}},
+		}
+	})
+	box := c.GetInstance()
+	if !box.inbound.fallsBackTo("tr-in", fallback) || box.inbound.fallsBackTo("tr-in", M.ParseSocksaddr("172.18.0.1:81")) || box.inbound.fallsBackTo("pp-in", fallback) {
+		t.Fatal("the trojan inbound's fallback was not told apart")
+	}
+	direct, _ := box.outbound.Outbound("direct")
+	dial := func(user string) error {
+		client, server := net.Pipe()
+		defer client.Close()
+		defer server.Close()
+		w := box.ConnTracker().createWrappedConn(server, &ConnectionInfo{User: user, Inbound: "tr-in", Destination: fallback})
+		w.outbound = direct
+		return w.ConnHandshakeSuccess(fixedConn{local: M.ParseSocksaddr("172.18.0.2:40000").TCPAddr(), remote: fallback.TCPAddr()})
+	}
+	if err := dial(""); err != nil {
+		t.Fatalf("the fallback to a trusted front was refused: %v", err)
+	}
+	if err := dial("u"); err == nil {
+		t.Fatal("a client's own dial to a trusted front was let through")
+	}
+}
+
+// A PROXY-enabled inbound over the QUIC transport -- which a save refuses, but
+// an imported database can still hold -- reads nothing, and turns no guard on.
+func TestProxyProtocolOverQUICTurnsNoGuardOn(t *testing.T) {
+	certPath, keyPath := writeTestCert(t)
+	raw, err := json.Marshal(map[string]any{
+		"log": map[string]any{"disabled": true},
+		"inbounds": []any{map[string]any{
+			"type": "vless", "tag": "pp-quic", "listen": "127.0.0.1", "listen_port": freeTCPPort(t),
+			"proxy_protocol": true,
+			"users":          []any{map[string]any{"name": "u", "uuid": proxyTestUUID}},
+			"transport":      map[string]any{"type": "quic"},
+			"tls":            map[string]any{"enabled": true, "certificate_path": certPath, "key_path": keyPath},
+		}},
+		"outbounds": []any{map[string]any{"type": "direct", "tag": "direct"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := NewCore()
+	if err = c.Start(raw); err != nil {
+		if strings.Contains(err.Error(), "create server transport: quic") {
+			t.Skip("the QUIC transport is not built in (with_quic): ", err)
+		}
+		t.Fatalf("start core: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Stop() })
+	if proxyheader.InUse() {
+		t.Fatal("a PROXY-enabled inbound over QUIC switched the dial guard on")
+	}
 }

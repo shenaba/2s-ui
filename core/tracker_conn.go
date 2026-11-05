@@ -182,6 +182,10 @@ type ConnTracker struct {
 	// tracker, before it routes anything; nil in a bare tracker, which
 	// GuardDial then treats as dialing through some unknown server.
 	route func(adapter.Outbound) proxyheader.Route
+	// fallback reports whether a destination is one of an inbound's
+	// configured fallback addresses: a connection routed there without a
+	// user is the operator's dial, not a client's (proxyheader.Route).
+	fallback func(inbound string, destination M.Socksaddr) bool
 }
 
 func NewConnTracker() *ConnTracker {
@@ -598,7 +602,13 @@ func (w *wrappedConn) ConnHandshakeSuccess(remote net.Conn) error {
 	}
 	var route func() proxyheader.Route
 	if w.tracker.route != nil && w.outbound != nil {
-		route = func() proxyheader.Route { return w.tracker.route(w.outbound) }
+		route = func() proxyheader.Route {
+			r := w.tracker.route(w.outbound)
+			// A fallback: no user, because it failed authentication, sent
+			// where the operator configured.
+			r.Fallback = w.info.User == "" && w.tracker.fallback != nil && w.tracker.fallback(w.info.Inbound, w.info.Destination)
+			return r
+		}
 	}
 	if err := proxyheader.GuardDial(remote, w.info.Destination, route); err != nil {
 		return err

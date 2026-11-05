@@ -148,6 +148,18 @@ type Settings struct {
 	Port    uint16
 }
 
+// Over is s as it applies to an inbound served over transport (nil for none):
+// off over one that carries no TCP -- QUIC -- which has no connection to read
+// a header from. A save refuses that combination, but a row can arrive
+// without one (an imported database), and would otherwise switch the dial
+// guard on for a port nothing reads headers on.
+func (s Settings) Over(transport interface{ Network() []string }) Settings {
+	if transport != nil && !slices.Contains(transport.Network(), N.NetworkTCP) {
+		s.Enabled = false
+	}
+	return s
+}
+
 // Take reports what options ask of PROXY protocol, and clears the request:
 // sing-box's own listener refuses to start while either field is set. The
 // copies call it before building their listener, and keep the answer
@@ -307,7 +319,12 @@ func Trusted(source, local M.Socksaddr) bool {
 	if !addr.IsValid() {
 		return false
 	}
-	return onThisHost(addr, plain(local.Addr)) || namedFront(addr)
+	// Any of this host's addresses, not only the one it arrived on: a front
+	// on a host with several (nginx with proxy_bind) can leave from another,
+	// and the dial guard counts them all as this host too. Only addresses
+	// known to be this host's: when they cannot be read, none is taken as
+	// one here, where taking one would trust a stranger.
+	return onThisHost(addr, plain(local.Addr)) || hostAddrs.known(addr) || namedFront(addr)
 }
 
 func endpoint(addr M.Socksaddr) netip.AddrPort {
@@ -334,6 +351,12 @@ type Route struct {
 	// one: the only clue to where a transport that keeps its socket out of
 	// sight (gRPC, HTTP/2) goes.
 	Server M.Socksaddr
+	// Fallback is a connection that failed authentication, sent to a
+	// fallback address the inbound was configured with: the operator chose
+	// where it goes, not the client, so a named front there -- a site on
+	// the Docker host, at the gateway -- is not refused. Landing on a
+	// PROXY-enabled inbound's port still is: the client's bytes go down it.
+	Fallback bool
 }
 
 // GuardDial is told about each connection the core has just dialed for a
@@ -367,6 +390,15 @@ type earlyConn interface {
 
 func guardPorts(conn net.Conn, destination M.Socksaddr, route Route, ports portSet) error {
 	destination = destination.Unwrap()
+	if route.Direct && destination.IsIP() && !route.Fallback {
+		// The socket goes to the address asked for: one off this host and
+		// outside the named fronts is decided without opening it, and a TCP
+		// Fast Open dial there keeps the round trip it saves.
+		asked := plain(destination.Addr)
+		if !onThisHostAsked(asked) && !namedFront(asked) {
+			return nil
+		}
+	}
 	// The socket underneath, not the outermost conn: a proxy protocol's conn
 	// can report the address it was asked for as its remote one.
 	socket := innermost(conn)
@@ -410,7 +442,7 @@ func guardPorts(conn net.Conn, destination M.Socksaddr, route Route, ports portS
 		// From this host there is no NAT: the port dialed is the port the
 		// inbound listens on.
 		return E.New("refused to dial ", remote, ": a PROXY-enabled inbound on this host, which would believe a header the client sent")
-	case direct && !here && namedFront(remoteAddr):
+	case direct && !here && namedFront(remoteAddr) && !route.Fallback:
 		return E.New("refused to dial ", remote, ": a trusted PROXY protocol front, which a client could speak through as anyone")
 	case !direct && (here || namedFront(remoteAddr)):
 		return relayGuard(ports, destination)
@@ -462,11 +494,15 @@ func serverMayRelay(server M.Socksaddr) bool {
 func relayGuard(ports portSet, destination M.Socksaddr) error {
 	asked := plain(destination.Addr)
 	switch {
+	case destination.IsIP() && onThisHostAsked(asked):
+		// This host, even inside a named range (a VPC listed whole): no NAT
+		// on the way, so the port rule below says all there is to say.
 	case destination.IsIP() && namedFront(asked):
 		return E.New("refused to relay to ", destination, ": a trusted PROXY protocol front, which a client could speak through as anyone")
-	case destination.IsIP() && !onThisHostAsked(asked):
+	case destination.IsIP():
 		return nil
-	case ports.has(destination.Port):
+	}
+	if ports.has(destination.Port) {
 		return E.New("refused to relay to ", destination, ": it could reach a PROXY-enabled inbound, ",
 			"which would believe a header the client sent; give PROXY-enabled inbounds a port clients do not ask for")
 	}
@@ -499,7 +535,31 @@ type addrSnapshot struct {
 	loaded  time.Time
 }
 
+// known reports whether addr is one of the addresses last read, and false
+// when they could not be read: contains for where guessing yes is the safe
+// side, known for where it is not.
+func (c *addrCache) known(addr netip.Addr) bool {
+	snapshot := c.current()
+	if snapshot.unknown {
+		return false
+	}
+	_, found := snapshot.addrs[addr]
+	return found
+}
+
 func (c *addrCache) contains(addr netip.Addr) bool {
+	snapshot := c.current()
+	if snapshot.unknown {
+		// Cannot tell: taken as this host's, which costs at most a refused
+		// dial to a PROXY-enabled inbound's port.
+		return true
+	}
+	_, found := snapshot.addrs[addr]
+	return found
+}
+
+// current returns the addresses, re-read when they are older than hostAddrsTTL.
+func (c *addrCache) current() *addrSnapshot {
 	snapshot := c.snapshot.Load()
 	if snapshot == nil || time.Since(snapshot.loaded) >= hostAddrsTTL {
 		c.reload.Lock()
@@ -514,13 +574,7 @@ func (c *addrCache) contains(addr netip.Addr) bool {
 		}
 		c.reload.Unlock()
 	}
-	if snapshot.unknown {
-		// Cannot tell: taken as this host's, which costs at most a refused
-		// dial to a PROXY-enabled inbound's port.
-		return true
-	}
-	_, found := snapshot.addrs[addr]
-	return found
+	return snapshot
 }
 
 func interfaceAddrs() (map[netip.Addr]struct{}, error) {

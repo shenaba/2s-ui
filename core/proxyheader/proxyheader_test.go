@@ -1291,3 +1291,97 @@ func TestGuardDialAsksForTheRouteWhenOn(t *testing.T) {
 		t.Fatalf("with the guard on: err = %v, route asked = %v; want a direct dial let through", err, asked)
 	}
 }
+
+// A named range that holds this host's own address -- a VPC listed whole --
+// does not make that address a front to a relay: this host is reached
+// without a NAT, so only its PROXY ports are refused.
+func TestRelayToThisHostInsideANamedRange(t *testing.T) {
+	inUseForTest(t, 10443)
+	hostAddrsForTest(t, "10.0.1.5")
+	SetTrusted([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/16")})
+	defer SetTrusted(nil)
+	relay := func() net.Conn { return dialedConn("127.0.0.1:40100", "127.0.0.1:40000") }
+	if err := guardDial(relay(), M.ParseSocksaddr("10.0.1.5:80"), through); err != nil {
+		t.Fatalf("a relay was refused this host's own site: %v", err)
+	}
+	if err := guardDial(relay(), M.ParseSocksaddr("10.0.1.5:10443"), through); err == nil {
+		t.Fatal("a relay was handed this host's PROXY port")
+	}
+	if err := guardDial(relay(), M.ParseSocksaddr("10.0.2.9:80"), through); err == nil {
+		t.Fatal("a relay was handed another address in the named range")
+	}
+}
+
+// A front may leave from any of this host's addresses, not only the one the
+// connection arrived on -- but only from one known to be this host's.
+func TestTrustedFromAnotherOfThisHostsAddresses(t *testing.T) {
+	hostAddrsForTest(t, "198.51.100.1", "198.51.100.2")
+	if !Trusted(M.ParseSocksaddr("198.51.100.2:40000"), M.ParseSocksaddr("198.51.100.1:10443")) {
+		t.Fatal("a front leaving from another of this host's addresses was not trusted")
+	}
+	if Trusted(M.ParseSocksaddr("203.0.113.9:40000"), M.ParseSocksaddr("198.51.100.1:10443")) {
+		t.Fatal("a stranger was trusted")
+	}
+	// Unreadable, the addresses vouch for no one.
+	hostAddrs.snapshot.Store(&addrSnapshot{unknown: true, loaded: time.Now().Add(time.Hour)})
+	if Trusted(M.ParseSocksaddr("198.51.100.2:40000"), M.ParseSocksaddr("198.51.100.1:10443")) {
+		t.Fatal("trusted an address when this host's could not be read")
+	}
+}
+
+// A direct dial to an address that cannot be this host or a named front is
+// decided without opening a TCP Fast Open dial: it keeps its round trip.
+func TestDirectDialOffHostKeepsFastOpen(t *testing.T) {
+	inUseForTest(t, 10443)
+	hostAddrsForTest(t, "198.51.100.1")
+	away := &slowConn{local: M.ParseSocksaddr("198.51.100.1:40110").TCPAddr(), remote: M.ParseSocksaddr("203.0.113.7:443").TCPAddr()}
+	if err := guardDirect(away, M.ParseSocksaddr("203.0.113.7:443")); err != nil {
+		t.Fatal(err)
+	}
+	if away.open {
+		t.Fatal("opened a fast-open dial to an address off this host")
+	}
+	// By name, where it goes is only known once it is open.
+	named := &slowConn{local: M.ParseSocksaddr("198.51.100.1:40111").TCPAddr(), remote: M.ParseSocksaddr("203.0.113.7:443").TCPAddr()}
+	if err := guardDirect(named, M.ParseSocksaddr("example.com:443")); err != nil {
+		t.Fatal(err)
+	}
+	if !named.open {
+		t.Fatal("judged a fast-open dial by name without opening it")
+	}
+}
+
+// fakeTransport is a V2Ray transport as far as Over looks.
+type fakeTransport []string
+
+func (t fakeTransport) Network() []string { return t }
+
+// Over a transport that carries no TCP, nothing reads a header.
+func TestSettingsOverTransport(t *testing.T) {
+	on := Settings{Enabled: true, Port: 443}
+	if !on.Over(nil).Enabled || !on.Over(fakeTransport{N.NetworkTCP}).Enabled {
+		t.Fatal("switched off over TCP")
+	}
+	if on.Over(fakeTransport{N.NetworkUDP}).Enabled {
+		t.Fatal("left on over a transport that carries no TCP")
+	}
+}
+
+// A fallback the operator configured may go to a named front -- the Docker
+// host's site, at the gateway -- but not onto a PROXY-enabled inbound's port
+// here, where the client's own bytes would be read for a header.
+func TestFallbackDial(t *testing.T) {
+	inUseForTest(t, 10443)
+	SetTrusted([]netip.Prefix{netip.MustParsePrefix("172.18.0.1/32")})
+	defer SetTrusted(nil)
+	fallback := Route{Direct: true, Fallback: true}
+	if err := guardDial(dialedConn("172.18.0.2:40120", "172.18.0.1:80"), M.ParseSocksaddr("172.18.0.1:80"), fallback); err != nil {
+		t.Fatalf("a fallback to a named front was refused: %v", err)
+	}
+	if err := guardDial(dialedConn("127.0.0.1:40121", "127.0.0.1:10443"), M.ParseSocksaddr("127.0.0.1:10443"), fallback); err == nil {
+		t.Fatal("a fallback onto this host's PROXY port was let through")
+	}
+	if err := guardDirect(dialedConn("172.18.0.2:40122", "172.18.0.1:80"), M.ParseSocksaddr("172.18.0.1:80")); err == nil {
+		t.Fatal("a client's own dial to a named front was let through")
+	}
+}

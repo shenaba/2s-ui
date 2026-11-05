@@ -67,17 +67,27 @@ func takeProxyHdr(options *option.ListenOptions) proxyHdrSettings {
 // copy's own file needs no import for it.
 type proxyHdrSettings = proxyheader.Settings
 
+// proxySettings is proxyHdr as it applies: off over a transport that carries
+// no TCP. The transport is built before any of these are called.
+func (h *Inbound) proxySettings() proxyHdrSettings {
+	if h.transport == nil {
+		return h.proxyHdr
+	}
+	return h.proxyHdr.Over(h.transport)
+}
+
 func (h *Inbound) connectionHandler() adapter.ConnectionHandler {
-	return proxyheader.Handler(h, h.logger, h.proxyHdr)
+	return proxyheader.Handler(h, h.logger, h.proxySettings())
 }
 
 // ProxyHeaderPort tells the core this inbound reads PROXY headers, and on
 // which port: proxyheader's dial guard stays on while it runs, and refuses to
 // hand a client to a relay on this host for that port.
 func (h *Inbound) ProxyHeaderPort() (uint16, bool) {
-	return h.proxyHdr.Port, h.proxyHdr.Enabled
+	settings := h.proxySettings()
+	return settings.Port, settings.Enabled
 }
 
 func (h *Inbound) proxyListener(l net.Listener) net.Listener {
-	return proxyheader.Listen(l, h.logger, h.proxyHdr)
+	return proxyheader.Listen(l, h.logger, h.proxySettings())
 }

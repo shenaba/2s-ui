@@ -31,6 +31,18 @@ func startReadingProxyHeaders(m *inboundManager) {
 	refreshProxyHeaders()
 }
 
+// fallsBackTo reports whether destination is a fallback address of the
+// inbound tagged tag -- one the operator configured, for a connection that
+// failed authentication (trojan's fallback).
+func (m *inboundManager) fallsBackTo(tag string, destination M.Socksaddr) bool {
+	inbound, found := m.get(tag)
+	if !found {
+		return false
+	}
+	fallback, hasFallback := inbound.(interface{ FallsBackTo(M.Socksaddr) bool })
+	return hasFallback && fallback.FallsBackTo(destination)
+}
+
 // readingProxyHeaders reports whether m's inbounds are counted: its box has
 // started and not closed.
 func readingProxyHeaders(m *inboundManager) bool {
@@ -93,7 +105,8 @@ func proxyHeaderPorts(inbounds []adapter.Inbound) []uint16 {
 // client is dialed through -- the last of the chain the router resolved, so
 // never a group -- whether it is direct, and where its server is. A group is
 // still followed, for a tracker called without a chain. A direct outbound with
-// a detour dials through another outbound, and is not direct.
+// a detour dials through another outbound, and one with an override sends the
+// socket elsewhere: neither is direct.
 func (m *outboundManager) proxyRoute(outbound adapter.Outbound) proxyheader.Route {
 	for range 8 {
 		group, isGroup := outbound.(adapter.OutboundGroup)
@@ -113,7 +126,10 @@ func (m *outboundManager) proxyRoute(outbound adapter.Outbound) proxyheader.Rout
 	}
 	if outbound.Type() == C.TypeDirect {
 		direct, isDirect := options.(*option.DirectOutboundOptions)
-		return proxyheader.Route{Direct: !isDirect || direct.Detour == ""}
+		// Nor one that overrides where it goes: its socket is not at the
+		// address the client asked for.
+		//nolint:staticcheck
+		return proxyheader.Route{Direct: !isDirect || (direct.Detour == "" && direct.OverrideAddress == "" && direct.OverridePort == 0)}
 	}
 	var route proxyheader.Route
 	if server, hasServer := options.(interface{ Build() M.Socksaddr }); hasServer {

@@ -78,9 +78,9 @@ import { valueField } from '@/plugins/formField'
 // offered otherwise -- except to turn it off where it is already on, which
 // the save would refuse.
 const props = defineProps<{ data: any; inTags?: string[]; proxyProtocol?: boolean }>()
-// Ports clients ask for all the time, which a PROXY-enabled inbound should
-// leave to its front.
-const CommonPorts = [80, 443]
+// Ports clients ask for all the time -- the web's, and the ones Cloudflare
+// proxies -- which a PROXY-enabled inbound should leave to its front.
+const CommonPorts = [80, 443, 8080, 8443, 8880, 2052, 2053, 2082, 2083, 2086, 2087, 2095, 2096]
 
 const d = () => props.data
 

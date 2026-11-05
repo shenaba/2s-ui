@@ -469,6 +469,7 @@ func NewBox(options Options) (*Box, error) {
 	statsTracker := NewStatsTracker()
 	connTracker := NewConnTracker()
 	connTracker.route = outboundManager.proxyRoute
+	connTracker.fallback = inboundManager.fallsBackTo
 	router.AppendTracker(statsTracker)
 	router.AppendTracker(connTracker)
 
