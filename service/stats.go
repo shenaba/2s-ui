@@ -2,6 +2,7 @@ package service
 
 import (
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -240,8 +241,9 @@ func (s *StatsService) GetInboundTraffic() map[string]int64 {
 // lists are not carried either -- they answer "who is sending right now", so
 // replaying a previous window would keep a client listed after it went away.
 var (
-	pendingMu    sync.Mutex
-	pendingStats []model.Stats
+	pendingMu          sync.Mutex
+	pendingStats       []model.Stats
+	pendingTargetStats []model.TargetStats
 )
 
 // maxPendingStats bounds that buffer. A panel whose database has been refusing
@@ -252,13 +254,35 @@ var (
 // reaches.
 const maxPendingStats = 50000
 
+func takePendingLocked[T any](dest *[]T) []T {
+	held := *dest
+	*dest = nil
+	return held
+}
+
+func keepPendingLocked[T any](batch []T, dest *[]T, warn bool) {
+	if len(batch) > maxPendingStats {
+		dropped := len(batch) - maxPendingStats
+		if warn {
+			logger.Warning("stats: dropping ", dropped,
+				" undelivered rows; the database has been refusing writes for a while")
+		}
+		batch = batch[dropped:]
+	}
+	*dest = batch
+}
+
 // takePending returns the rows still owed to the database and clears the buffer.
 func takePending() []model.Stats {
 	pendingMu.Lock()
 	defer pendingMu.Unlock()
-	held := pendingStats
-	pendingStats = nil
-	return held
+	return takePendingLocked(&pendingStats)
+}
+
+func takePendingTargets() []model.TargetStats {
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	return takePendingLocked(&pendingTargetStats)
 }
 
 // holdPending keeps a batch that failed to commit. It goes in front of whatever
@@ -267,26 +291,26 @@ func takePending() []model.Stats {
 func holdPending(batch []model.Stats) {
 	pendingMu.Lock()
 	defer pendingMu.Unlock()
-	keepPendingLocked(append(batch, pendingStats...))
+	keepPendingLocked(append(batch, pendingStats...), &pendingStats, true)
+}
+
+func holdPendingTargets(batch []model.TargetStats) {
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	keepPendingLocked(append(batch, pendingTargetStats...), &pendingTargetStats, false)
 }
 
 // carryPending adds rows newer than everything already held.
 func carryPending(rows []model.Stats) {
 	pendingMu.Lock()
 	defer pendingMu.Unlock()
-	keepPendingLocked(append(pendingStats, rows...))
+	keepPendingLocked(append(pendingStats, rows...), &pendingStats, true)
 }
 
-// keepPendingLocked stores batch, oldest first, dropping the oldest rows if it
-// has grown past the cap. The caller holds pendingMu.
-func keepPendingLocked(batch []model.Stats) {
-	if len(batch) > maxPendingStats {
-		dropped := len(batch) - maxPendingStats
-		logger.Warning("stats: dropping ", dropped,
-			" undelivered rows; the database has been refusing writes for a while")
-		batch = batch[dropped:]
-	}
-	pendingStats = batch
+func carryPendingTargets(rows []model.TargetStats) {
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	keepPendingLocked(append(pendingTargetStats, rows...), &pendingTargetStats, false)
 }
 
 // carryOverStats takes what the running core has counted since the last flush
@@ -308,17 +332,20 @@ func carryOverStats() {
 		return
 	}
 	drained := *box.StatsTracker().GetStats()
-	if len(drained) == 0 {
-		return
-	}
-	inboundDelta := map[string]int64{}
-	for _, stat := range drained {
-		if stat.Resource == "inbound" {
-			inboundDelta[stat.Tag] += stat.Traffic
+	if len(drained) > 0 {
+		inboundDelta := map[string]int64{}
+		for _, stat := range drained {
+			if stat.Resource == "inbound" {
+				inboundDelta[stat.Tag] += stat.Traffic
+			}
 		}
+		addInboundTraffic(inboundDelta)
+		carryPending(drained)
 	}
-	addInboundTraffic(inboundDelta)
-	carryPending(drained)
+	drainedTargets := *box.StatsTracker().GetTargetStats()
+	if len(drainedTargets) > 0 {
+		carryPendingTargets(drainedTargets)
+	}
 }
 
 // statsFlush is the stats job's own run, registered by the cron job, which is
@@ -339,6 +366,23 @@ func FlushStats() {
 	}
 }
 
+// SaveStatsForCurrentSettings flushes what the core has counted under the
+// settings stored right now.
+//
+// trafficAge is the switch for traffic history -- 0 keeps none -- and it is
+// read per flush instead of being captured when the stats job is registered. A
+// cron entry's parameters are fixed at registration, so the captured value left
+// a saved 0 without effect until the panel restarted: the core kept counting,
+// and the wipe SettingService.Save does was written over by the next flush. It
+// also left the way back (0 to a positive value) dead until the same restart.
+func (s *StatsService) SaveStatsForCurrentSettings(bucketSeconds int64) error {
+	trafficAge, err := (&SettingService{}).GetTrafficAge()
+	if err != nil {
+		return err
+	}
+	return s.SaveStats(trafficAge > 0, bucketSeconds)
+}
+
 func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error {
 	// With the core down there is nothing to drain, but the pending rows still
 	// go in: stopping the core carries its last counts there
@@ -346,10 +390,13 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 	// with the core already down -- would otherwise hold them until they are
 	// lost with the process.
 	drained := &[]model.Stats{}
+	drainedTargets := &[]model.TargetStats{}
 	if corePtr != nil && corePtr.IsRunning() {
 		if box := corePtr.GetInstance(); box != nil {
 			if st := box.StatsTracker(); st != nil {
+				st.SetTrafficEnabled(enableTraffic)
 				drained = st.GetStats()
+				drainedTargets = st.GetTargetStats()
 			}
 		}
 	}
@@ -365,7 +412,11 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 	if pending := takePending(); len(pending) > 0 {
 		batch = mergeStats(append(pending, batch...))
 	}
-	if len(batch) == 0 {
+	targetBatch := *drainedTargets
+	if pending := takePendingTargets(); len(pending) > 0 {
+		targetBatch = mergeTargetStats(append(pending, targetBatch...))
+	}
+	if len(batch) == 0 && len(targetBatch) == 0 {
 		setOnlines(fresh)
 		return nil
 	}
@@ -385,6 +436,9 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 		}
 		if err != nil {
 			holdPending(batch)
+			if len(targetBatch) > 0 {
+				holdPendingTargets(targetBatch)
+			}
 		}
 	}()
 
@@ -467,18 +521,62 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 
 	// Round each sample down to its bucket and upsert, so all 10s cycles within
 	// the same bucket accumulate into one row per (resource, tag, direction).
-	if bucketSeconds < 1 {
-		bucketSeconds = 1
+	if len(batch) > 0 {
+		if bucketSeconds < 1 {
+			bucketSeconds = 1
+		}
+		bucket := now - (now % bucketSeconds)
+		for i := range batch {
+			batch[i].DateTime = bucket
+		}
+		err = tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "resource"}, {Name: "tag"}, {Name: "date_time"}, {Name: "direction"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{"traffic": gorm.Expr("stats.traffic + excluded.traffic")}),
+		}).Create(&batch).Error
+		if err != nil {
+			return err
+		}
 	}
-	bucket := now - (now % bucketSeconds)
-	for i := range batch {
-		batch[i].DateTime = bucket
+
+	if len(targetBatch) > 0 {
+		targetBucket := now - (now % 3600)
+		for i := range targetBatch {
+			targetBatch[i].DateTime = targetBucket
+		}
+		err = tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "user"}, {Name: "target"}, {Name: "date_time"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"up":   gorm.Expr("target_stats.up + excluded.up"),
+				"down": gorm.Expr("target_stats.down + excluded.down"),
+			}),
+		}).Create(&targetBatch).Error
+		if err != nil {
+			return err
+		}
 	}
-	err = tx.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "resource"}, {Name: "tag"}, {Name: "date_time"}, {Name: "direction"}},
-		DoUpdates: clause.Assignments(map[string]interface{}{"traffic": gorm.Expr("stats.traffic + excluded.traffic")}),
-	}).Create(&batch).Error
-	return err
+
+	return nil
+}
+
+func mergeTargetStats(rows []model.TargetStats) []model.TargetStats {
+	type key struct {
+		user   string
+		target string
+	}
+	index := make(map[key]int, len(rows))
+	merged := make([]model.TargetStats, 0, len(rows))
+	for _, row := range rows {
+		k := key{row.User, row.Target}
+		if i, ok := index[k]; ok {
+			merged[i].Up += row.Up
+			merged[i].Down += row.Down
+			continue
+		}
+		index[k] = len(merged)
+		row.Id = 0
+		merged = append(merged, row)
+	}
+	return merged
 }
 
 // mergeStats folds the rows of each (resource, tag, direction) into one, in
@@ -509,26 +607,50 @@ func mergeStats(rows []model.Stats) []model.Stats {
 	return merged
 }
 
+func periodDuration(period string, defaultPeriod string) int64 {
+	p := period
+	if p == "" {
+		p = defaultPeriod
+	}
+	switch p {
+	case "hour":
+		return 3600
+	case "day":
+		return 86400
+	case "month":
+		return 86400 * 30
+	case "60day":
+		return 86400 * 60
+	case "90day":
+		return 86400 * 90
+	default:
+		if defaultPeriod == "hour" {
+			return 3600
+		}
+		return 86400
+	}
+}
+
+func periodStart(period string, defaultPeriod string, alignBucket int64) int64 {
+	now := time.Now().Unix()
+	duration := periodDuration(period, defaultPeriod)
+	startTime := now - duration
+	if alignBucket > 1 {
+		startTime -= startTime % alignBucket
+	}
+	return startTime
+}
+
 func (s *StatsService) GetStats(resource string, tag string, period string) ([]model.Stats, error) {
 	now := time.Now().Unix()
 	var bucketSec int64
-	var startTime int64
 	switch period {
 	case "day":
 		bucketSec = 3600
-		startTime = now - 86400
-	case "month":
+	case "month", "60day", "90day":
 		bucketSec = 86400
-		startTime = now - 86400*30
-	case "60day":
-		bucketSec = 86400
-		startTime = now - 86400*60
-	case "90day":
-		bucketSec = 86400
-		startTime = now - 86400*90
 	default: // "hour"
 		bucketSec = 60
-		startTime = now - 3600
 	}
 
 	// Never read with a finer resolution than samples are stored at
@@ -537,6 +659,8 @@ func (s *StatsService) GetStats(resource string, tag string, period string) ([]m
 	if storedBucket, _ := (&SettingService{}).GetStatsBucketSeconds(); storedBucket > bucketSec {
 		bucketSec = storedBucket
 	}
+
+	startTime := periodStart(period, "hour", bucketSec)
 
 	db := database.GetDB()
 	resources := []string{resource}
@@ -691,6 +815,41 @@ func (s *StatsService) GetClusterOnlines() (onlines, error) {
 // released between chunks.
 const delOldStatsChunk = 5000
 
+// purgeStatsHistory empties both traffic history tables. It runs when trafficAge
+// is set to 0 and, on start-up, for a panel that was already there.
+func purgeStatsHistory(tx *gorm.DB) error {
+	if err := tx.Where("id > 0").Delete(model.Stats{}).Error; err != nil {
+		return err
+	}
+	return tx.Where("id > 0").Delete(model.TargetStats{}).Error
+}
+
+// PurgeTrafficHistoryIfDisabled empties the history tables when traffic history
+// is off.
+//
+// SettingService.Save does this when trafficAge is set to 0, but a panel that
+// was already at 0 before it upgraded can still hold rows: the previous build
+// captured the switch when the stats job was registered, so it kept recording
+// target sites after the setting said otherwise, and those rows stayed readable
+// through api/targetStats and went out in every backup. Clearing them at
+// start-up is what makes "0 keeps no history" true for those panels without
+// asking the operator to re-save a setting they never touched.
+func (s *StatsService) PurgeTrafficHistoryIfDisabled() error {
+	trafficAge, err := (&SettingService{}).GetTrafficAge()
+	if err != nil {
+		return err
+	}
+	if trafficAge > 0 {
+		return nil
+	}
+	if err = purgeStatsHistory(database.GetDB()); err != nil {
+		return err
+	}
+	// The per-inbound totals are seeded from the stats rows.
+	InvalidateInboundTraffic()
+	return nil
+}
+
 // DelOldStats drops stats past the retention window, in bounded chunks.
 //
 // One unbounded DELETE over a table that holds a row per active tag, bucket and
@@ -708,7 +867,127 @@ func (s *StatsService) DelOldStats(days int) error {
 			return res.Error
 		}
 		if res.RowsAffected < delOldStatsChunk {
+			break
+		}
+	}
+	for {
+		res := db.Where("id IN (?)",
+			db.Model(model.TargetStats{}).Select("id").Where("date_time < ?", oldTime).Limit(delOldStatsChunk),
+		).Delete(model.TargetStats{})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected < delOldStatsChunk {
 			return nil
 		}
 	}
+}
+
+type TargetStatsQuery struct {
+	User      string `json:"user"`
+	Period    string `json:"period"` // "hour", "day", "month", "60day", "90day"
+	Search    string `json:"search"`
+	SortField string `json:"sort"`  // "up", "down", "total"
+	SortOrder string `json:"order"` // "desc", "asc"
+	Page      int    `json:"page"`
+	Limit     int    `json:"limit"`
+}
+
+type TargetStatItem struct {
+	Target string `json:"target"`
+	Up     int64  `json:"up"`
+	Down   int64  `json:"down"`
+	Total  int64  `json:"total"`
+}
+
+type TargetStatsSummary struct {
+	TotalUp    int64 `json:"totalUp"`
+	TotalDown  int64 `json:"totalDown"`
+	Total      int64 `json:"total"`
+	TotalSites int64 `json:"totalSites"`
+}
+
+type TargetStatsResponse struct {
+	Items   []TargetStatItem   `json:"items"`
+	Summary TargetStatsSummary `json:"summary"`
+	Total   int64              `json:"total"`
+	Page    int                `json:"page"`
+	Limit   int                `json:"limit"`
+}
+
+func (s *StatsService) GetTargetStats(query TargetStatsQuery) (*TargetStatsResponse, error) {
+	startTime := periodStart(query.Period, "day", 3600)
+
+	db := database.GetDB()
+	filterQuery := func(tx *gorm.DB) *gorm.DB {
+		tx = tx.Where("date_time >= ?", startTime)
+		if query.User != "" {
+			tx = tx.Where("user = ?", query.User)
+		}
+		if query.Search != "" {
+			tx = tx.Where("target LIKE ?", "%"+strings.ToLower(strings.TrimSpace(query.Search))+"%")
+		}
+		return tx
+	}
+
+	var summary TargetStatsSummary
+	type sumResult struct {
+		TotalUp    int64 `gorm:"column:total_up"`
+		TotalDown  int64 `gorm:"column:total_down"`
+		TotalSites int64 `gorm:"column:total_sites"`
+	}
+	var sr sumResult
+	err := filterQuery(db.Model(&model.TargetStats{})).Select(
+		"COALESCE(SUM(up), 0) AS total_up, COALESCE(SUM(down), 0) AS total_down, COUNT(DISTINCT target) AS total_sites",
+	).Scan(&sr).Error
+	if err != nil {
+		return nil, err
+	}
+	summary.TotalUp = sr.TotalUp
+	summary.TotalDown = sr.TotalDown
+	summary.Total = sr.TotalUp + sr.TotalDown
+	summary.TotalSites = sr.TotalSites
+
+	page := query.Page
+	if page < 1 {
+		page = 1
+	}
+	limit := query.Limit
+	if limit < 1 {
+		limit = 20
+	} else if limit > 200 {
+		limit = 200
+	}
+	offset := (page - 1) * limit
+
+	sortCol := "(SUM(up) + SUM(down))"
+	switch query.SortField {
+	case "up":
+		sortCol = "SUM(up)"
+	case "down":
+		sortCol = "SUM(down)"
+	}
+	sortOrder := "DESC"
+	if strings.ToUpper(query.SortOrder) == "ASC" {
+		sortOrder = "ASC"
+	}
+
+	var items []TargetStatItem
+	err = filterQuery(db.Model(&model.TargetStats{})).Select(
+		"target, SUM(up) AS up, SUM(down) AS down, (SUM(up) + SUM(down)) AS total",
+	).Group("target").Order(sortCol + " " + sortOrder).Offset(offset).Limit(limit).Scan(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	if items == nil {
+		items = []TargetStatItem{}
+	}
+
+	return &TargetStatsResponse{
+		Items:   items,
+		Summary: summary,
+		Total:   summary.TotalSites,
+		Page:    page,
+		Limit:   limit,
+	}, nil
 }

@@ -82,6 +82,7 @@ func GetDb(exclude string) ([]byte, error) {
 		&model.User{},
 		&model.Tokens{},
 		&model.Stats{},
+		&model.TargetStats{},
 		&model.Client{},
 		&model.Changes{},
 		&model.Node{},
@@ -103,6 +104,7 @@ func GetDb(exclude string) ([]byte, error) {
 	var clients []model.Client
 	var nodes []model.Node
 	var stats []model.Stats
+	var targetStats []model.TargetStats
 	var changes []model.Changes
 
 	// Perform scans and handle errors
@@ -199,6 +201,14 @@ func GetDb(exclude string) ([]byte, error) {
 		}
 		if len(stats) > 0 {
 			if err := backupDb.CreateInBatches(stats, backupBatchSize).Error; err != nil {
+				return nil, err
+			}
+		}
+		if err := db.Model(&model.TargetStats{}).Scan(&targetStats).Error; err != nil {
+			return nil, err
+		}
+		if len(targetStats) > 0 {
+			if err := backupDb.CreateInBatches(targetStats, backupBatchSize).Error; err != nil {
 				return nil, err
 			}
 		}

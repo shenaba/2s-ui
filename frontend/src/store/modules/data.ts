@@ -156,7 +156,10 @@ const Data = defineStore('Data', {
       if (typeof data.cseq === 'number') this.cseq = data.cseq
       if (data.subURI) this.subURI = data.subURI
       if (data.os) this.os = data.os
-      if (data.enableTraffic) this.enableTraffic = data.enableTraffic
+      // Not `if (data.enableTraffic)`: that latch only ever set the flag to
+      // true, so turning traffic history off left every graph button and the
+      // target-sites card believing it was still on until a full page reload.
+      if (typeof data.enableTraffic === 'boolean') this.enableTraffic = data.enableTraffic
       if (data.config) this.config = data.config
       if (Object.hasOwn(data, 'clients')) this.applyClients(data.clients, data.clientsSeq)
       if (Object.hasOwn(data, 'inbounds')) this.inbounds = data.inbounds ?? []

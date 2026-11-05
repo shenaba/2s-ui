@@ -15,16 +15,19 @@ const props = withDefaults(defineProps<{
   height?: number
   width?: number
   pad?: number
-  /** tooltip 数值格式化（如流量传 HumanReadable.sizeFormat）；不传则千分位展示 */
+  /** Tooltip value formatter (e.g. HumanReadable.sizeFormat for traffic); defaults to comma-separated thousands */
   valueFormatter?: (v: number) => string
-  /** x 轴每个点的标签（日期/时间），用于 tooltip 标题行 */
+  /** Labels for each x-axis point (date/time), used for tooltip header row */
   labels?: string[]
+  /** Whether animation is enabled. Disabled by default for real-time charts to render latest data instantly without jitter */
+  animated?: boolean
 }>(), {
   color: 'var(--brand)',
   color2: 'var(--emerald)',
   height: 160,
   width: 600,
   pad: 8,
+  animated: false,
 })
 
 const el = ref<HTMLElement>()
@@ -48,7 +51,7 @@ const build = (chart: ReturnType<typeof echarts.init>, host: HTMLElement) => {
       type: 'line',
       smooth: 0.4,
       showSymbol: false,
-      clip: false, // 末端圆点贴边时不被裁剪
+      clip: false, // Prevent terminal dot from being clipped at the edge
       lineStyle: { color: c1, width: 2.4, cap: 'round' },
       areaStyle: {
         color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
@@ -82,7 +85,9 @@ const build = (chart: ReturnType<typeof echarts.init>, host: HTMLElement) => {
   }
 
   const option: any = {
-    animationDurationUpdate: 300,
+    animation: props.animated,
+    animationDuration: props.animated ? 500 : 0,
+    animationDurationUpdate: props.animated ? 300 : 0,
     grid: { left: props.pad, right: props.pad + 4, top: 14, bottom: 10, containLabel: false },
     tooltip: {
       trigger: 'axis',
@@ -111,7 +116,7 @@ const build = (chart: ReturnType<typeof echarts.init>, host: HTMLElement) => {
       data: props.labels ?? props.data.map((_, i) => i),
     },
     yAxis: {
-      // show:true 但关掉轴线/刻度/标签 —— 否则 show:false 会连带隐藏 splitLine 网格线
+      // show: true with axis line/tick/label hidden — otherwise show: false hides splitLine grid lines as well
       type: 'value',
       min: 0,
       max,
@@ -125,11 +130,11 @@ const build = (chart: ReturnType<typeof echarts.init>, host: HTMLElement) => {
     series,
   }
 
-  chart.setOption(option) // merge 模式：数据变化平滑过渡
+  chart.setOption(option) // merge mode: smooth transition on data changes
 }
 
 const { render } = useChart(el, build)
 
-// 实时数据变化时重渲染
+// Re-render when real-time data changes
 watch(() => [props.data, props.data2], render, { deep: true })
 </script>

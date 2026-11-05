@@ -9,14 +9,12 @@ import (
 
 type StatsJob struct {
 	service.StatsService
-	enableTraffic bool
 	bucketSeconds int64
 	running       sync.Mutex
 }
 
-func NewStatsJob(saveTraffic bool, bucketSeconds int64) *StatsJob {
+func NewStatsJob(bucketSeconds int64) *StatsJob {
 	return &StatsJob{
-		enableTraffic: saveTraffic,
 		bucketSeconds: bucketSeconds,
 	}
 }
@@ -31,7 +29,11 @@ func (s *StatsJob) Run() {
 	}
 	defer s.running.Unlock()
 
-	err := s.StatsService.SaveStats(s.enableTraffic, s.bucketSeconds)
+	// Traffic history is on exactly when trafficAge > 0, and the switch is read
+	// on every run rather than when this job was registered: a cron entry's
+	// parameters are fixed at registration, so a value captured there left a
+	// saved 0 -- and the way back -- without effect until the panel restarted.
+	err := s.StatsService.SaveStatsForCurrentSettings(s.bucketSeconds)
 	if err != nil {
 		logger.Warning("Get stats failed: ", err)
 	}

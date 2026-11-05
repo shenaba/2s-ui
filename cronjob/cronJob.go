@@ -17,7 +17,7 @@ func NewCronJob() *CronJob {
 	return &CronJob{}
 }
 
-func (c *CronJob) Start(loc *time.Location, trafficAge int, statsBucketSeconds int64) error {
+func (c *CronJob) Start(loc *time.Location, statsBucketSeconds int64) error {
 	// Recover: robfig/cron does not recover a panicking job, and a panic in a
 	// job goroutine takes the whole process down -- gin only covers the HTTP
 	// side. Fourteen jobs run here, several of them doing network I/O against
@@ -54,7 +54,7 @@ func (c *CronJob) Start(loc *time.Location, trafficAge int, statsBucketSeconds i
 		}
 	}
 
-	statsJob := NewStatsJob(trafficAge > 0, statsBucketSeconds)
+	statsJob := NewStatsJob(statsBucketSeconds)
 	addJob("@every 10s", statsJob, "stats job")
 	// So a shutdown can flush once more before it stops the core.
 	service.SetStatsFlush(statsJob.Run)
@@ -68,9 +68,11 @@ func (c *CronJob) Start(loc *time.Location, trafficAge int, statsBucketSeconds i
 	// itself, so a saved schedule applies without a panel restart; a no-op
 	// while the spec is off.
 	addJob("@every 1m", NewResetTrafficJob(), "traffic reset job")
-	if trafficAge > 0 {
-		addJob("@daily", NewDelStatsJob(trafficAge), "old stats cleanup")
-	}
+	// Keyed off trafficAge, which is re-read on every run rather than here: the
+	// entry is registered unconditionally, and the job no-ops while the setting
+	// is 0. Registering it only when the panel started with a positive value
+	// left the cleanup dead after turning history on at runtime.
+	addJob("@daily", NewDelStatsJob(), "old stats cleanup")
 	// Start core if it is not running
 	addJob("@every 5s", NewCheckCoreJob(), "core watchdog")
 	// Probe managed nodes (in-memory snapshot; no-op with zero nodes)

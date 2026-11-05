@@ -160,6 +160,10 @@ export default {
     reset: "Сбросить",
     copyAll: "Копировать все",
     adopt: "Принять",
+    copy: "Копировать",
+    prev: "Назад",
+    next: "Вперед",
+    copied: "Скопировано",
   },
   login: {
     title: "Вход",

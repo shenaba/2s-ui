@@ -159,6 +159,10 @@ export default {
     reset: "بازنشانی",
     copyAll: "کپی همه",
     adopt: "پذیرش",
+    copy: "کپی",
+    prev: "قبلی",
+    next: "بعدی",
+    copied: "کپی شد",
   },
   login: {
     title: "ورود",

@@ -1,5 +1,5 @@
-// 顺序与首页卡片一致(从上到下、行内从左到右):
-// 顶部概览(系统资源 / 服务器 / 关键指标)→ 图表(流量 / 协议占比 / 网络吞吐)→ 动态
+// Matches card order on the dashboard (top to bottom, left to right within rows):
+// Top overview (resources / server / key metrics) -> charts (traffic / protocol mix / network throughput) -> target stats -> activity
 export const TILES = [
   { id: 'resources', k: 'systemResources' },
   { id: 'server', k: 'server' },
@@ -8,6 +8,7 @@ export const TILES = [
   { id: 'protocol', k: 'protocolMix' },
   { id: 'network', k: 'networkThroughput' },
   { id: 'nodes', k: 'nodesTile' },
+  { id: 'targetStats', k: 'targetStats' },
   { id: 'activity', k: 'activity' },
 ]
 

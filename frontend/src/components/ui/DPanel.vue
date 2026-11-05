@@ -1,13 +1,17 @@
 <template>
   <div class="card" style="display: flex; flex-direction: column; overflow: hidden;">
-    <div :style="{ display: 'flex', alignItems: 'center', gap: '10px', padding: `16px ${headPad}px`, borderBottom: '1px solid var(--line)' }">
-      <div>
-        <div style="font-size: 14px; font-weight: 700;">{{ title }}</div>
-        <div v-if="sub" style="font-size: 11.5px; color: var(--text-3); margin-top: 2px;">{{ sub }}</div>
+    <div :style="{ display: 'flex', alignItems: 'center', gap: '12px', padding: `12px ${headPad}px`, minHeight: '56px', borderBottom: '1px solid var(--line)', flexWrap: 'wrap' }">
+      <div style="display: flex; align-items: center; gap: 12px; min-width: 0;">
+        <div style="font-size: 14px; font-weight: 700; white-space: nowrap; flex: none;">{{ title }}</div>
+        <slot name="sub">
+          <div v-if="sub" style="font-size: 11.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ sub }}</div>
+        </slot>
       </div>
-      <div style="margin-inline-start: auto;"><slot name="right" /></div>
+      <div v-if="$slots.right" style="margin-inline-start: auto; display: flex; align-items: center; gap: 8px;">
+        <slot name="right" />
+      </div>
     </div>
-    <div :style="{ padding: pad + 'px', flex: 1 }">
+    <div :style="{ padding: pad + 'px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }">
       <slot />
     </div>
   </div>
