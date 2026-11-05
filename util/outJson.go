@@ -453,6 +453,7 @@ func hysteria2RealmOut(out *map[string]interface{}, inbound map[string]interface
 	delete(*out, "server_port")
 	delete(*out, "server_ports")
 	delete(*out, "hop_interval")
+	delete(*out, "hop_interval_max")
 }
 
 // normalizeOutPortRanges rewrites a stored server_ports list into the only

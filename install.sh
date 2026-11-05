@@ -90,6 +90,10 @@ d en download_fail "Downloading s-ui failed, please be sure that your server can
 d en checksum_ok "Checksum verified."
 d en checksum_fail "Checksum does NOT match. The download may be corrupt or tampered with. Aborting."
 d en no_checksums "No SHA256SUMS published for this release; skipping checksum verification."
+d en checksum_unusable "SHA256SUMS could not be used to verify the download (missing entry, empty file or no sha256sum). Aborting."
+d en sums_fetch_fail "Failed to download SHA256SUMS for this release. Aborting."
+d en creds_empty "Username and password can not be empty. Aborting."
+d en creds_failed "Failed to set the admin credentials. Aborting."
 d en begin_install "Beginning the install s-ui %s"
 d en download_ver_fail "download s-ui %s failed, please check the version exists"
 d en extract_fail "Extracting s-ui failed, the archive may be corrupt or the disk is full"
@@ -130,6 +134,10 @@ d fa download_fail "دانلود s-ui ناموفق بود؛ مطمئن شوید 
 d fa checksum_ok "صحت فایل تایید شد."
 d fa checksum_fail "مقدار checksum مطابقت ندارد. فایل دانلودشده خراب یا دستکاری شده است. عملیات متوقف شد."
 d fa no_checksums "برای این نسخه فایل SHA256SUMS منتشر نشده؛ بررسی checksum انجام نشد."
+d fa checksum_unusable "امکان بررسی فایل دانلودشده با SHA256SUMS نبود (ورودی ناموجود، فایل خالی یا نبودن sha256sum). عملیات متوقف شد."
+d fa sums_fetch_fail "دانلود فایل SHA256SUMS این نسخه ناموفق بود. عملیات متوقف شد."
+d fa creds_empty "نام کاربری و رمز عبور نمی‌توانند خالی باشند. عملیات متوقف شد."
+d fa creds_failed "تنظیم اطلاعات ورود مدیر ناموفق بود. عملیات متوقف شد."
 d fa begin_install "شروع نصب s-ui نسخهٔ %s"
 d fa download_ver_fail "دانلود s-ui نسخهٔ %s ناموفق بود؛ لطفاً از وجود این نسخه مطمئن شوید"
 d fa extract_fail "استخراج s-ui ناموفق بود؛ ممکن است فایل خراب باشد یا فضای دیسک پر باشد"
@@ -170,6 +178,10 @@ d ru download_fail "Не удалось загрузить s-ui, убедите�
 d ru checksum_ok "Контрольная сумма проверена."
 d ru checksum_fail "Контрольная сумма не совпадает. Файл повреждён или подменён. Прерывание."
 d ru no_checksums "Для этого релиза нет SHA256SUMS; проверка контрольной суммы пропущена."
+d ru checksum_unusable "Не удалось проверить загрузку по SHA256SUMS (нет записи, пустой файл или нет sha256sum). Прерывание."
+d ru sums_fetch_fail "Не удалось загрузить SHA256SUMS для этого релиза. Прерывание."
+d ru creds_empty "Имя пользователя и пароль не могут быть пустыми. Прерывание."
+d ru creds_failed "Не удалось задать учётные данные администратора. Прерывание."
 d ru begin_install "Начинается установка s-ui %s"
 d ru download_ver_fail "загрузка s-ui %s не удалась, проверьте существование этой версии"
 d ru extract_fail "Не удалось распаковать s-ui: архив повреждён или на диске нет места"
@@ -210,6 +222,10 @@ d vi download_fail "Tải s-ui thất bại, hãy chắc chắn máy chủ của
 d vi checksum_ok "Đã xác minh checksum."
 d vi checksum_fail "Checksum KHÔNG khớp. Tệp tải về có thể bị hỏng hoặc bị can thiệp. Đang hủy."
 d vi no_checksums "Bản phát hành này không có SHA256SUMS; bỏ qua xác minh checksum."
+d vi checksum_unusable "Không thể dùng SHA256SUMS để xác minh tệp tải về (thiếu mục, tệp rỗng hoặc không có sha256sum). Đang hủy."
+d vi sums_fetch_fail "Không tải được SHA256SUMS của bản phát hành này. Đang hủy."
+d vi creds_empty "Tên người dùng và mật khẩu không được để trống. Đang hủy."
+d vi creds_failed "Không thể đặt thông tin đăng nhập quản trị. Đang hủy."
 d vi begin_install "Bắt đầu cài đặt s-ui %s"
 d vi download_ver_fail "tải s-ui %s thất bại, vui lòng kiểm tra phiên bản có tồn tại không"
 d vi extract_fail "Giải nén s-ui thất bại, tệp có thể bị hỏng hoặc đĩa đã đầy"
@@ -250,6 +266,10 @@ d zhcn download_fail "下载 s-ui 失败，请确保您的服务器可以访问 
 d zhcn checksum_ok "校验和已验证。"
 d zhcn checksum_fail "校验和不匹配，下载文件可能已损坏或被篡改。已中止。"
 d zhcn no_checksums "此版本未发布 SHA256SUMS，已跳过校验和验证。"
+d zhcn checksum_unusable "无法使用 SHA256SUMS 验证下载文件（缺少条目、文件为空或缺少 sha256sum）。已中止。"
+d zhcn sums_fetch_fail "下载此版本的 SHA256SUMS 失败。已中止。"
+d zhcn creds_empty "用户名和密码不能为空。已中止。"
+d zhcn creds_failed "设置管理员凭据失败。已中止。"
 d zhcn begin_install "开始安装 s-ui %s"
 d zhcn download_ver_fail "下载 s-ui %s 失败，请检查该版本是否存在"
 d zhcn extract_fail "解压 s-ui 失败，压缩包可能已损坏或磁盘空间不足"
@@ -290,6 +310,10 @@ d zhtw download_fail "下載 s-ui 失敗，請確保您的伺服器可以存取 
 d zhtw checksum_ok "校驗和已驗證。"
 d zhtw checksum_fail "校驗和不相符，下載檔案可能已損毀或被竄改。已中止。"
 d zhtw no_checksums "此版本未發布 SHA256SUMS，已略過校驗和驗證。"
+d zhtw checksum_unusable "無法使用 SHA256SUMS 驗證下載檔案（缺少項目、檔案為空或缺少 sha256sum）。已中止。"
+d zhtw sums_fetch_fail "下載此版本的 SHA256SUMS 失敗。已中止。"
+d zhtw creds_empty "使用者名稱和密碼不能為空。已中止。"
+d zhtw creds_failed "設定管理員憑證失敗。已中止。"
 d zhtw begin_install "開始安裝 s-ui %s"
 d zhtw download_ver_fail "下載 s-ui %s 失敗，請檢查該版本是否存在"
 d zhtw extract_fail "解壓 s-ui 失敗，壓縮檔可能已損毀或磁碟空間不足"
@@ -454,15 +478,26 @@ config_after_install() {
         [ -z "$config_subPath" ] || params="$params -subPath $config_subPath"
         /usr/local/s-ui/sui setting ${params}
 
-        read -p "$(t ask_admin)": admin_confirm
+        read -r -p "$(t ask_admin)" admin_confirm
         if [[ "${admin_confirm}" == "y" || "${admin_confirm}" == "Y" ]]; then
             # First admin credentials
-            read -p "$(t set_user)" config_account
-            read -p "$(t set_pass)" config_password
+            # -s so the password does not end up on screen or in the
+            # scrollback of a shared terminal; quoted so one with spaces or
+            # glob characters reaches sui intact.
+            read -r -p "$(t set_user)" config_account
+            read -r -s -p "$(t set_pass)" config_password
+            echo
+            if [[ -z "$config_account" || -z "$config_password" ]]; then
+                echo -e "${red}$(t creds_empty)${plain}"
+                exit 1
+            fi
 
             # Set credentials
             echo -e "${yellow}$(t initializing)${plain}"
-            /usr/local/s-ui/sui admin -username ${config_account} -password ${config_password}
+            if ! /usr/local/s-ui/sui admin -username "${config_account}" -password "${config_password}"; then
+                echo -e "${red}$(t creds_failed)${plain}"
+                exit 1
+            fi
         else
             echo -e "${yellow}$(t current_creds) ${plain}"
             /usr/local/s-ui/sui admin -show
@@ -478,7 +513,10 @@ config_after_install() {
             echo -e "${green}password:${passwordTemp}${plain}"
             echo -e "###############################################"
             echo -e "${red}$(t forgot_info)${plain}"
-            /usr/local/s-ui/sui admin -username ${usernameTemp} -password ${passwordTemp}
+            if ! /usr/local/s-ui/sui admin -username "${usernameTemp}" -password "${passwordTemp}"; then
+                echo -e "${red}$(t creds_failed)${plain}"
+                exit 1
+            fi
         else
             echo -e "${red}$(t upgrade_keep)${plain}"
         fi
@@ -545,19 +583,36 @@ abort_install() {
 # alongside every tarball for a while -- the panel self-update already
 # checks it, the installer never did.
 #
-# A missing SHA256SUMS is a warning rather than a failure: releases from
-# before that workflow step exist, and refusing to install them would be a
-# worse outcome than saying so. A file that is present and does not match is
-# always fatal.
+# Only a release that has no SHA256SUMS at all (a 404: anything built before
+# the workflow published one) is installed with a warning, so an older version
+# can still be rolled back to. Every other way of not being able to check -- a
+# network error, an empty or stripped download, no entry for this archive, no
+# sha256sum -- aborts like a mismatch does: otherwise anyone able to block one
+# request could get an unverified archive installed as root.
 verify_checksum() {
     local tag="$1" file="$2"
-    local sums="/tmp/s-ui-SHA256SUMS"
+    local sums="/tmp/s-ui-SHA256SUMS" code
     rm -f "$sums"
 
-    if ! wget -q -O "$sums" "https://github.com/shenaba/2s-ui/releases/download/${tag}/SHA256SUMS" || [ ! -s "$sums" ]; then
+    code=$(curl -sL -o "$sums" -w '%{http_code}' "https://github.com/shenaba/2s-ui/releases/download/${tag}/SHA256SUMS") || code=""
+    case "$code" in
+    200) ;;
+    404)
         rm -f "$sums"
         echo -e "${yellow}$(t no_checksums)${plain}"
         return 0
+        ;;
+    *)
+        rm -f "$sums"
+        echo -e "${red}$(t sums_fetch_fail)${plain}"
+        return 1
+        ;;
+    esac
+
+    if [ ! -s "$sums" ] || ! command -v sha256sum >/dev/null 2>&1; then
+        rm -f "$sums"
+        echo -e "${red}$(t checksum_unusable)${plain}"
+        return 1
     fi
 
     # The published file lists every platform, so match this archive by its
@@ -566,8 +621,8 @@ verify_checksum() {
     want=$(awk -v f="$(basename "$file")" '$2 == f || $2 == "*" f {print $1}' "$sums" | head -n1)
     rm -f "$sums"
     if [ -z "$want" ]; then
-        echo -e "${yellow}$(t no_checksums)${plain}"
-        return 0
+        echo -e "${red}$(t checksum_unusable)${plain}"
+        return 1
     fi
 
     local got
@@ -590,7 +645,7 @@ install_s-ui() {
             exit 1
         fi
         echo -e "$(t got_version "${tag}")"
-        wget -N --no-check-certificate -O /tmp/s-ui-linux-$(arch).tar.gz https://github.com/shenaba/2s-ui/releases/download/${tag}/s-ui-linux-$(arch).tar.gz
+        wget -N -O /tmp/s-ui-linux-$(arch).tar.gz https://github.com/shenaba/2s-ui/releases/download/${tag}/s-ui-linux-$(arch).tar.gz
         if [[ $? -ne 0 ]]; then
             echo -e "${red}$(t download_fail) ${plain}"
             exit 1
@@ -601,7 +656,7 @@ install_s-ui() {
         tag="v${1#v}"
         url="https://github.com/shenaba/2s-ui/releases/download/${tag}/s-ui-linux-$(arch).tar.gz"
         echo -e "$(t begin_install "${tag}")"
-        wget -N --no-check-certificate -O /tmp/s-ui-linux-$(arch).tar.gz ${url}
+        wget -N -O /tmp/s-ui-linux-$(arch).tar.gz ${url}
         if [[ $? -ne 0 ]]; then
             echo -e "${red}$(t download_ver_fail "${tag}")${plain}"
             exit 1

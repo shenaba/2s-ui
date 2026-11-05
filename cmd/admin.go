@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/shenaba/2s-ui/config"
 	"github.com/shenaba/2s-ui/database"
@@ -80,10 +81,12 @@ func unlockAdminLogin() {
 }
 
 func updateAdmin(username string, password string) {
+	// Failures exit non-zero: install.sh sets the first admin through this
+	// command and has to be able to tell that it did not take.
 	err := database.InitDB(config.GetDBPath())
 	if err != nil {
 		fmt.Println(err)
-		return
+		os.Exit(1)
 	}
 
 	if username != "" || password != "" {
@@ -91,6 +94,7 @@ func updateAdmin(username string, password string) {
 		err := userService.UpdateFirstUser(username, password)
 		if err != nil {
 			fmt.Println("reset admin credentials failed:", err)
+			os.Exit(1)
 		} else {
 			fmt.Println("reset admin credentials success")
 		}
