@@ -509,4 +509,6 @@ export default {
   totalSitesCount: "Всего сайтов",
   pageInfo: "Стр. {current} из {total}, сайтов: {count}",
   localNodeOnly: "Только локальный узел",
+  trafficHistoryOff: "История трафика отключена",
+  trafficHistoryOffDesc: "Срок хранения истории трафика равен 0, поэтому посещённые сайты не записываются. Увеличьте его в настройках, чтобы начать сбор.",
 }

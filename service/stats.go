@@ -366,6 +366,23 @@ func FlushStats() {
 	}
 }
 
+// SaveStatsForCurrentSettings flushes what the core has counted under the
+// settings stored right now.
+//
+// trafficAge is the switch for traffic history -- 0 keeps none -- and it is
+// read per flush instead of being captured when the stats job is registered. A
+// cron entry's parameters are fixed at registration, so the captured value left
+// a saved 0 without effect until the panel restarted: the core kept counting,
+// and the wipe SettingService.Save does was written over by the next flush. It
+// also left the way back (0 to a positive value) dead until the same restart.
+func (s *StatsService) SaveStatsForCurrentSettings(bucketSeconds int64) error {
+	trafficAge, err := (&SettingService{}).GetTrafficAge()
+	if err != nil {
+		return err
+	}
+	return s.SaveStats(trafficAge > 0, bucketSeconds)
+}
+
 func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error {
 	// With the core down there is nothing to drain, but the pending rows still
 	// go in: stopping the core carries its last counts there
@@ -797,6 +814,41 @@ func (s *StatsService) GetClusterOnlines() (onlines, error) {
 // delOldStatsChunk caps how many rows one DELETE removes, so the write lock is
 // released between chunks.
 const delOldStatsChunk = 5000
+
+// purgeStatsHistory empties both traffic history tables. It runs when trafficAge
+// is set to 0 and, on start-up, for a panel that was already there.
+func purgeStatsHistory(tx *gorm.DB) error {
+	if err := tx.Where("id > 0").Delete(model.Stats{}).Error; err != nil {
+		return err
+	}
+	return tx.Where("id > 0").Delete(model.TargetStats{}).Error
+}
+
+// PurgeTrafficHistoryIfDisabled empties the history tables when traffic history
+// is off.
+//
+// SettingService.Save does this when trafficAge is set to 0, but a panel that
+// was already at 0 before it upgraded can still hold rows: the previous build
+// captured the switch when the stats job was registered, so it kept recording
+// target sites after the setting said otherwise, and those rows stayed readable
+// through api/targetStats and went out in every backup. Clearing them at
+// start-up is what makes "0 keeps no history" true for those panels without
+// asking the operator to re-save a setting they never touched.
+func (s *StatsService) PurgeTrafficHistoryIfDisabled() error {
+	trafficAge, err := (&SettingService{}).GetTrafficAge()
+	if err != nil {
+		return err
+	}
+	if trafficAge > 0 {
+		return nil
+	}
+	if err = purgeStatsHistory(database.GetDB()); err != nil {
+		return err
+	}
+	// The per-inbound totals are seeded from the stats rows.
+	InvalidateInboundTraffic()
+	return nil
+}
 
 // DelOldStats drops stats past the retention window, in bounded chunks.
 //

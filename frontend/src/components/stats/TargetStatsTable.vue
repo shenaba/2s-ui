@@ -1,10 +1,41 @@
 <template>
   <div class="target-stats-container">
-    <!-- Toolbar: period selector, search input, refresh button -->
-    <Teleport v-if="mounted && toolbarTeleport" :to="toolbarTeleport">
-      <div class="ts-toolbar ts-header-toolbar">
+    <!-- History off: nothing is collected, and a bare "No data" reads like a
+         bug. Say which setting turns it back on instead. -->
+    <div v-if="historyOff" class="ts-history-off">
+      <EmptyState
+        icon="globe"
+        :title="$t('ui.trafficHistoryOff')"
+        :desc="$t('ui.trafficHistoryOffDesc')"
+      />
+    </div>
+
+    <template v-else>
+      <!-- Toolbar: period selector, search input, refresh button -->
+      <Teleport v-if="mounted && toolbarTeleport" :to="toolbarTeleport">
+        <div class="ts-toolbar ts-header-toolbar">
+          <span class="ts-node-hint">{{ $t('ui.localNodeOnly') }}</span>
+          <Segmented v-model="period" :options="periods" @update:model-value="onPeriodChange" />
+          <div class="search-box">
+            <input
+              v-model="searchInput"
+              type="text"
+              class="ts-input"
+              :placeholder="$t('ui.siteSearch')"
+              @input="onSearchInput"
+              @keydown.enter="onSearchEnter"
+            />
+            <span v-if="searchInput" class="clear-btn" @click="clearSearch">✕</span>
+          </div>
+          <Btn sm variant="subtle" :loading="loading" @click="fetchData">
+            <Ico name="refresh" :size="14" /> {{ $t('actions.update') }}
+          </Btn>
+        </div>
+      </Teleport>
+      <div v-else-if="!toolbarTeleport" class="ts-toolbar">
         <span class="ts-node-hint">{{ $t('ui.localNodeOnly') }}</span>
         <Segmented v-model="period" :options="periods" @update:model-value="onPeriodChange" />
+        <div class="grow" />
         <div class="search-box">
           <input
             v-model="searchInput"
@@ -20,129 +51,110 @@
           <Ico name="refresh" :size="14" /> {{ $t('actions.update') }}
         </Btn>
       </div>
-    </Teleport>
-    <div v-else-if="!toolbarTeleport" class="ts-toolbar">
-      <span class="ts-node-hint">{{ $t('ui.localNodeOnly') }}</span>
-      <Segmented v-model="period" :options="periods" @update:model-value="onPeriodChange" />
-      <div class="grow" />
-      <div class="search-box">
-        <input
-          v-model="searchInput"
-          type="text"
-          class="ts-input"
-          :placeholder="$t('ui.siteSearch')"
-          @input="onSearchInput"
-          @keydown.enter="onSearchEnter"
-        />
-        <span v-if="searchInput" class="clear-btn" @click="clearSearch">✕</span>
-      </div>
-      <Btn sm variant="subtle" :loading="loading" @click="fetchData">
-        <Ico name="refresh" :size="14" /> {{ $t('actions.update') }}
-      </Btn>
-    </div>
 
-    <!-- Summary KPI metrics cards -->
-    <div class="ts-summary">
-      <div class="ts-metric">
-        <div class="ts-metric-k">{{ $t('ui.totalSitesCount') }}</div>
-        <div class="ts-metric-v mono">{{ summary.totalSites }}</div>
+      <!-- Summary KPI metrics cards -->
+      <div class="ts-summary">
+        <div class="ts-metric">
+          <div class="ts-metric-k">{{ $t('ui.totalSitesCount') }}</div>
+          <div class="ts-metric-v mono">{{ summary.totalSites }}</div>
+        </div>
+        <div class="ts-metric">
+          <div class="ts-metric-k">{{ $t('stats.download') }}</div>
+          <div class="ts-metric-v mono" style="color: var(--cyan);">↓ {{ HumanReadable.sizeFormat(summary.totalDown) }}</div>
+        </div>
+        <div class="ts-metric">
+          <div class="ts-metric-k">{{ $t('stats.upload') }}</div>
+          <div class="ts-metric-v mono" style="color: var(--violet);">↑ {{ HumanReadable.sizeFormat(summary.totalUp) }}</div>
+        </div>
+        <div class="ts-metric">
+          <div class="ts-metric-k">{{ $t('ui.totalTraffic') }}</div>
+          <div class="ts-metric-v mono" style="color: var(--brand);">{{ HumanReadable.sizeFormat(summary.total) }}</div>
+        </div>
       </div>
-      <div class="ts-metric">
-        <div class="ts-metric-k">{{ $t('stats.download') }}</div>
-        <div class="ts-metric-v mono" style="color: var(--cyan);">↓ {{ HumanReadable.sizeFormat(summary.totalDown) }}</div>
-      </div>
-      <div class="ts-metric">
-        <div class="ts-metric-k">{{ $t('stats.upload') }}</div>
-        <div class="ts-metric-v mono" style="color: var(--violet);">↑ {{ HumanReadable.sizeFormat(summary.totalUp) }}</div>
-      </div>
-      <div class="ts-metric">
-        <div class="ts-metric-k">{{ $t('ui.totalTraffic') }}</div>
-        <div class="ts-metric-v mono" style="color: var(--brand);">{{ HumanReadable.sizeFormat(summary.total) }}</div>
-      </div>
-    </div>
 
-    <!-- Loading state -->
-    <div v-if="loading && items.length === 0" style="padding: 30px 0;">
-      <EmptyState icon="chart" :title="$t('loading')" />
-    </div>
-
-    <!-- Empty state -->
-    <div v-else-if="items.length === 0" style="padding: 30px 0;">
-      <EmptyState icon="globe" :title="$t('noData')" />
-    </div>
-
-    <!-- Data table -->
-    <div v-else class="ts-table-wrapper">
-      <table class="dtable">
-        <thead>
-          <tr>
-            <th style="width: 50px; text-align: center;">#</th>
-            <th>{{ $t('ui.targetSite') }}</th>
-            <th class="sortable" style="text-align: end; width: 140px;" @click="toggleSort('up')">
-              {{ $t('stats.upload') }}
-              <span class="sort-ico" :class="{ active: sortField === 'up' }">{{ sortOrderIco('up') }}</span>
-            </th>
-            <th class="sortable" style="text-align: end; width: 140px;" @click="toggleSort('down')">
-              {{ $t('stats.download') }}
-              <span class="sort-ico" :class="{ active: sortField === 'down' }">{{ sortOrderIco('down') }}</span>
-            </th>
-            <th class="sortable" style="text-align: end; width: 170px;" @click="toggleSort('total')">
-              {{ $t('ui.totalTraffic') }}
-              <span class="sort-ico" :class="{ active: sortField === 'total' }">{{ sortOrderIco('total') }}</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="(item, idx) in items" :key="item.target">
-            <td class="cell mono" style="text-align: center; color: var(--text-3); font-size: 11px;">
-              {{ (page - 1) * limit + idx + 1 }}
-            </td>
-            <td class="cell">
-              <div class="site-cell">
-                <span class="site-icon">🌐</span>
-                <span class="site-name mono" :title="item.target">{{ item.target }}</span>
-                <button
-                  type="button"
-                  class="copy-btn"
-                  :title="$t('actions.copy')"
-                  @click="copySite(item.target)"
-                >
-                  <Ico name="copy" :size="12" />
-                </button>
-              </div>
-            </td>
-            <td class="cell mono" style="text-align: end; color: var(--violet); font-weight: 600;">
-              ↑ {{ HumanReadable.sizeFormat(item.up) }}
-            </td>
-            <td class="cell mono" style="text-align: end; color: var(--cyan); font-weight: 600;">
-              ↓ {{ HumanReadable.sizeFormat(item.down) }}
-            </td>
-            <td class="cell" style="text-align: end;">
-              <div class="mono" style="font-weight: 700;">{{ HumanReadable.sizeFormat(item.total) }}</div>
-              <div class="progress-bar">
-                <div class="progress-fill" :style="{ width: percentOfMax(item.total) + '%' }" />
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Pagination controls -->
-    <div v-if="totalPages > 1" class="ts-pagination">
-      <div class="page-info mono">
-        {{ $t('ui.pageInfo', { current: page, total: totalPages, count: totalCount }) }}
+      <!-- Loading state -->
+      <div v-if="loading && items.length === 0" style="padding: 30px 0;">
+        <EmptyState icon="chart" :title="$t('loading')" />
       </div>
-      <div class="page-btns">
-        <Btn sm variant="subtle" :disabled="page <= 1" @click="changePage(page - 1)">
-          {{ $t('actions.prev') }}
-        </Btn>
-        <span class="mono" style="font-size: 12px; padding: 0 4px;">{{ page }} / {{ totalPages }}</span>
-        <Btn sm variant="subtle" :disabled="page >= totalPages" @click="changePage(page + 1)">
-          {{ $t('actions.next') }}
-        </Btn>
+
+      <!-- Empty state -->
+      <div v-else-if="items.length === 0" style="padding: 30px 0;">
+        <EmptyState icon="globe" :title="$t('noData')" />
       </div>
-    </div>
+
+      <!-- Data table -->
+      <div v-else class="ts-table-wrapper">
+        <table class="dtable">
+          <thead>
+            <tr>
+              <th style="width: 50px; text-align: center;">#</th>
+              <th>{{ $t('ui.targetSite') }}</th>
+              <th class="sortable" style="text-align: end; width: 140px;" @click="toggleSort('up')">
+                {{ $t('stats.upload') }}
+                <span class="sort-ico" :class="{ active: sortField === 'up' }">{{ sortOrderIco('up') }}</span>
+              </th>
+              <th class="sortable" style="text-align: end; width: 140px;" @click="toggleSort('down')">
+                {{ $t('stats.download') }}
+                <span class="sort-ico" :class="{ active: sortField === 'down' }">{{ sortOrderIco('down') }}</span>
+              </th>
+              <th class="sortable" style="text-align: end; width: 170px;" @click="toggleSort('total')">
+                {{ $t('ui.totalTraffic') }}
+                <span class="sort-ico" :class="{ active: sortField === 'total' }">{{ sortOrderIco('total') }}</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(item, idx) in items" :key="item.target">
+              <td class="cell mono" style="text-align: center; color: var(--text-3); font-size: 11px;">
+                {{ (page - 1) * limit + idx + 1 }}
+              </td>
+              <td class="cell">
+                <div class="site-cell">
+                  <span class="site-icon">🌐</span>
+                  <span class="site-name mono" :title="item.target">{{ item.target }}</span>
+                  <button
+                    type="button"
+                    class="copy-btn"
+                    :title="$t('actions.copy')"
+                    @click="copySite(item.target)"
+                  >
+                    <Ico name="copy" :size="12" />
+                  </button>
+                </div>
+              </td>
+              <td class="cell mono" style="text-align: end; color: var(--violet); font-weight: 600;">
+                ↑ {{ HumanReadable.sizeFormat(item.up) }}
+              </td>
+              <td class="cell mono" style="text-align: end; color: var(--cyan); font-weight: 600;">
+                ↓ {{ HumanReadable.sizeFormat(item.down) }}
+              </td>
+              <td class="cell" style="text-align: end;">
+                <div class="mono" style="font-weight: 700;">{{ HumanReadable.sizeFormat(item.total) }}</div>
+                <div class="progress-bar">
+                  <div class="progress-fill" :style="{ width: percentOfMax(item.total) + '%' }" />
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pagination controls -->
+      <div v-if="totalPages > 1" class="ts-pagination">
+        <div class="page-info mono">
+          {{ $t('ui.pageInfo', { current: page, total: totalPages, count: totalCount }) }}
+        </div>
+        <div class="page-btns">
+          <Btn sm variant="subtle" :disabled="page <= 1" @click="changePage(page - 1)">
+            {{ $t('actions.prev') }}
+          </Btn>
+          <span class="mono" style="font-size: 12px; padding: 0 4px;">{{ page }} / {{ totalPages }}</span>
+          <Btn sm variant="subtle" :disabled="page >= totalPages" @click="changePage(page + 1)">
+            {{ $t('actions.next') }}
+          </Btn>
+        </div>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -156,6 +168,7 @@ import Btn from '@/components/ui/Btn.vue'
 import Ico from '@/components/ui/Ico.vue'
 import Segmented from '@/components/ui/Segmented.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import Data from '@/store/modules/data'
 
 const props = withDefaults(defineProps<{
   user?: string
@@ -171,6 +184,18 @@ const props = withDefaults(defineProps<{
 const { t } = useI18n({ useScope: 'global' })
 
 const mounted = ref(false)
+
+const dataStore = Data()
+
+// Before the first payload lands enableTraffic is only the store's default, so
+// claiming history is off would be a guess and would flash on every load.
+const ready = computed(() => dataStore.lastLoad > 0)
+
+// History is switched off through the traffic retention setting. There is
+// nothing to list then, and a bare "No data" reads like a broken table, so the
+// empty state below says why. enableTraffic is part of the live payload, so
+// turning retention back on restores the table without a reload.
+const historyOff = computed(() => ready.value && !dataStore.enableTraffic)
 
 const period = ref<string | number>(props.defaultPeriod)
 const periods = computed<[string, string][]>(() => [
@@ -279,6 +304,9 @@ const copySite = (site: string) => {
 }
 
 const fetchData = async () => {
+  // Nothing is recorded while history is off: the empty state stands in for
+  // the table, and the watcher below fetches as soon as it is switched back on.
+  if (historyOff.value) return
   const reqId = ++currentReqId
   loading.value = true
   try {
@@ -317,6 +345,14 @@ watch(() => props.user, () => {
   fetchData()
 })
 
+// Retention turned back on: the table was never fetched while it was off.
+watch(() => dataStore.enableTraffic, (enabled) => {
+  if (enabled) {
+    page.value = 1
+    fetchData()
+  }
+})
+
 onMounted(() => {
   mounted.value = true
   fetchData()
@@ -328,6 +364,10 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.ts-history-off {
+  padding: 30px 0;
 }
 
 .ts-toolbar {

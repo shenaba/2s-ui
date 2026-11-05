@@ -509,4 +509,6 @@ export default {
   totalSitesCount: "مجموع سایت‌ها",
   pageInfo: "صفحه {current} از {total}، {count} سایت",
   localNodeOnly: "فقط گره محلی",
+  trafficHistoryOff: "تاریخچه ترافیک غیرفعال است",
+  trafficHistoryOffDesc: "مدت نگهداری تاریخچه ترافیک روی ۰ است، بنابراین سایت‌های بازدیدشده ثبت نمی‌شوند. برای شروع، آن را در تنظیمات افزایش دهید.",
 }

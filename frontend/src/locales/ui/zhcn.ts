@@ -506,6 +506,8 @@ export default {
   totalSitesCount: "网站总数",
   pageInfo: "第 {current} / {total} 页，共 {count} 个网站",
   localNodeOnly: "仅统计本机",
+  trafficHistoryOff: "流量历史已关闭",
+  trafficHistoryOffDesc: "「流量记录保留天数」为 0，不会记录访问过的网站。可在设置中调大后开始统计。",
   downloadConfig: "下载 sing-box 配置",
   addItem: "添加{x}",
   newItem: "新建{x}",

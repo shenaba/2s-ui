@@ -509,4 +509,6 @@ export default {
   totalSitesCount: "Tổng số trang web",
   pageInfo: "Trang {current} / {total}, {count} trang web",
   localNodeOnly: "Chỉ nút cục bộ",
+  trafficHistoryOff: "Lịch sử lưu lượng đã tắt",
+  trafficHistoryOffDesc: "Thời gian lưu lịch sử lưu lượng đang là 0 nên các trang web đã truy cập không được ghi lại. Hãy tăng trong Cài đặt để bắt đầu thu thập.",
 }

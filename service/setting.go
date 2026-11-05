@@ -878,12 +878,7 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 
 		// Delete all stats if it is set to 0
 		if key == "trafficAge" && obj == "0" {
-			err = tx.Where("id > 0").Delete(model.Stats{}).Error
-			if err != nil {
-				return err
-			}
-			err = tx.Where("id > 0").Delete(model.TargetStats{}).Error
-			if err != nil {
+			if err = purgeStatsHistory(tx); err != nil {
 				return err
 			}
 			// The per-inbound totals are seeded from those rows; drop them so

@@ -86,14 +86,18 @@ func (a *APP) Start() error {
 		return err
 	}
 
-	trafficAge, err := a.SettingService.GetTrafficAge()
+	statsBucketSeconds, err := a.SettingService.GetStatsBucketSeconds()
 	if err != nil {
 		return err
 	}
 
-	statsBucketSeconds, err := a.SettingService.GetStatsBucketSeconds()
-	if err != nil {
-		return err
+	// With traffic history switched off there must be nothing to read back or
+	// back up from the start. A build that captured trafficAge when the stats
+	// job was registered kept writing target_stats after it was set to 0, so a
+	// panel upgraded from it still carries those rows; re-saving the setting
+	// would clear them, but nothing says the operator will.
+	if err = (&service.StatsService{}).PurgeTrafficHistoryIfDisabled(); err != nil {
+		logger.Warning("clearing traffic history failed: ", err)
 	}
 
 	// The hub must exist before the cron jobs first fire into it and before
@@ -112,7 +116,7 @@ func (a *APP) Start() error {
 	// re-read here on a settings save.
 	tgbot.Start()
 
-	err = a.cronJob.Start(loc, trafficAge, statsBucketSeconds)
+	err = a.cronJob.Start(loc, statsBucketSeconds)
 	if err != nil {
 		return err
 	}

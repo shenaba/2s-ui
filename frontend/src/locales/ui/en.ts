@@ -509,4 +509,6 @@ export default {
   totalSitesCount: "Total Sites",
   pageInfo: "Page {current} of {total}, {count} sites",
   localNodeOnly: "Local node only",
+  trafficHistoryOff: "Traffic history is off",
+  trafficHistoryOffDesc: "Traffic History Retention is set to 0, so visited sites are not recorded. Raise it in Settings to start collecting.",
 }

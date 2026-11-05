@@ -509,4 +509,6 @@ export default {
   totalSitesCount: "網站總數",
   pageInfo: "第 {current} / {total} 頁，共 {count} 個網站",
   localNodeOnly: "僅統計本機",
+  trafficHistoryOff: "流量歷史已關閉",
+  trafficHistoryOffDesc: "「流量記錄保留天數」為 0，不會記錄訪問過的網站。可在設定中調大後開始統計。",
 }
