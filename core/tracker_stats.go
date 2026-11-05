@@ -189,6 +189,23 @@ func (c *trackerConn) Close() error {
 	return c.Conn.Close()
 }
 
+// Upstream and the Replaceable pair let sing's copy loop see through this
+// wrapper to the counter conn beneath it, the way sing-box's own trackedConn
+// does. Without them bufio.Copy stops unwrapping here, so every routed
+// connection lost splice and the read-waiter / vectorised fast paths. Only the
+// copy loop is unwrapped; Close is still called on this wrapper.
+func (c *trackerConn) Upstream() any {
+	return c.Conn
+}
+
+func (c *trackerConn) ReaderReplaceable() bool {
+	return true
+}
+
+func (c *trackerConn) WriterReplaceable() bool {
+	return true
+}
+
 type trackerPacketConn struct {
 	network.PacketConn
 	onClose func()
@@ -202,6 +219,19 @@ func (c *trackerPacketConn) Close() error {
 		}
 	}
 	return c.PacketConn.Close()
+}
+
+// See trackerConn.Upstream: keeps the batch and read-waiter packet paths.
+func (c *trackerPacketConn) Upstream() any {
+	return c.PacketConn
+}
+
+func (c *trackerPacketConn) ReaderReplaceable() bool {
+	return true
+}
+
+func (c *trackerPacketConn) WriterReplaceable() bool {
+	return true
 }
 
 func (c *StatsTracker) RoutedConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) net.Conn {
