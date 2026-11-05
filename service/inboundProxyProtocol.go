@@ -53,6 +53,13 @@ const (
 	minFrontBits6 = 48
 )
 
+// nat64Prefixes are the IPv6 prefixes that embed IPv4 addresses: the
+// well-known one (RFC 6052) and the local-use one (RFC 8215).
+var nat64Prefixes = []netip.Prefix{
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+}
+
 // checkProxyProtoFronts refuses a proxyProtoTrusted value whose ranges are too
 // broad to be fronts.
 func checkProxyProtoFronts(prefixes []netip.Prefix) error {
@@ -60,6 +67,14 @@ func checkProxyProtoFronts(prefixes []netip.Prefix) error {
 		least := minFrontBits6
 		if prefix.Addr().Is4() {
 			least = minFrontBits4
+		}
+		// A NAT64 prefix carries IPv4 addresses inside it, so its breadth is
+		// that of the IPv4 part: 64:ff9b::/96 is every IPv4 host, seen from
+		// an IPv6-only machine. Held to an IPv4 /16 there.
+		for _, nat64 := range nat64Prefixes {
+			if prefix.Overlaps(nat64) {
+				least = max(least, 128-32+minFrontBits4)
+			}
 		}
 		if prefix.Bits() < least {
 			return common.NewErrorf("trusted PROXY protocol front %s is too broad: every address in it would be believed for any client, and the core would refuse to dial it; name the fronts themselves (at least /%d)", prefix, least)
