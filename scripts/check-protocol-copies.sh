@@ -34,7 +34,7 @@ LOCAL_ONLY="users.go"
 # Lines each copy is expected to differ by, beyond the shared header comment,
 # keyed by "<protocol>/<file>". These are not a tolerance: each is the exact
 # size of changes we made on purpose, so a bump that alters the file anywhere
-# else still shows up. Three changes make them up.
+# else still shows up. Four changes make them up.
 #
 # 1. The six user-carrying protocols key their service by user name rather than
 #    by list position (Service[string], not Service[int]) -- see the header of
@@ -63,19 +63,28 @@ LOCAL_ONLY="users.go"
 #    swapped upstream has to swap them back here, and nothing below would count
 #    it as drift, which is why core/quic_close_test.go exists.
 #
-# Re-copying after a sing-box bump will change these. Re-apply all three,
+# 4. The four TCP copies (anytls, trojan, vless, vmess) read a PROXY protocol
+#    header from a front on the same host (#260) -- see core/proxyheader. That
+#    is 6 lines in each copy that has a transport: a proxyHdr field, the
+#    request taken out of the listen options before the listener is built,
+#    the listener's ConnectionHandler and the transport's Serve argument
+#    going through helpers in users.go (two changed lines, so 2 each). anytls
+#    has no transport and costs 4. The QUIC copies are untouched: a front
+#    that routes by SNI cannot route QUIC, so there is nothing to read.
+#
+# Re-copying after a sing-box bump will change these. Re-apply all four,
 # then put the new counts here -- and read the diff first rather than just
 # pasting the number the script printed, which is how a real upstream change
 # gets rubber-stamped into the expected total.
 expect_diff() {
   case "$1" in
-    anytls/inbound.go) echo 3 ;;
+    anytls/inbound.go) echo 7 ;;
     hysteria/inbound.go) echo 31 ;;
     hysteria2/inbound.go) echo 31 ;;
-    trojan/inbound.go) echo 26 ;;
+    trojan/inbound.go) echo 32 ;;
     tuic/inbound.go) echo 29 ;;
-    vless/inbound.go) echo 30 ;;
-    vmess/inbound.go) echo 28 ;;
+    vless/inbound.go) echo 36 ;;
+    vmess/inbound.go) echo 34 ;;
     *) echo 0 ;;
   esac
 }

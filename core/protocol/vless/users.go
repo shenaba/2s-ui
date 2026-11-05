@@ -1,6 +1,9 @@
 package vless
 
 import (
+	"net"
+
+	"github.com/shenaba/2s-ui/core/proxyheader"
 	"github.com/shenaba/2s-ui/core/usersession"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -50,4 +53,41 @@ func (h *Inbound) sessions() *usersession.Registry {
 // Core.DisconnectUser.
 func (h *Inbound) KickUser(user string) usersession.Result {
 	return h.sessions().KickUserSessions(user)
+}
+
+// takeProxyHdr, connectionHandler and proxyListener are the PROXY protocol
+// hooks (#260): NewInbound keeps whether the inbound asked for headers, and
+// both of its listeners -- its own, and the one a transport serves -- read
+// them when it did. See core/proxyheader.
+func takeProxyHdr(options *option.ListenOptions) proxyHdrSettings {
+	return proxyheader.Take(options)
+}
+
+// proxyHdrSettings is the type of the proxyHdr field, named here so that the
+// copy's own file needs no import for it.
+type proxyHdrSettings = proxyheader.Settings
+
+// proxySettings is proxyHdr as it applies: off over a transport that carries
+// no TCP. The transport is built before any of these are called.
+func (h *Inbound) proxySettings() proxyHdrSettings {
+	if h.transport == nil {
+		return h.proxyHdr
+	}
+	return h.proxyHdr.Over(h.transport)
+}
+
+func (h *Inbound) connectionHandler() adapter.ConnectionHandler {
+	return proxyheader.Handler(h, h.logger, h.proxySettings())
+}
+
+// ProxyHeaderPort tells the core this inbound reads PROXY headers, and on
+// which port: proxyheader's dial guard stays on while it runs, and refuses to
+// hand a client to a relay on this host for that port.
+func (h *Inbound) ProxyHeaderPort() (uint16, bool) {
+	settings := h.proxySettings()
+	return settings.Port, settings.Enabled
+}
+
+func (h *Inbound) proxyListener(l net.Listener) net.Listener {
+	return proxyheader.Listen(l, h.logger, h.proxySettings())
 }

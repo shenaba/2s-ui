@@ -568,6 +568,9 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 		// (same entry, same cseq, so the SPA drops it as not newer).
 		SetLastUpdate(dt)
 		startMu.RUnlock()
+		if obj == "settings" {
+			ApplyProxyProtocol()
+		}
 		if restartCore {
 			s.requestRestart()
 		} else if !corePtr.IsRunning() {

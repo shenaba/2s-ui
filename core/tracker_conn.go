@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/shenaba/2s-ui/core/proxyheader"
+
 	"github.com/gofrs/uuid/v5"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-tun"
@@ -175,6 +177,15 @@ type ConnTracker struct {
 	connections map[string]*ConnectionInfo
 	epoch       time.Time
 	generation  uint64
+	// route tells proxyheader.GuardDial how the outbound a connection is
+	// dialed through reaches its destination. Set by the box that owns the
+	// tracker, before it routes anything; nil in a bare tracker, which
+	// GuardDial then treats as dialing through some unknown server.
+	route func(adapter.Outbound) proxyheader.Route
+	// fallback reports whether a destination is one of an inbound's
+	// configured fallback addresses: a connection routed there without a
+	// user is the operator's dial, not a client's (proxyheader.Route).
+	fallback func(inbound string, destination M.Socksaddr) bool
 }
 
 func NewConnTracker() *ConnTracker {
@@ -261,7 +272,16 @@ func (c *ConnTracker) RoutedConnection(ctx context.Context, conn net.Conn, metad
 
 	c.trackConnection(connID, connInfo)
 
-	return c.createWrappedConn(conn, connInfo)
+	wrapped := c.createWrappedConn(conn, connInfo)
+	// The outbound the router will dial: the last of the chain it has already
+	// resolved, groups included. Looked at only when the dial is reported, so
+	// that a guard switched on in between still gets it right, and a panel
+	// without PROXY protocol pays nothing for it.
+	wrapped.outbound = matchOutbound
+	if chain := metadata.OutboundChain; len(chain) > 0 {
+		wrapped.outbound = chain[len(chain)-1]
+	}
+	return wrapped
 }
 
 func (c *ConnTracker) RoutedPacketConnection(ctx context.Context, conn network.PacketConn, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) network.PacketConn {
@@ -557,12 +577,43 @@ type wrappedConn struct {
 	tracker     *ConnTracker
 	info        *ConnectionInfo
 	untrackOnce sync.Once
+	// outbound is the one this connection is dialed through, for
+	// proxyheader.GuardDial. Written before the wrapper is handed out.
+	outbound adapter.Outbound
 }
 
 func (w *wrappedConn) doUntrack() {
 	w.untrackOnce.Do(func() {
 		w.tracker.untrackConnection(w.info.ID)
 	})
+}
+
+// ConnHandshakeSuccess is how the connection manager hands over the outbound
+// it just dialed for this connection, before it relays a byte: the one place
+// the core sees both ends of a client's connection. proxyheader is told about
+// it, so a client cannot loop back into a PROXY-enabled inbound and speak as
+// its front (#260). Then it is passed on to whatever the wrapped connection
+// does with it, as it was before this wrapper took it.
+func (w *wrappedConn) ConnHandshakeSuccess(remote net.Conn) error {
+	// Off, nothing to guard -- and nothing it could have reached: an inbound
+	// that reads headers switches the guard on before it listens.
+	if !proxyheader.InUse() {
+		return network.ReportConnHandshakeSuccess(w.Conn, remote)
+	}
+	var route func() proxyheader.Route
+	if w.tracker.route != nil && w.outbound != nil {
+		route = func() proxyheader.Route {
+			r := w.tracker.route(w.outbound)
+			// A fallback: no user, because it failed authentication, sent
+			// where the operator configured.
+			r.Fallback = w.info.User == "" && w.tracker.fallback != nil && w.tracker.fallback(w.info.Inbound, w.info.Destination)
+			return r
+		}
+	}
+	if err := proxyheader.GuardDial(remote, w.info.Destination, route); err != nil {
+		return err
+	}
+	return network.ReportConnHandshakeSuccess(w.Conn, remote)
 }
 
 func (w *wrappedConn) Read(b []byte) (int, error) {

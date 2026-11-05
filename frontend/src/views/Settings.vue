@@ -69,6 +69,9 @@
       <SRow :label="$t('setting.trustedProxies')" :hint="$t('setting.trustedProxiesHint')">
         <input class="input mono" v-model="settings.webTrustedProxies" placeholder="10.0.0.0/8, 192.0.2.10" />
       </SRow>
+      <SRow :label="$t('setting.proxyProtoTrusted')" :hint="$t('setting.proxyProtoTrustedHint')">
+        <input class="input mono" v-model="settings.proxyProtoTrusted" placeholder="172.17.0.1" />
+      </SRow>
       <SRow :label="$t('setting.webUri')" :hint="webUriHint">
         <input class="input mono" v-model="settings.webURI" placeholder="https://panel.example.com/app/" />
       </SRow>
@@ -443,6 +446,7 @@ const settings = ref({
   webCertMode: "",
   webNginx: "",
   webTrustedProxies: "",
+  proxyProtoTrusted: "",
   webAcmeMethod: "auto",
   webAcmeEmail: "",
   webPath: "/app/",
