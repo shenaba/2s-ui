@@ -3,6 +3,7 @@ package sub
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/shenaba/2s-ui/database"
@@ -60,6 +61,8 @@ func (j *JsonService) GetJson(subId string, format string) (*string, []string, e
 	if err != nil {
 		return nil, nil, err
 	}
+
+	*outbounds, *outTags, links = dropSingBoxUnsupported(*outbounds, *outTags, links)
 
 	extOutbounds, extTags := j.LinkService.GetExternalOutbounds(&client.Links)
 	*outbounds = append(*outbounds, extOutbounds...)
@@ -245,6 +248,14 @@ func (j *JsonService) getOutbounds(clientConfig json.RawMessage, inbounds []*mod
 				}
 				outbound[key] = value
 			}
+			// mieru logs in as a named user: the client's name is the
+			// username, which the generic copy above skips with every other
+			// "name" key.
+			if protocol == "mieru" {
+				if name, _ := config["name"].(string); name != "" {
+					outbound["username"] = name
+				}
+			}
 		}
 
 		// Stored out_json may predate the SNI shadowTlsOut now writes, and it
@@ -398,6 +409,50 @@ func addrCopies(e *subEntry, clientRemark string) []subCopy {
 
 // cloneOutbound copies an outbound one level deep, plus its TLS map, so one
 // copy's override can't leak into the next -- a shallow copy would share it.
+// singBoxUnsupported are inbound types the panel serves that upstream sing-box
+// has no outbound for. mieru exists only in enfein/mbox, and a sing-box client
+// refuses a whole config over one outbound type it does not know -- so a
+// subscriber of any mieru inbound would lose every other node too. The Clash
+// subscription and the share links still carry them.
+var singBoxUnsupported = map[string]bool{"mieru": true}
+
+// dropSingBoxUnsupported removes those outbounds, together with every detour
+// link touching one and every copy riding one: a rider stripped of its detour
+// would dial its own address, which is not where its operator sent it.
+func dropSingBoxUnsupported(outbounds []map[string]interface{}, tags []string, links []detourLink) ([]map[string]interface{}, []string, []detourLink) {
+	gone := map[uintptr]bool{}
+	for _, out := range outbounds {
+		if t, _ := out["type"].(string); singBoxUnsupported[t] {
+			gone[reflect.ValueOf(out).Pointer()] = true
+		}
+	}
+	if len(gone) == 0 {
+		return outbounds, tags, links
+	}
+	for _, l := range links {
+		if gone[reflect.ValueOf(l.to).Pointer()] {
+			gone[reflect.ValueOf(l.from).Pointer()] = true
+		}
+	}
+	keptOut := outbounds[:0]
+	keptTags := tags[:0]
+	for i, out := range outbounds {
+		if gone[reflect.ValueOf(out).Pointer()] {
+			continue
+		}
+		keptOut = append(keptOut, out)
+		keptTags = append(keptTags, tags[i])
+	}
+	var keptLinks []detourLink
+	for _, l := range links {
+		if gone[reflect.ValueOf(l.from).Pointer()] || gone[reflect.ValueOf(l.to).Pointer()] {
+			continue
+		}
+		keptLinks = append(keptLinks, l)
+	}
+	return keptOut, keptTags, keptLinks
+}
+
 func cloneOutbound(outbound map[string]interface{}) map[string]interface{} {
 	newOut := make(map[string]interface{}, len(outbound))
 	for key, value := range outbound {
@@ -550,8 +605,8 @@ func (j *JsonService) addDefaultOutbounds(outbounds *[]map[string]interface{}, o
 			"type":      "selector",
 		},
 		{
-			"tag":       "auto",
-			"type":      "urltest",
+			"tag":  "auto",
+			"type": "urltest",
 			// Deref: a *[]string would marshal to null when the slice is nil.
 			"outbounds": *outTags,
 			"url":       "http://www.gstatic.com/generate_204",

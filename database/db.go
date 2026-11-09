@@ -200,6 +200,10 @@ func InitDB(dbPath string) error {
 	if err != nil {
 		return err
 	}
+	err = backfillMieruClientConfig()
+	if err != nil {
+		return err
+	}
 	// The two deprecations that cannot be migrated without changing how names
 	// resolve are reported for the operator instead; see migrateSingBox114.
 	reportSingBox114Manual()

@@ -71,6 +71,7 @@
     <MHint v-if="snellWithoutClient">{{ $t('types.snell.noClientConfig') }}</MHint>
     <Headers v-if="type == inTypes.HTTP" :data="inData.out_json" />
     <AnyTls v-if="type == inTypes.AnyTls" :data="inData.out_json" direction="out_json" />
+    <Mieru v-if="type == inTypes.Mieru" :data="inData.out_json" direction="out_json" />
     <Naive v-if="type == inTypes.Naive" :data="inData.out_json" direction="out_json" />
   </div>
 </template>
@@ -88,6 +89,7 @@ import UoT from '../out/UoT.vue'
 import Headers from '../out/Headers.vue'
 import QuicFields from '../out/QuicFields.vue'
 import AnyTls from './AnyTls.vue'
+import Mieru from './Mieru.vue'
 import Naive from './Naive.vue'
 
 const props = defineProps<{ inData: any; type: string }>()

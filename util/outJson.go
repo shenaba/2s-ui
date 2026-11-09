@@ -67,6 +67,8 @@ func FillOutJson(i *model.Inbound, hostname string) error {
 		trojanOut(&outJson, *inbound)
 	case "vmess":
 		vmessOut(&outJson, *inbound)
+	case "mieru":
+		mieruOut(&outJson, *inbound)
 	default:
 		for key := range outJson {
 			delete(outJson, key)
@@ -507,6 +509,23 @@ func trojanOut(out *map[string]interface{}, inbound map[string]interface{}) {
 	delete(*out, "transport")
 	if transport, ok := inbound["transport"]; ok {
 		(*out)["transport"] = transport
+	}
+}
+
+// mieruOut follows the outbound of enfein/mbox, the only sing-box that speaks
+// mieru: the transport has to match the listener's, and so does the traffic
+// pattern, which changes the bytes on the wire. mieru has no TLS of its own.
+// username and password are the client's, filled in per subscriber.
+func mieruOut(out *map[string]interface{}, inbound map[string]interface{}) {
+	delete(*out, "tls")
+	delete(*out, "traffic_pattern")
+	transport, _ := inbound["transport"].(string)
+	if transport != "UDP" {
+		transport = "TCP"
+	}
+	(*out)["transport"] = transport
+	if pattern, ok := inbound["traffic_pattern"].(string); ok && pattern != "" {
+		(*out)["traffic_pattern"] = pattern
 	}
 }
 

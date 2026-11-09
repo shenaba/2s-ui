@@ -324,6 +324,7 @@ func (s *InboundService) GetAllConfig(db *gorm.DB) ([]json.RawMessage, error) {
 var inboundTypesWithUsers = []string{
 	"mixed", "socks", "http", "shadowsocks", "snell", "vmess", "trojan",
 	"naive", "hysteria", "shadowtls", "tuic", "hysteria2", "vless", "anytls",
+	"mieru",
 }
 
 func (s *InboundService) hasUser(inboundType string) bool {

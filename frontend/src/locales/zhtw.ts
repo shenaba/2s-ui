@@ -683,6 +683,15 @@ export default {
       idleTimeout: "閒置會話逾時",
       minIdle: "最小閒置會話數"
     },
+    mieru: {
+      transport: "傳輸協定",
+      transportHint: "一個監聽只跑一種傳輸。要同時提供 TCP 和 UDP，就在同一連接埠再加一個使用另一種傳輸的 mieru 入站。",
+      trafficPattern: "流量模式",
+      trafficPatternHint: "選填。填 mieru 工具匯出的 base64 字串。它會改變流量在線路上的特徵，用戶端必須使用同一個；面板會把它寫進所有產生的用戶端設定。",
+      userHint: "要求用戶端傳送使用者提示",
+      multiplexing: "多工",
+      multiplexingDefault: "用戶端預設",
+    },
   },
   in: {
     addr: "地址",

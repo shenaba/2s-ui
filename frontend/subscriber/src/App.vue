@@ -63,6 +63,7 @@ function protocolName(uri: string): string {
     wiresguard: 'WireGuard',
     hysteria2: 'Hysteria2',
     tuic: 'TUIC',
+    mierus: 'Mieru',
   }
   return map[p] || p
 }
