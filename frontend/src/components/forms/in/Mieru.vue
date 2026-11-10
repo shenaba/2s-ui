@@ -42,8 +42,10 @@ const props = defineProps<{ data: any; direction?: string }>()
 // mieru's own level names, as its client and mihomo spell them.
 const multiplexingLevels = ['MULTIPLEXING_OFF', 'MULTIPLEXING_LOW', 'MULTIPLEXING_MIDDLE', 'MULTIPLEXING_HIGH']
 
+// The core takes the name in either case, so an inbound written through the
+// API as "udp" is a UDP one and has to show as that.
 const transport = computed({
-  get: (): string => (props.data.transport == 'UDP' ? 'UDP' : 'TCP'),
+  get: (): string => (String(props.data.transport ?? '').toUpperCase() == 'UDP' ? 'UDP' : 'TCP'),
   set: (v: string) => { props.data.transport = v },
 })
 

@@ -3,6 +3,7 @@ package util
 import (
 	"encoding/json"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/shenaba/2s-ui/database/model"
@@ -108,5 +109,40 @@ func TestFillOutJsonMieru(t *testing.T) {
 	_ = json.Unmarshal(inbound.OutJson, &out)
 	if out["transport"] != "TCP" {
 		t.Errorf("transport %v, want TCP", out["transport"])
+	}
+}
+
+// The listener takes the transport name in either case. Whatever tells a
+// client which one to use has to read it the same way, or an inbound stored as
+// "udp" listens on UDP while every link and config says TCP.
+func TestMieruTransportIgnoresCase(t *testing.T) {
+	for in, want := range map[string]string{"UDP": "UDP", "udp": "UDP", "Udp": "UDP", "TCP": "TCP", "tcp": "TCP", "": "TCP"} {
+		if got := MieruTransport(in); got != want {
+			t.Errorf("MieruTransport(%q) = %s, want %s", in, got, want)
+		}
+	}
+	if got := MieruTransport(nil); got != "TCP" {
+		t.Errorf("MieruTransport(nil) = %s, want TCP", got)
+	}
+
+	inbound := &model.Inbound{
+		Type: "mieru", Tag: "mieru-in",
+		Addrs:   json.RawMessage("null"),
+		Options: json.RawMessage(`{"listen_port":2999,"transport":"udp"}`),
+		OutJson: json.RawMessage(`{}`),
+	}
+	links := LinkGenerator(json.RawMessage(`{"mieru":{"name":"alice","password":"pw"}}`), inbound, "example.com", "")
+	if len(links) != 1 || !strings.Contains(links[0], "protocol=UDP") {
+		t.Errorf("link %v does not carry protocol=UDP", links)
+	}
+	if err := FillOutJson(inbound, "example.com"); err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(inbound.OutJson, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["transport"] != "UDP" {
+		t.Errorf("out_json transport %v, want UDP", out["transport"])
 	}
 }

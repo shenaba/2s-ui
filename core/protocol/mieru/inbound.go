@@ -20,7 +20,9 @@ import (
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/buf"
+	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
+	F "github.com/sagernet/sing/common/format"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 
@@ -90,9 +92,6 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if options.ListenPort == 0 {
 		return nil, E.New("mieru: listen_port must be set")
 	}
-	if err = validateUsers(options.Users); err != nil {
-		return nil, err
-	}
 	var pattern *mierupb.TrafficPattern
 	if options.TrafficPattern != "" {
 		pattern, err = mierutp.Decode(options.TrafficPattern)
@@ -127,7 +126,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		Network: []string{network},
 		Listen:  options.ListenOptions,
 	})
-	in.storeUsers(options.Users)
+	in.storeUsers(in.usable(options.Users))
 	return in, nil
 }
 
@@ -141,21 +140,61 @@ func normalizeTransport(transport string) (string, error) {
 	return "", E.New("mieru: transport must be TCP or UDP, not ", transport)
 }
 
-func validateUsers(users []User) error {
+// usableUsers drops the users mieru cannot serve and says why for each.
+//
+// They are dropped rather than refused. The list is every client attached to
+// the inbound, read straight from the database, and one bad row must not cost
+// the others their listener -- or, at start, the whole core, which gives up on
+// the first inbound that fails. The other inbounds take the same rows as they
+// come; mieru alone is strict about them, in two ways:
+//
+//   - the name is half of the key, so it has to be there, to be unique, and
+//     to fit the 64 bytes the protocol hashes (22 CJK characters is over);
+//   - mieru itself skips such a user without a word -- its log is silenced
+//     here -- and refuses to start once none is left.
+//
+// Old installs do hold clients sharing a name (see ensureNameAvailable in
+// service/client.go). The first one keeps it.
+func usableUsers(users []User) ([]User, []string) {
+	kept := make([]User, 0, len(users))
+	var skipped []string
 	seen := make(map[string]struct{}, len(users))
 	for _, user := range users {
-		if user.Name == "" {
-			return E.New("mieru: user name is empty")
-		}
-		if user.Password == "" {
-			return E.New("mieru: password of user ", user.Name, " is empty")
+		switch {
+		case user.Name == "":
+			skipped = append(skipped, "a user with no name")
+			continue
+		case len(user.Name) > mieruconstant.MaxUserNameLen:
+			skipped = append(skipped, F.ToString("user ", user.Name, ": name is longer than ", mieruconstant.MaxUserNameLen, " bytes"))
+			continue
+		case user.Password == "":
+			skipped = append(skipped, "user "+user.Name+": no password")
+			continue
+		case len(user.Password) > maxPasswordLen:
+			skipped = append(skipped, F.ToString("user ", user.Name, ": password is longer than ", maxPasswordLen, " bytes"))
+			continue
 		}
 		if _, dup := seen[user.Name]; dup {
-			return E.New("mieru: duplicate user ", user.Name)
+			skipped = append(skipped, "user "+user.Name+": another user of this inbound has the same name")
+			continue
 		}
 		seen[user.Name] = struct{}{}
+		kept = append(kept, user)
 	}
-	return nil
+	return kept, skipped
+}
+
+// maxPasswordLen is what mieru's client accepts; it has no constant for it.
+const maxPasswordLen = 64
+
+// usable is usableUsers with every dropped user reported, since nothing else
+// tells the operator why that client cannot connect.
+func (h *Inbound) usable(users []User) []User {
+	kept, skipped := usableUsers(users)
+	for _, reason := range skipped {
+		h.logger.Warn("mieru: skipping ", reason)
+	}
+	return kept
 }
 
 func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
@@ -210,11 +249,16 @@ func (h *Inbound) Close() error {
 		return nil
 	}
 	h.closed = true
-	var err error
+	// The sockets first, and here rather than left to the Mux. It closes a TCP
+	// listener from a goroutine of its own, some time after its Close has
+	// returned, and whatever replaces this inbound binds the same port at once.
+	// Closing them after the Mux instead closed each a second time and
+	// reported that as this inbound failing to close.
+	err := h.listener.Close()
 	if h.mux != nil {
-		err = h.mux.Close()
+		_ = h.mux.Close()
 	}
-	return E.Errors(err, h.listener.Close())
+	return err
 }
 
 func (h *Inbound) acceptLoop(mux *protocol.Mux) {
@@ -286,9 +330,22 @@ func (h *Inbound) handleConnection(conn net.Conn) {
 		h.logger.InfoContext(ctx, "inbound connection from ", metadata.Source, " to ", metadata.Destination)
 		h.router.RouteConnectionEx(ctx, conn, metadata, nil)
 	case mieruconstant.Socks5UDPAssociateCmd:
+		// The request names no destination worth routing on: mieru's own
+		// client sends 0.0.0.0:0, as SOCKS5 has it, and every datagram carries
+		// its own. Route on the first one's, the way sing's socks inbound
+		// does, or every rule written on a destination misses all UDP.
+		packets := &packetConn{PacketConn: mierucommon.NewPacketOverStreamTunnel(conn)}
+		first := buf.NewPacket()
+		destination, err := packets.ReadPacket(first)
+		if err != nil {
+			first.Release()
+			packets.Close()
+			h.logger.DebugContext(ctx, "mieru: read first packet: ", err)
+			return
+		}
+		metadata.Destination = destination
 		h.logger.InfoContext(ctx, "inbound packet connection from ", metadata.Source, " to ", metadata.Destination)
-		packetConn := &packetConn{PacketConn: mierucommon.NewPacketOverStreamTunnel(conn)}
-		h.router.RoutePacketConnectionEx(ctx, packetConn, metadata, nil)
+		h.router.RoutePacketConnectionEx(ctx, bufio.NewCachedPacketConn(packets, first, destination), metadata, nil)
 	default:
 		conn.Close()
 		h.logger.WarnContext(ctx, "mieru: unsupported command ", request.Command)
@@ -367,7 +424,7 @@ func (f listenerFactory) Listen(context.Context, string, string) (net.Listener, 
 	if err != nil {
 		return nil, err
 	}
-	return &trackingListener{Listener: tcpListener, sessions: f.inbound.sessions}, nil
+	return &trackingListener{Listener: tcpListener, sessions: f.inbound.sessions, logger: f.inbound.logger}, nil
 }
 
 func (f listenerFactory) ListenPacket(context.Context, string, string) (net.PacketConn, error) {
@@ -378,12 +435,45 @@ func (f listenerFactory) ListenPacket(context.Context, string, string) (net.Pack
 // before mieru wraps it into an underlay. A session's RemoteAddr is its
 // underlay's, so the Bind in handleConnection finds the connection here and a
 // removal or a kick can close the whole underlay, not just the session.
+//
+// It also keeps the listener alive. mieru leaves its accept loop on the first
+// error of any kind and says so only to its own log, which is silenced here:
+// one accept failing for want of a file descriptor would stop the inbound
+// taking connections for good, with the port still bound and nothing logged.
+// So a temporary error is retried here, as sing-box's own listener does, and
+// one that does end the listener is reported.
 type trackingListener struct {
 	net.Listener
 	sessions *usersession.Registry
+	logger   log.ContextLogger
 }
 
 func (l *trackingListener) Accept() (net.Conn, error) {
+	var delay time.Duration
+	for {
+		conn, err := l.accept()
+		if err == nil {
+			return conn, nil
+		}
+		if E.IsClosed(err) {
+			return nil, err
+		}
+		//nolint:staticcheck
+		if netError, isNetError := err.(net.Error); !isNetError || !netError.Temporary() {
+			l.logger.Error("mieru: listener stopped accepting connections: ", err)
+			return nil, err
+		}
+		if delay == 0 {
+			delay = 5 * time.Millisecond
+		} else {
+			delay = min(2*delay, time.Second)
+		}
+		l.logger.Error("mieru: accept: ", err, ", retrying in ", delay)
+		time.Sleep(delay)
+	}
+}
+
+func (l *trackingListener) accept() (net.Conn, error) {
 	conn, err := l.Listener.Accept()
 	if err != nil {
 		return nil, err

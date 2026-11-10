@@ -118,3 +118,43 @@ func TestGetClash_CarriesMieru(t *testing.T) {
 		t.Errorf("traffic-pattern written for an inbound without one:\n%s", *raw)
 	}
 }
+
+// A mieru outbound dialling through a ShadowTLS one takes it along when it is
+// the only thing riding it: the link that kept that carrier out of the groups
+// goes with the rider, and a bare ShadowTLS outbound is no proxy. A carrier
+// something else still rides stays, and so does one nothing ever rode.
+func TestDropSingBoxUnsupported_TakesOrphanedCarriers(t *testing.T) {
+	mk := func(typ, tag string) map[string]interface{} {
+		return map[string]interface{}{"type": typ, "tag": tag}
+	}
+	mieruA, carrierA := mk("mieru", "mieru-a"), mk("shadowtls", "stls-a")
+	mieruB, vlessB, carrierB := mk("mieru", "mieru-b"), mk("vless", "vless-b"), mk("shadowtls", "stls-b")
+	lone := mk("shadowtls", "stls-lone")
+	plain := mk("trojan", "trojan")
+
+	outbounds := []map[string]interface{}{mieruA, carrierA, mieruB, vlessB, carrierB, lone, plain}
+	tags := []string{"mieru-a", "stls-a", "mieru-b", "vless-b", "stls-b", "stls-lone", "trojan"}
+	links := []detourLink{
+		{from: mieruA, to: carrierA},
+		{from: mieruB, to: carrierB},
+		{from: vlessB, to: carrierB},
+	}
+
+	outbounds, tags, links = dropSingBoxUnsupported(outbounds, tags, links)
+
+	if got, want := strings.Join(tags, ","), "vless-b,stls-b,stls-lone,trojan"; got != want {
+		t.Fatalf("kept %s, want %s", got, want)
+	}
+	for i, out := range outbounds {
+		if out["tag"] != tags[i] {
+			t.Errorf("outbound %d is %v, its tag says %s", i, out["tag"], tags[i])
+		}
+	}
+	if len(links) != 1 || links[0].from["tag"] != "vless-b" || links[0].to["tag"] != "stls-b" {
+		t.Fatalf("kept links %v, want only vless-b -> stls-b", links)
+	}
+	// The surviving carrier is still hidden from the groups, as before.
+	if got, want := strings.Join(groupMembers(tags, links), ","), "vless-b,stls-lone,trojan"; got != want {
+		t.Errorf("group members %s, want %s", got, want)
+	}
+}

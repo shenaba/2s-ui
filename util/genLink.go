@@ -534,10 +534,7 @@ func mieruLink(
 	if name == "" || password == "" {
 		return nil
 	}
-	transport, _ := inbound["transport"].(string)
-	if transport != "UDP" {
-		transport = "TCP"
-	}
+	transport := MieruTransport(inbound["transport"])
 	pattern, _ := inbound["traffic_pattern"].(string)
 	multiplexing, _ := outJson["multiplexing"].(string)
 

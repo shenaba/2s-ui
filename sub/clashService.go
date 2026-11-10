@@ -266,11 +266,7 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 			// wire, so a client without the server's would not connect.
 			proxy["username"] = obMap["username"]
 			proxy["password"] = obMap["password"]
-			if transport, _ := obMap["transport"].(string); transport == "UDP" {
-				proxy["transport"] = "UDP"
-			} else {
-				proxy["transport"] = "TCP"
-			}
+			proxy["transport"] = util.MieruTransport(obMap["transport"])
 			if pattern, _ := obMap["traffic_pattern"].(string); pattern != "" {
 				proxy["traffic-pattern"] = pattern
 			}

@@ -407,8 +407,6 @@ func addrCopies(e *subEntry, clientRemark string) []subCopy {
 	return copies
 }
 
-// cloneOutbound copies an outbound one level deep, plus its TLS map, so one
-// copy's override can't leak into the next -- a shallow copy would share it.
 // singBoxUnsupported are inbound types the panel serves that upstream sing-box
 // has no outbound for. mieru exists only in enfein/mbox, and a sing-box client
 // refuses a whole config over one outbound type it does not know -- so a
@@ -419,6 +417,12 @@ var singBoxUnsupported = map[string]bool{"mieru": true}
 // dropSingBoxUnsupported removes those outbounds, together with every detour
 // link touching one and every copy riding one: a rider stripped of its detour
 // would dial its own address, which is not where its operator sent it.
+//
+// A carrier goes too once the last outbound riding it has. It was in the list
+// to be dialled through and kept out of the groups by the link that is now
+// gone (groupMembers), so leaving it would offer the subscriber a bare
+// ShadowTLS node, which is no proxy at all. One that nothing ever rode is not
+// touched: that is the operator's own choice, and it has no link to lose.
 func dropSingBoxUnsupported(outbounds []map[string]interface{}, tags []string, links []detourLink) ([]map[string]interface{}, []string, []detourLink) {
 	gone := map[uintptr]bool{}
 	for _, out := range outbounds {
@@ -432,6 +436,17 @@ func dropSingBoxUnsupported(outbounds []map[string]interface{}, tags []string, l
 	for _, l := range links {
 		if gone[reflect.ValueOf(l.to).Pointer()] {
 			gone[reflect.ValueOf(l.from).Pointer()] = true
+		}
+	}
+	riders := map[uintptr]int{}
+	for _, l := range links {
+		if !gone[reflect.ValueOf(l.from).Pointer()] {
+			riders[reflect.ValueOf(l.to).Pointer()]++
+		}
+	}
+	for _, l := range links {
+		if to := reflect.ValueOf(l.to).Pointer(); riders[to] == 0 {
+			gone[to] = true
 		}
 	}
 	keptOut := outbounds[:0]
@@ -453,6 +468,8 @@ func dropSingBoxUnsupported(outbounds []map[string]interface{}, tags []string, l
 	return keptOut, keptTags, keptLinks
 }
 
+// cloneOutbound copies an outbound one level deep, plus its TLS map, so one
+// copy's override can't leak into the next -- a shallow copy would share it.
 func cloneOutbound(outbound map[string]interface{}) map[string]interface{} {
 	newOut := make(map[string]interface{}, len(outbound))
 	for key, value := range outbound {

@@ -14,14 +14,17 @@ import (
 // sessions. On UDP every session authenticates by itself against the current
 // table, so the swap alone locks a removed user out.
 //
-// It never asks for a restart. Every TCP underlay is registered before mieru
-// sees it (trackingListener), so a removed user always has a closer; anything
-// CloseUsers still counts as unclosable is a stray Bind on a source that was
-// already gone.
+// It never fails. A user mieru cannot serve is dropped and reported
+// (usableUsers) rather than refused: refusing the list sends the caller to
+// rebuild the inbound, which the same list fails again, and that takes the
+// listener from every other client.
+//
+// Nor does it ask for a restart. Every TCP underlay is registered before
+// mieru sees it (trackingListener), so a removed user always has a closer;
+// anything CloseUsers still counts as unclosable is a stray Bind on a source
+// that was already gone.
 func (h *Inbound) UpdateUsers(users []User) error {
-	if err := validateUsers(users); err != nil {
-		return err
-	}
+	users = h.usable(users)
 	h.storeUsers(users)
 	h.access.Lock()
 	mux := h.mux
