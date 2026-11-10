@@ -1,6 +1,7 @@
 package database
 
 import (
+	"bytes"
 	"encoding/json"
 	"log"
 
@@ -27,6 +28,11 @@ import (
 // client row without a mieru block (a restored backup, an import, the API)
 // would otherwise stay broken. The WHERE clause keeps a start with nothing to
 // do to one query.
+//
+// A config that is not JSON reads as having no mieru block too (jsonsql), so
+// it is selected, found unreadable below and left alone. Before jsonsql read
+// such a row as NULL the statement failed on it -- and this runs inside
+// InitDB, so that one row kept the panel from starting at all.
 func backfillMieruClientConfig() error {
 	return backfillMieruClients(db)
 }
@@ -42,7 +48,7 @@ func backfillMieruClients(tx *gorm.DB) error {
 	filled := 0
 	for _, client := range clients {
 		configs := map[string]json.RawMessage{}
-		if len(client.Config) > 0 {
+		if len(bytes.TrimSpace(client.Config)) > 0 {
 			if err := json.Unmarshal(client.Config, &configs); err != nil {
 				// Not this migration's to repair: the row is unreadable for
 				// every protocol, and stopping the panel over it would be worse.

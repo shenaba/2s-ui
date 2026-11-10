@@ -34,6 +34,11 @@ func TestBackfillMieruClients(t *testing.T) {
 	seed("old-anytls", `{"anytls":{"name":"old-anytls","password":"shared-2"}}`)
 	seed("old-bare", `{"vmess":{"name":"old-bare","uuid":"u"}}`)
 	seed("current", `{"mieru":{"name":"current","password":"keep-me"},"trojan":{"name":"current","password":"other"}}`)
+	// Not JSON at all. A bare json_extract fails the whole statement on such
+	// a row rather than returning NULL, which is what used to stop InitDB.
+	seed("broken", `{"trojan":`)
+	seed("not-an-object", `[1,2]`)
+	seed("empty", ``)
 
 	// Twice: the second run must find nothing left to do and change nothing.
 	for run := 0; run < 2; run++ {
@@ -76,13 +81,27 @@ func TestBackfillMieruClients(t *testing.T) {
 		t.Errorf("current: existing mieru block was rewritten to %v", block)
 	}
 
-	// The listener's user query must now find every client -- the point of
-	// the exercise, and the same lookup the backfill itself filters on.
+	// The listener's user query must now find every readable client -- the
+	// point of the exercise, and the same lookup the backfill filters on.
 	var withMieru int64
 	if err := db.Model(model.Client{}).Where(jsonsql.Extract("config", "$.mieru") + " IS NOT NULL").Count(&withMieru).Error; err != nil {
 		t.Fatal(err)
 	}
-	if withMieru != 4 {
-		t.Errorf("%d clients have a mieru block, want 4", withMieru)
+	if withMieru != 5 {
+		t.Errorf("%d clients have a mieru block, want 5", withMieru)
+	}
+
+	// The unreadable rows are left exactly as they were.
+	for name, want := range map[string]string{"broken": `{"trojan":`, "not-an-object": `[1,2]`} {
+		var c model.Client
+		if err := db.Where("name = ?", name).First(&c).Error; err != nil {
+			t.Fatalf("load %s: %v", name, err)
+		}
+		if string(c.Config) != want {
+			t.Errorf("%s: config rewritten to %q", name, c.Config)
+		}
+	}
+	if _, block := mieruOf("empty"); block["name"] != "empty" || len(block["password"]) != 10 {
+		t.Errorf("empty: mieru block %v, want its name and a fresh password", block)
 	}
 }

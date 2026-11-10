@@ -207,6 +207,9 @@ func InitDB(dbPath string) error {
 	// The two deprecations that cannot be migrated without changing how names
 	// resolve are reported for the operator instead; see migrateSingBox114.
 	reportSingBox114Manual()
+	// Clients no query can read are left out of every answer rather than
+	// failing it; this says which ones.
+	reportUnreadableClients()
 
 	return nil
 }

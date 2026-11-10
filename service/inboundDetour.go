@@ -42,10 +42,9 @@ func readClientConfig(outJson json.RawMessage) clientConfigHead {
 // detourColumn is the detour a stored client config names, as SQL. One row
 // whose out_json is not JSON -- restored from an old backup, written by hand --
 // would make a bare json_extract fail the whole query, and with it every
-// delete and rename; json_valid reads such a row as naming nothing instead.
-// jsonsql reads the column as text, whatever the driver stored.
-var detourColumn = "CASE WHEN " + jsonsql.Valid("out_json") +
-	" THEN " + jsonsql.Extract("out_json", "$.detour") + " END"
+// delete and rename; jsonsql reads such a row as naming nothing instead, and
+// reads the column as text, whatever the driver stored.
+var detourColumn = jsonsql.Extract("out_json", "$.detour")
 
 // clientDetourRiders lists the local inbounds other than id whose client
 // config rides tag. Left alone, a rider of a renamed or deleted inbound would
