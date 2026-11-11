@@ -258,6 +258,56 @@ func TestMieruTCPRoutesAndRemovesUsers(t *testing.T) {
 	conn.Close()
 }
 
+// A changed password cuts the underlay the old one opened. Without the cut
+// the old password went on opening sessions over it, since a TCP underlay
+// authenticates once.
+func TestMieruTCPPasswordChangeCutsTheOldUnderlay(t *testing.T) {
+	users := []User{{Name: "alice", Password: "alice-old"}, {Name: "bob", Password: "bob-pass"}}
+	in, router, port := startInbound(t, TransportTCP, users)
+
+	old := newClient(t, TransportTCP, port, "alice", "alice-old")
+	oldConn, err := dial(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer oldConn.Close()
+	expectRouted(t, router, "alice")
+	bobConn, err := dial(newClient(t, TransportTCP, port, "bob", "bob-pass"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bobConn.Close()
+	expectRouted(t, router, "bob")
+
+	if err = in.UpdateUsers([]User{{Name: "alice", Password: "alice-new"}, users[1]}); err != nil {
+		t.Fatal(err)
+	}
+	expectCut(t, oldConn)
+	if err = roundTrip(bobConn); err != nil {
+		t.Fatalf("bob was disconnected by alice's password change: %v", err)
+	}
+	// The same client, which would have reused its underlay, now has to open
+	// a new one, and the old password does not.
+	if conn, err := dial(old); err == nil {
+		conn.Close()
+		t.Fatal("the old password opened a session after the change")
+	}
+	conn, err := dial(newClient(t, TransportTCP, port, "alice", "alice-new"))
+	if err != nil {
+		t.Fatalf("the new password was refused: %v", err)
+	}
+	defer conn.Close()
+	expectRouted(t, router, "alice")
+
+	// Saving the same list again cuts no one.
+	if err = in.UpdateUsers([]User{{Name: "alice", Password: "alice-new"}, users[1]}); err != nil {
+		t.Fatal(err)
+	}
+	if err = roundTrip(conn); err != nil {
+		t.Fatalf("an unchanged password was cut: %v", err)
+	}
+}
+
 func TestMieruWrongPasswordIsRefused(t *testing.T) {
 	_, _, port := startInbound(t, TransportTCP, []User{{Name: "alice", Password: "alice-pass"}})
 	client := newClient(t, TransportTCP, port, "alice", "not-her-pass")
