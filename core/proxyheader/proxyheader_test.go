@@ -1362,17 +1362,26 @@ func TestTrustedFromAnotherOfThisHostsAddresses(t *testing.T) {
 	}
 }
 
-// A direct dial to an address that cannot be this host or a named front is
-// decided without opening a TCP Fast Open dial: it keeps its round trip.
-func TestDirectDialOffHostKeepsFastOpen(t *testing.T) {
+// A TCP Fast Open dial is opened, empty, before it is judged, wherever the
+// client asked for: the address asked for does not say where the socket
+// lands. One this host takes by a local route alone (IPv4 AnyIP) is on no
+// interface, and comes back from the address it arrived on, trusted.
+func TestDirectFastOpenDialIsJudgedByItsSocket(t *testing.T) {
 	inUseForTest(t, 10443)
 	hostAddrsForTest(t, "198.51.100.1")
 	away := &slowConn{local: M.ParseSocksaddr("198.51.100.1:40110").TCPAddr(), remote: M.ParseSocksaddr("203.0.113.7:443").TCPAddr()}
 	if err := guardDirect(away, M.ParseSocksaddr("203.0.113.7:443")); err != nil {
 		t.Fatal(err)
 	}
-	if away.open {
-		t.Fatal("opened a fast-open dial to an address off this host")
+	if !away.open || len(away.written) != 0 {
+		t.Fatalf("open = %v, wrote %q; want it opened with nothing sent", away.open, away.written)
+	}
+	back := &slowConn{local: M.ParseSocksaddr("192.0.2.5:40112").TCPAddr(), remote: M.ParseSocksaddr("192.0.2.5:10443").TCPAddr()}
+	if err := guardDirect(back, M.ParseSocksaddr("192.0.2.5:10443")); err == nil {
+		t.Fatal("a fast-open dial that came back to this host on its PROXY port, at an address on no interface, was let through")
+	}
+	if !back.open || len(back.written) != 0 {
+		t.Fatalf("open = %v, wrote %q; want it opened with nothing sent", back.open, back.written)
 	}
 	// By name, where it goes is only known once it is open.
 	named := &slowConn{local: M.ParseSocksaddr("198.51.100.1:40111").TCPAddr(), remote: M.ParseSocksaddr("203.0.113.7:443").TCPAddr()}
@@ -1426,5 +1435,28 @@ func TestSocketOnThePROXYPortWhateverTheRoute(t *testing.T) {
 	inUseForTest(t, 10443)
 	if err := guardDial(dialedConn("127.0.0.1:40130", "127.0.0.1:10443"), M.ParseSocksaddr("203.0.113.7:443"), through); err == nil {
 		t.Fatal("a socket on this host's PROXY port, for a client asking elsewhere, was let through")
+	}
+}
+
+// An address this host takes by a local route alone (IPv4 AnyIP) is on no
+// interface, so the address asked for does not say it is this host's. The
+// kernel dials it from itself, and the inbound trusts a connection from the
+// address it arrived on: the open socket's two ends are what decide, and a
+// direct dial there on a PROXY-enabled inbound's port is refused.
+func TestDirectDialToALocalRouteAddress(t *testing.T) {
+	inUseForTest(t, 10443)
+	hostAddrsForTest(t, "198.51.100.1")
+	if !Trusted(M.ParseSocksaddr("192.0.2.5:40140"), M.ParseSocksaddr("192.0.2.5:10443")) {
+		t.Fatal("a connection from the address it arrived on is no longer trusted: this test guards nothing")
+	}
+	if err := guardDirect(dialedConn("192.0.2.5:40140", "192.0.2.5:10443"), M.ParseSocksaddr("192.0.2.5:10443")); err == nil {
+		t.Fatal("a direct dial that came back to this host on its PROXY port, at an address on no interface, was let through")
+	}
+	if err := guardDirect(dialedConn("192.0.2.5:40141", "192.0.2.5:8080"), M.ParseSocksaddr("192.0.2.5:8080")); err != nil {
+		t.Fatalf("a direct dial there on another port was refused: %v", err)
+	}
+	// Off this host, an open socket is still left alone.
+	if err := guardDirect(dialedConn("198.51.100.1:40142", "203.0.113.7:10443"), M.ParseSocksaddr("203.0.113.7:10443")); err != nil {
+		t.Fatalf("a direct dial off this host was refused: %v", err)
 	}
 }

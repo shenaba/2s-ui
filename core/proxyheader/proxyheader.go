@@ -71,6 +71,13 @@
 // core makes for an inbound rather than for a client -- a REALITY or
 // ShadowTLS handshake server -- are the operator's to point, and never at a
 // PROXY-enabled inbound.
+// A relay on this host that the client reaches for itself is outside it too:
+// a direct dial to an open socks or HTTP proxy on loopback (a WARP client's
+// port, a local gost) is a dial to a port no PROXY-enabled inbound listens
+// on, and what the client then asks that relay for, in the relay's own
+// protocol, the core never sees. Such a relay must ask for credentials, or
+// the route must keep clients off this host's addresses (a rule rejecting
+// ip_is_private), which is worth having with or without PROXY protocol.
 //
 // On a transport that speaks HTTP (ws, http, httpupgrade, grpc lite) the
 // header names the client to the transport, as its RemoteAddr; sing-box's
@@ -391,15 +398,6 @@ type earlyConn interface {
 
 func guardPorts(conn net.Conn, destination M.Socksaddr, route Route, ports portSet) error {
 	destination = destination.Unwrap()
-	if route.Direct && destination.IsIP() && !route.Fallback {
-		// The socket goes to the address asked for: one off this host and
-		// outside the named fronts is decided without opening it, and a TCP
-		// Fast Open dial there keeps the round trip it saves.
-		asked := plain(destination.Addr)
-		if !onThisHostAsked(asked) && !namedFront(asked) {
-			return nil
-		}
-	}
 	// The socket underneath, not the outermost conn: a proxy protocol's conn
 	// can report the address it was asked for as its remote one.
 	socket := innermost(conn)
@@ -413,6 +411,12 @@ func guardPorts(conn net.Conn, destination M.Socksaddr, route Route, ports portS
 		// cost of the round trip TFO saves. Only that dial is written to: any
 		// other conn an empty write reaches is a protocol's, which could send
 		// a request header or an empty frame ahead of the payload.
+		//
+		// Every such dial, wherever the client asked for: the socket's own
+		// two ends are what the inbound will see, and the address asked for
+		// cannot stand in for them. One this host takes by a local route
+		// alone (IPv4 AnyIP) is on no interface, yet the kernel dials it from
+		// itself, so it arrives from the address it arrived on -- trusted.
 		if early, isEarly := socket.(earlyConn); isEarly && early.NeedHandshake() {
 			_, err := socket.Write(nil)
 			if err != nil {

@@ -126,6 +126,7 @@ T1、T3、T5、T6 都符合预期，就说明核心功能和安全修复都验�
 - 改端口的 Docker 映射（如 `8443:10443`），经本机中转用域名访问时；
 - 端口映射到所有网卡时的 Docker 回环 NAT；
 - 本机上指向 PROXY inbound 的 iptables REDIRECT/DNAT；
+- 客户端自己直连本机上无鉴权的中转（WARP 的 socks 端口、本地 gost 等），再用中转自己的协议让它连回 PROXY inbound：core 只看到一次到本机其他端口的拨号。给这类中转加鉴权，或用路由规则拒绝客户端访问本机和私网地址（`ip_is_private`）；
 - ws、http、httpupgrade、grpc lite 传输优先使用客户端可伪造的 `X-Forwarded-For`（#279，main 上已存在）。
 - 自建 NAT64/SIIT 翻译器用的 IPv6 前缀（非 `64:ff9b::/96`、`64:ff9b:1::/48`）无法识别，不要把它填成可信前置，否则它背后的所有 IPv4 客户端都会被信任。
 
