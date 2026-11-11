@@ -86,6 +86,7 @@ var defaultValueMap = map[string]string{
 	"webCertMode":        "",
 	"webNginx":           "",
 	"webTrustedProxies":  "",
+	"proxyProtoTrusted":  "",
 	"webAcmeMethod":      "auto",
 	"webAcmeEmail":       "",
 	"webPath":            "/app/",
@@ -402,7 +403,43 @@ func (s *SettingService) GetWebTrustedProxies() ([]netip.Prefix, error) {
 	return parseTrustedProxies(raw)
 }
 
+// parseProxyProtoFronts is a proxyProtoTrusted value as the core may use it --
+// the fronts beyond this host that a PROXY-enabled inbound reads headers from
+// (#260), a Docker bridge's gateway, an nginx on another machine. Kept apart
+// from webTrustedProxies: that one lets a peer speak for a panel login, this
+// one for every proxy client. It is parsed, and held to checkProxyProtoFronts'
+// breadth: Save checks the same, but
+// a value can arrive without a save -- an imported database, a row written by
+// hand -- and one that slipped past would trust the whole internet.
+func parseProxyProtoFronts(raw string) ([]netip.Prefix, error) {
+	prefixes, err := parseProxyProtoTrusted(raw)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkProxyProtoFronts(prefixes); err != nil {
+		return nil, err
+	}
+	return prefixes, nil
+}
+
+// parseTrustedProxies reads webTrustedProxies as it always has. A v4-mapped
+// prefix stays one, and so matches nothing (client addresses are unmapped
+// before they are matched): turning a stored one into the IPv4 range it
+// names would make an entry that never trusted anyone -- ::ffff:0:0/96 is
+// 0.0.0.0/0 -- trust peers to speak for panel logins on upgrade.
 func parseTrustedProxies(raw string) ([]netip.Prefix, error) {
+	return parsePrefixes(raw, false)
+}
+
+// parseProxyProtoTrusted reads proxyProtoTrusted, which is new with it and
+// has nothing stored to keep inert: a v4-mapped prefix, as a dual-stack
+// socket shows a front's address, is taken as the IPv4 range it names, and
+// checkProxyProtoFronts then holds it to the same breadth as any other.
+func parseProxyProtoTrusted(raw string) ([]netip.Prefix, error) {
+	return parsePrefixes(raw, true)
+}
+
+func parsePrefixes(raw string, unmap4in6 bool) ([]netip.Prefix, error) {
 	parts := strings.FieldsFunc(raw, func(r rune) bool {
 		return r == ',' || unicode.IsSpace(r)
 	})
@@ -416,6 +453,12 @@ func parseTrustedProxies(raw string) ([]netip.Prefix, error) {
 			}
 			addr = addr.Unmap()
 			prefix = netip.PrefixFrom(addr, addr.BitLen())
+		}
+		if unmap4in6 && prefix.Addr().Is4In6() {
+			if prefix.Bits() < 96 {
+				return nil, common.NewErrorf("invalid trusted proxy %q: a v4-mapped prefix needs at least 96 bits", part)
+			}
+			prefix = netip.PrefixFrom(prefix.Addr().Unmap(), prefix.Bits()-96)
 		}
 		prefixes = append(prefixes, prefix.Masked())
 	}
@@ -844,6 +887,11 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 		}
 		if key == "webTrustedProxies" {
 			if _, err = parseTrustedProxies(obj); err != nil {
+				return err
+			}
+		}
+		if key == "proxyProtoTrusted" {
+			if _, err = parseProxyProtoFronts(obj); err != nil {
 				return err
 			}
 		}

@@ -128,6 +128,9 @@ func (c *Core) Start(sbConfig []byte) error {
 		Options: opt,
 	})
 	if err != nil {
+		// Its inbounds may have been built, switching the PROXY dial guard
+		// on, and are now gone without a box to say so.
+		refreshProxyHeaders()
 		return err
 	}
 

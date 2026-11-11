@@ -468,6 +468,8 @@ func NewBox(options Options) (*Box, error) {
 	}
 	statsTracker := NewStatsTracker()
 	connTracker := NewConnTracker()
+	connTracker.route = outboundManager.proxyRoute
+	connTracker.fallback = inboundManager.fallsBackTo
 	router.AppendTracker(statsTracker)
 	router.AppendTracker(connTracker)
 
@@ -508,6 +510,9 @@ func (s *Box) PreStart() error {
 }
 
 func (s *Box) Start() error {
+	// Before any inbound can accept: from here this box's inbounds count
+	// towards keeping the PROXY dial guard on.
+	startReadingProxyHeaders(s.inbound)
 	err := s.start()
 	if err != nil {
 		s.Close()
@@ -667,6 +672,7 @@ func (s *Box) start() error {
 // (see closeGuarded).
 func (s *Box) Close() error {
 	err := s.scope.Close()
+	stopReadingProxyHeaders(s.inbound)
 	if s.statsTracker != nil {
 		s.statsTracker.Reset()
 	}

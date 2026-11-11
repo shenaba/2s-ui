@@ -20,4 +20,33 @@ func TestParseTrustedProxies(t *testing.T) {
 	if _, err := parseTrustedProxies("127.0.0.1, not-an-address"); err == nil {
 		t.Error("invalid proxy entry was accepted")
 	}
+
+	// webTrustedProxies keeps a v4-mapped prefix as one: it never matched,
+	// and must not start trusting all of IPv4 on upgrade.
+	web, err := parseTrustedProxies("::ffff:0:0/96, ::ffff:0:0/80")
+	if err != nil {
+		t.Fatalf("parse stored v4-mapped web proxies: %v", err)
+	}
+	for i, want := range []string{"::ffff:0.0.0.0/96", "::/80"} {
+		if got := web[i].String(); got != want {
+			t.Errorf("web v4-mapped prefix %d = %q, want %q", i, got, want)
+		}
+	}
+}
+
+func TestParseProxyProtoTrusted(t *testing.T) {
+	// A v4-mapped entry, as a dual-stack socket shows it, is stored as the
+	// IPv4 it names: addresses are unmapped before they are matched.
+	mapped, err := parseProxyProtoTrusted("::ffff:172.18.0.1/128, ::ffff:10.0.0.0/104, ::ffff:172.18.0.9")
+	if err != nil {
+		t.Fatalf("parse v4-mapped: %v", err)
+	}
+	for i, want := range []string{"172.18.0.1/32", "10.0.0.0/8", "172.18.0.9/32"} {
+		if got := mapped[i].String(); got != want {
+			t.Errorf("v4-mapped prefix %d = %q, want %q", i, got, want)
+		}
+	}
+	if _, err := parseProxyProtoTrusted("::ffff:0.0.0.0/80"); err == nil {
+		t.Error("a v4-mapped prefix shorter than 96 bits was accepted")
+	}
 }

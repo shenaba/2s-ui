@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 
+	"github.com/shenaba/2s-ui/core/proxyheader"
 	"github.com/shenaba/2s-ui/core/usersession"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -70,4 +71,27 @@ func (h *Inbound) newSessionConnection(ctx context.Context, conn net.Conn, sourc
 // Core.DisconnectUser.
 func (h *Inbound) KickUser(user string) usersession.Result {
 	return h.sessions().KickUserSessions(user)
+}
+
+// takeProxyHdr and connectionHandler are the PROXY protocol hooks (#260):
+// NewInbound keeps whether the inbound asked for headers, and its listener
+// reads them when it did. anytls has no transport, so unlike the other copies
+// there is no second listener to hook. See core/proxyheader.
+func takeProxyHdr(options *option.ListenOptions) proxyHdrSettings {
+	return proxyheader.Take(options)
+}
+
+// proxyHdrSettings is the type of the proxyHdr field, named here so that the
+// copy's own file needs no import for it.
+type proxyHdrSettings = proxyheader.Settings
+
+func (h *Inbound) connectionHandler() adapter.ConnectionHandler {
+	return proxyheader.Handler(h, h.logger, h.proxyHdr)
+}
+
+// ProxyHeaderPort tells the core this inbound reads PROXY headers, and on
+// which port: proxyheader's dial guard stays on while it runs, and refuses to
+// hand a client to a relay on this host for that port.
+func (h *Inbound) ProxyHeaderPort() (uint16, bool) {
+	return h.proxyHdr.Port, h.proxyHdr.Enabled
 }
