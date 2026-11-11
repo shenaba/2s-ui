@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/netip"
@@ -184,7 +185,16 @@ func jsonMsgObj(c *gin.Context, msg string, obj interface{}, err error) {
 		}
 		logger.Warning("failed :", err)
 	}
-	c.JSON(http.StatusOK, m)
+	// Encoded here rather than by c.JSON: gin answers an encoding failure with
+	// the 200 it has already written and an empty body, which a caller cannot
+	// tell from an empty answer. Saying so is the least a reply can do.
+	body, encErr := json.Marshal(m)
+	if encErr != nil {
+		logger.Warning("reply could not be encoded: ", encErr)
+		c.JSON(http.StatusOK, Msg{Msg: "reply could not be encoded: " + encErr.Error()})
+		return
+	}
+	c.Data(http.StatusOK, "application/json; charset=utf-8", body)
 }
 
 func pureJsonMsg(c *gin.Context, success bool, msg string) {
