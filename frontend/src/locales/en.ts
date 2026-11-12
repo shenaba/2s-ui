@@ -309,6 +309,8 @@ export default {
     trustedProxiesHint: "IP addresses or CIDRs allowed to supply X-Forwarded-For; separate multiple entries with commas",
     proxyProtoTrusted: "Trusted PROXY Protocol Fronts",
     proxyProtoTrustedHint: "IP addresses or CIDRs beyond this host whose PROXY headers inbounds accept, such as the Docker bridge gateway or an nginx on another machine. While an inbound has PROXY protocol on, the core refuses to dial these addresses for clients. With Docker, publish the inbound's port on 127.0.0.1 only (127.0.0.1:10443:10443): Docker can pass outside connections into the container from the gateway too. Separate multiple entries with commas",
+    xffTrustedCDN: "Trusted CDN Ranges",
+    xffTrustedCDNHint: "IP addresses or CIDRs of CDN edges whose X-Forwarded-For ws, http, httpupgrade and gRPC inbounds believe, for the one entry the edge appends; \"cloudflare\" stands for Cloudflare's published ranges. Trusting a CDN's ranges trusts everything sent through that CDN, including another account's zone or Worker pointed at this server; to rule that out, use the CDN's origin authentication (Cloudflare Authenticated Origin Pulls) or leave this empty. A reverse proxy on this host is believed only by an inbound that listens on 127.0.0.1 or ::1 without PROXY protocol, and that inbound's port is then guarded: clients are refused a relay on this host to that port, so give it a port clients do not ask for. Separate entries with commas",
     proxyGenerated: "Reverse proxy configured",
     proxyGeneratedHint: "The panel is now served at {url} (generated {conf})",
     proxyRestarting: "Restarting the panel to apply it, then switching to the new address…",

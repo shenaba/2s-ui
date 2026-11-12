@@ -77,23 +77,25 @@ func refreshProxyHeaders() {
 		proxyReaders.Unlock()
 		var ports []uint16
 		for _, m := range managers {
-			ports = append(ports, proxyHeaderPorts(m.settled())...)
+			ports = append(ports, guardedPorts(m.settled())...)
 		}
 		return ports
 	})
 }
 
-// proxyHeaderPortReader is a copy under core/protocol/ that can read PROXY
-// headers, saying whether it does and on which port (its users.go).
-type proxyHeaderPortReader interface {
-	ProxyHeaderPort() (uint16, bool)
+// guardedPortReader is a copy under core/protocol/ that can believe a header
+// a client could send it through the core -- a PROXY header, or, over an HTTP
+// transport on loopback, X-Forwarded-For -- saying whether it does and on
+// which port (its users.go): the dial guard watches those ports.
+type guardedPortReader interface {
+	GuardedPort() (uint16, bool)
 }
 
-func proxyHeaderPorts(inbounds []adapter.Inbound) []uint16 {
+func guardedPorts(inbounds []adapter.Inbound) []uint16 {
 	var ports []uint16
 	for _, inbound := range inbounds {
-		if reader, isReader := inbound.(proxyHeaderPortReader); isReader {
-			if port, reads := reader.ProxyHeaderPort(); reads {
+		if reader, isReader := inbound.(guardedPortReader); isReader {
+			if port, reads := reader.GuardedPort(); reads {
 				ports = append(ports, port)
 			}
 		}

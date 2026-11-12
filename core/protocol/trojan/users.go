@@ -1,14 +1,18 @@
 package trojan
 
 import (
+	"context"
 	"net"
 
 	"github.com/shenaba/2s-ui/core/proxyheader"
+	"github.com/shenaba/2s-ui/core/transport"
 	"github.com/shenaba/2s-ui/core/usersession"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
+	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 )
 
@@ -77,16 +81,30 @@ func (h *Inbound) connectionHandler() adapter.ConnectionHandler {
 	return proxyheader.Handler(h, h.logger, h.proxySettings())
 }
 
-// ProxyHeaderPort tells the core this inbound reads PROXY headers, and on
-// which port: proxyheader's dial guard stays on while it runs, and refuses to
-// hand a client to a relay on this host for that port.
-func (h *Inbound) ProxyHeaderPort() (uint16, bool) {
+// GuardedPort tells the core this inbound believes a header a client
+// could send it through the core -- it reads PROXY headers, or X-Forwarded-For
+// from this host -- and on which port: proxyheader's dial guard stays on while
+// it runs, and refuses to hand a client to a relay on this host for that port.
+func (h *Inbound) GuardedPort() (uint16, bool) {
 	settings := h.proxySettings()
-	return settings.Port, settings.Enabled
+	return settings.Port, settings.Guarded()
 }
 
 func (h *Inbound) proxyListener(l net.Listener) net.Listener {
 	return proxyheader.Listen(l, h.logger, h.proxySettings())
+}
+
+// newServerTransport is v2ray.NewServerTransport with X-Forwarded-For believed
+// only from a CDN edge or, for an inbound listening on loopback, a reverse
+// proxy on this host (#279). proxyHdr is taken after the transport is built,
+// and before anything is served, so it is read when a request comes; only a
+// transport that reads X-Forwarded-For calls this, so TrustsHost is all there
+// is to ask.
+func newServerTransport(ctx context.Context, logger logger.ContextLogger, options option.V2RayTransportOptions, tlsConfig tls.ServerConfig, handler *inboundTransportHandler) (adapter.V2RayServerTransport, error) {
+	h := (*Inbound)(handler)
+	return transport.NewServer(ctx, logger, options, tlsConfig, handler, func(peer M.Socksaddr, forwarded []string) M.Socksaddr {
+		return proxyheader.Forwarded(h.logger, peer, forwarded, h.proxyHdr.TrustsHost())
+	})
 }
 
 // FallsBackTo reports whether destination is one of this inbound's fallback

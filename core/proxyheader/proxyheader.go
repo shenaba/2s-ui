@@ -79,12 +79,11 @@
 // the route must keep clients off this host's addresses (a rule rejecting
 // ip_is_private), which is worth having with or without PROXY protocol.
 //
-// On a transport that speaks HTTP (ws, http, httpupgrade, grpc lite) the
-// header names the client to the transport, as its RemoteAddr; sing-box's
-// transport server then prefers an X-Forwarded-For the request carries, as it
-// does with no PROXY protocol at all. Behind a CDN that is the address worth
-// having; without one it is the client's to choose, on these transports with
-// or without a front. The raw TCP listener has no such header to defer to.
+// On a transport that speaks HTTP (ws, http, httpupgrade, grpc) the header
+// names the client to the transport, as its RemoteAddr, and that is the peer
+// an X-Forwarded-For the request carries is judged by (forwarded.go): a CDN
+// edge the front forwarded is believed for the entry it appended, and a client
+// is never believed for itself. The raw TCP listener has no such header.
 //
 // A header is read to its exact length and never past it. What follows it is
 // the client's TLS ClientHello, and leaving the connection itself in place
@@ -149,21 +148,61 @@ const (
 
 // Settings is what an inbound asked of PROXY protocol: whether to read
 // headers, and the port it listens on, which is what a client handed to a
-// relay on this host could reach it by.
+// relay on this host could reach it by. It also carries whether the inbound
+// believes an X-Forwarded-For from this host (see forwarded.go), which puts
+// its port under the same dial guard.
 type Settings struct {
 	Enabled bool
 	Port    uint16
+	// loopback is a listen address on loopback only, from Take.
+	loopback bool
+	// forwardsReader is a transport that reads X-Forwarded-For, from Over.
+	forwardsReader bool
+}
+
+// TrustsHost reports whether the inbound believes an X-Forwarded-For from this
+// host, over a transport that reads one (see forwarded.go): it listens on
+// loopback only, so what connects is a reverse proxy here, and it reads no
+// PROXY header. With one, the peer is the client a front on this host named,
+// and that front -- an nginx stream block -- appends no X-Forwarded-For:
+// a client that had the core dial the front would arrive named as this host,
+// with a header only the client wrote. The resolver asks this directly, as it
+// only ever runs over such a transport; Over and Guarded ask it as well, so
+// the two cannot disagree.
+func (s Settings) TrustsHost() bool {
+	return s.loopback && !s.Enabled
+}
+
+// HostForwards reports whether the inbound believes X-Forwarded-For from this
+// host over the transport Over was given.
+func (s Settings) HostForwards() bool {
+	return s.forwardsReader && s.TrustsHost()
+}
+
+// Guarded reports whether the dial guard has to watch the inbound's port: it
+// believes a header a client could send it through the core.
+func (s Settings) Guarded() bool {
+	return s.Enabled || s.HostForwards()
+}
+
+// forwardsReader is a transport that takes the client from X-Forwarded-For
+// through Forwarded: core/transport's HTTP servers.
+type forwardsReader interface {
+	ReadsForwarded() bool
 }
 
 // Over is s as it applies to an inbound served over transport (nil for none):
 // off over one that carries no TCP -- QUIC -- which has no connection to read
 // a header from. A save refuses that combination, but a row can arrive
 // without one (an imported database), and would otherwise switch the dial
-// guard on for a port nothing reads headers on.
+// guard on for a port nothing reads headers on. Whether the transport reads
+// X-Forwarded-For is noted here too (HostForwards).
 func (s Settings) Over(transport interface{ Network() []string }) Settings {
 	if transport != nil && !slices.Contains(transport.Network(), N.NetworkTCP) {
 		s.Enabled = false
 	}
+	reader, reads := transport.(forwardsReader)
+	s.forwardsReader = reads && reader.ReadsForwarded()
 	return s
 }
 
@@ -182,7 +221,18 @@ func Take(options *option.ListenOptions) Settings {
 	options.ProxyProtocol = false
 	//nolint:staticcheck
 	options.ProxyProtocolAcceptNoHeader = false
-	return Settings{Enabled: enabled, Port: options.ListenPort}
+	return Settings{Enabled: enabled, Port: options.ListenPort, loopback: listensOnLoopback(options)}
+}
+
+// listensOnLoopback reports whether options listen on loopback only: nothing
+// off this host can connect. An inbound left to listen on every address, or in
+// a network namespace of its own -- whose loopback the core's dials never
+// reach, and whose fronts it cannot see -- does not.
+func listensOnLoopback(options *option.ListenOptions) bool {
+	if options.Listen == nil || options.NetNs != "" {
+		return false
+	}
+	return netip.Addr(*options.Listen).IsLoopback()
 }
 
 // trusted holds the fronts the operator named beyond this host. The service
@@ -448,7 +498,7 @@ func guardPorts(conn net.Conn, destination M.Socksaddr, route Route, ports portS
 		// route: a direct dial, one an override sent there, or an outbound
 		// whose server is that inbound. From this host there is no NAT: the
 		// port dialed is the port the inbound listens on.
-		return E.New("refused to dial ", remote, ": a PROXY-enabled inbound on this host, which would believe a header the client sent")
+		return E.New("refused to dial ", remote, ": a PROXY-enabled inbound on this host, or one believing X-Forwarded-For from it, which would believe a header the client sent")
 	case direct && !here && namedFront(remoteAddr) && !route.Fallback:
 		return E.New("refused to dial ", remote, ": a trusted PROXY protocol front, which a client could speak through as anyone")
 	case !direct && (here || namedFront(remoteAddr)):
@@ -510,8 +560,8 @@ func relayGuard(ports portSet, destination M.Socksaddr) error {
 		return nil
 	}
 	if ports.has(destination.Port) {
-		return E.New("refused to relay to ", destination, ": it could reach a PROXY-enabled inbound, ",
-			"which would believe a header the client sent; give PROXY-enabled inbounds a port clients do not ask for")
+		return E.New("refused to relay to ", destination, ": it could reach a PROXY-enabled inbound, or one believing X-Forwarded-For from this host, ",
+			"which would believe a header the client sent; give such inbounds a port clients do not ask for")
 	}
 	return nil
 }
@@ -558,16 +608,46 @@ func (c *addrCache) current() *addrSnapshot {
 	snapshot := c.snapshot.Load()
 	if snapshot == nil || time.Since(snapshot.loaded) >= hostAddrsTTL {
 		c.reload.Lock()
-		snapshot = c.snapshot.Load()
-		if snapshot == nil || time.Since(snapshot.loaded) >= hostAddrsTTL {
-			addrs, err := c.load()
-			snapshot = &addrSnapshot{addrs: addrs, unknown: err != nil, loaded: time.Now()}
-			c.snapshot.Store(snapshot)
-			if err != nil && c.warn != nil {
-				c.warn(err)
-			}
-		}
+		snapshot = c.reloadLocked()
 		c.reload.Unlock()
+	}
+	return snapshot
+}
+
+// containsNow is contains for a path that must not wait on a reload: every
+// request from a CDN edge asks it. An expired read is answered from while one
+// goroutine reloads it in the background; only the very first read waits.
+// The dial guard keeps contains, whose answer must be current.
+func (c *addrCache) containsNow(addr netip.Addr) bool {
+	snapshot := c.snapshot.Load()
+	if snapshot == nil {
+		return c.contains(addr)
+	}
+	if time.Since(snapshot.loaded) >= hostAddrsTTL && c.reload.TryLock() {
+		go func() {
+			defer c.reload.Unlock()
+			c.reloadLocked()
+		}()
+	}
+	if snapshot.unknown {
+		return true
+	}
+	_, found := snapshot.addrs[addr]
+	return found
+}
+
+// reloadLocked re-reads the addresses unless another caller did while this
+// one waited for reload, which it holds.
+func (c *addrCache) reloadLocked() *addrSnapshot {
+	snapshot := c.snapshot.Load()
+	if snapshot != nil && time.Since(snapshot.loaded) < hostAddrsTTL {
+		return snapshot
+	}
+	addrs, err := c.load()
+	snapshot = &addrSnapshot{addrs: addrs, unknown: err != nil, loaded: time.Now()}
+	c.snapshot.Store(snapshot)
+	if err != nil && c.warn != nil {
+		c.warn(err)
 	}
 	return snapshot
 }
@@ -913,8 +993,20 @@ func (w *warnLimiter) warnf(logger logger.ContextLogger, now time.Time, args ...
 // otherwise stall every connection behind it. A connection that is not read
 // for one -- most of them, on a public inbound -- needs none of that, and is
 // handed over from the accept loop itself, as a plain listener would.
+//
+// An inbound that believes X-Forwarded-For from this host reads no PROXY
+// header, but its port goes under the dial guard here all the same, before
+// anything is accepted.
 func Listen(l net.Listener, logger logger.ContextLogger, settings Settings) net.Listener {
 	if !settings.Enabled {
+		if settings.HostForwards() {
+			markInUse(settings.Port)
+			// The operator never switched anything on for this, so say what it
+			// costs: on a port clients do ask for, a relay to it is refused.
+			logger.Info("X-Forwarded-For from a reverse proxy on this host is believed (the inbound listens on loopback), ",
+				"so port ", settings.Port, " is watched by the dial guard: clients are refused a relay on this host to that port ",
+				"on any address; give such an inbound a port clients do not ask for")
+		}
 		return l
 	}
 	markInUse(settings.Port)

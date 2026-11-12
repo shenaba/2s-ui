@@ -89,9 +89,9 @@ func (h *Inbound) connectionHandler() adapter.ConnectionHandler {
 	return proxyheader.Handler(h, h.logger, h.proxyHdr)
 }
 
-// ProxyHeaderPort tells the core this inbound reads PROXY headers, and on
-// which port: proxyheader's dial guard stays on while it runs, and refuses to
+// GuardedPort tells the core this inbound reads PROXY headers, and on
+// which port (anytls has no transport, so never X-Forwarded-For): proxyheader's dial guard stays on while it runs, and refuses to
 // hand a client to a relay on this host for that port.
-func (h *Inbound) ProxyHeaderPort() (uint16, bool) {
+func (h *Inbound) GuardedPort() (uint16, bool) {
 	return h.proxyHdr.Port, h.proxyHdr.Enabled
 }

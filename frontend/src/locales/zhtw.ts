@@ -307,6 +307,8 @@ export default {
     trustedProxiesHint: "允許提供 X-Forwarded-For 的 IP 或 CIDR;多個項目以逗號分隔",
     proxyProtoTrusted: "可信 PROXY 前置",
     proxyProtoTrustedHint: "本機以外、入站會採信其 PROXY 標頭的 IP 或 CIDR，例如 Docker 網橋閘道或另一台機器上的 nginx。只要有入站開著 PROXY protocol，核心就不會替用戶端連線這些位址。使用 Docker 時，入站連接埠只對應到 127.0.0.1（如 127.0.0.1:10443:10443）：Docker 也可能把外部連線以閘道的身分轉進容器。多個項目以逗號分隔",
+    xffTrustedCDN: "可信 CDN 網段",
+    xffTrustedCDNHint: "ws、http、httpupgrade、gRPC 入站會採信其 X-Forwarded-For 的 CDN 節點 IP 或 CIDR，只採信節點追加的那一項；\"cloudflare\" 代表 Cloudflare 公布的網段。信任某家 CDN 的網段，就等於信任經這家 CDN 送來的一切請求，包括別人用自己的網域或 Worker 指向本機送來的；要排除這種情況，請啟用 CDN 的回源驗證（Cloudflare 的 Authenticated Origin Pulls），或把此項留空。本機的反向代理只有在入站監聽 127.0.0.1 或 ::1 且未開 PROXY protocol 時才被採信，這時該入站的連接埠會受到保護：客戶端經本機中繼去連這個連接埠會被拒絕，所以請給它用客戶端不會存取的連接埠。多個條目用逗號分隔",
     proxyGenerated: "已自動設定反向代理",
     proxyGeneratedHint: "面板網址:{url}(已產生 {conf})",
     proxyRestarting: "正在重新啟動面板使其生效,隨後跳轉到新網址…",

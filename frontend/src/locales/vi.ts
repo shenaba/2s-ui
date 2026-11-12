@@ -307,6 +307,8 @@ export default {
     trustedProxiesHint: "Địa chỉ IP hoặc CIDR được phép cung cấp X-Forwarded-For; phân tách nhiều mục bằng dấu phẩy",
     proxyProtoTrusted: "Front PROXY tin cậy",
     proxyProtoTrustedHint: "Địa chỉ IP hoặc CIDR ngoài máy chủ này mà inbound chấp nhận header PROXY, ví dụ gateway của bridge Docker hoặc nginx trên máy khác. Khi có inbound bật PROXY protocol, core sẽ không kết nối tới các địa chỉ này thay cho client. Với Docker, chỉ publish cổng của inbound trên 127.0.0.1 (127.0.0.1:10443:10443): Docker cũng có thể chuyển kết nối từ bên ngoài vào container dưới danh nghĩa gateway. Phân tách nhiều mục bằng dấu phẩy",
+    xffTrustedCDN: "Dải CDN tin cậy",
+    xffTrustedCDNHint: "Địa chỉ IP hoặc CIDR của node CDN mà inbound ws, http, httpupgrade và gRPC tin X-Forwarded-For, chỉ với mục do node thêm vào; \"cloudflare\" là các dải Cloudflare công bố. Tin dải của một CDN là tin mọi thứ đi qua CDN đó, kể cả zone hay Worker của tài khoản khác trỏ về máy chủ này; để loại trừ, hãy bật xác thực origin của CDN (Authenticated Origin Pulls của Cloudflare) hoặc để trống. Reverse proxy trên máy chủ này chỉ được tin khi inbound lắng nghe 127.0.0.1 hoặc ::1 và không bật PROXY protocol, khi đó cổng của inbound được bảo vệ: client bị từ chối relay trên máy này tới cổng đó, nên hãy chọn cổng mà client không dùng. Ngăn cách bằng dấu phẩy",
     proxyGenerated: "Đã cấu hình reverse proxy",
     proxyGeneratedHint: "Bảng điều khiển hiện ở {url} (đã tạo {conf})",
     proxyRestarting: "Đang khởi động lại bảng điều khiển để áp dụng, sau đó chuyển sang địa chỉ mới…",

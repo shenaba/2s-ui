@@ -13,8 +13,9 @@ import (
 
 var applyProxyProtocolMu sync.Mutex
 
-// ApplyProxyProtocol hands the core the proxyProtoTrusted setting, which it
-// reads per connection and so cannot fetch from the database itself. Called
+// ApplyProxyProtocol hands the core the proxyProtoTrusted setting, and the
+// xffTrustedCDN one (forwardedFor.go), which it reads per connection and so
+// cannot fetch from the database itself. Called
 // when the panel starts, after every settings save, and after a database
 // import. A failure to read the setting leaves what the core had. A stored
 // value that does not parse, or is too broad to be fronts, is not used at
@@ -29,6 +30,7 @@ func ApplyProxyProtocol() {
 	applyProxyProtocolMu.Lock()
 	defer applyProxyProtocolMu.Unlock()
 	var settingService SettingService
+	applyXFFTrustedCDN(&settingService)
 	raw, err := settingService.getString("proxyProtoTrusted")
 	if err != nil {
 		logger.Warning("PROXY protocol: keeping the trusted fronts as they were: ", err)

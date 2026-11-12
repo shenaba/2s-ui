@@ -87,6 +87,7 @@ var defaultValueMap = map[string]string{
 	"webNginx":           "",
 	"webTrustedProxies":  "",
 	"proxyProtoTrusted":  "",
+	"xffTrustedCDN":      cdnCloudflare,
 	"webAcmeMethod":      "auto",
 	"webAcmeEmail":       "",
 	"webPath":            "/app/",
@@ -892,6 +893,11 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 		}
 		if key == "proxyProtoTrusted" {
 			if _, err = parseProxyProtoFronts(obj); err != nil {
+				return err
+			}
+		}
+		if key == xffTrustedCDNKey {
+			if _, err = parseXFFTrustedCDN(obj); err != nil {
 				return err
 			}
 		}

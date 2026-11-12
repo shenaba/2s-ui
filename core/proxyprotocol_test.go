@@ -410,7 +410,7 @@ func TestProxyProtocolEveryCopy(t *testing.T) {
 				}
 			})
 			// What the dial guard is computed from (refreshProxyHeaders).
-			if !server.readsProxyHeaders() {
+			if !server.guardsAnInbound() {
 				t.Fatal("the core does not report its PROXY-enabled inbound")
 			}
 			front := testFront(t, M.ParseSocksaddrHostPort("127.0.0.1", uint16(serverPort)))
@@ -434,7 +434,7 @@ func TestProxyProtocolEveryCopy(t *testing.T) {
 					"outbounds": []any{outbound},
 				}
 			})
-			if client.readsProxyHeaders() {
+			if client.guardsAnInbound() {
 				t.Fatal("a core with no PROXY-enabled inbound reports one")
 			}
 
@@ -678,15 +678,16 @@ func TestProxyProtocolGuardFollowsTheInbounds(t *testing.T) {
 	}
 }
 
-// readsProxyHeaders reports whether an inbound in the running core reads PROXY
-// protocol headers. It waits out an inbound being added or replaced, which can
+// guardsAnInbound reports whether an inbound in the running core has its port
+// watched by the dial guard: it reads PROXY protocol headers, or believes
+// X-Forwarded-For from this host. It waits out an inbound being added or replaced, which can
 // be accepting before it is listed.
-func (c *Core) readsProxyHeaders() bool {
+func (c *Core) guardsAnInbound() bool {
 	box, err := c.running()
 	if err != nil {
 		return false
 	}
-	return len(proxyHeaderPorts(box.inbound.settled())) > 0
+	return len(guardedPorts(box.inbound.settled())) > 0
 }
 
 // fixedConn is an outbound's socket as far as the dial guard looks: two ends

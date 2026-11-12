@@ -72,6 +72,9 @@
       <SRow :label="$t('setting.proxyProtoTrusted')" :hint="$t('setting.proxyProtoTrustedHint')">
         <input class="input mono" v-model="settings.proxyProtoTrusted" placeholder="172.17.0.1" />
       </SRow>
+      <SRow :label="$t('setting.xffTrustedCDN')" :hint="$t('setting.xffTrustedCDNHint')">
+        <input class="input mono" v-model="settings.xffTrustedCDN" placeholder="cloudflare" />
+      </SRow>
       <SRow :label="$t('setting.webUri')" :hint="webUriHint">
         <input class="input mono" v-model="settings.webURI" placeholder="https://panel.example.com/app/" />
       </SRow>
@@ -448,6 +451,7 @@ const settings = ref({
   webNginx: "",
   webTrustedProxies: "",
   proxyProtoTrusted: "",
+  xffTrustedCDN: "cloudflare",
   webAcmeMethod: "auto",
   webAcmeEmail: "",
   webPath: "/app/",

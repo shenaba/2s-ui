@@ -31,6 +31,11 @@
 // connectionHandler() rather than to the inbound itself; and the transport
 // serving proxyListener(tcpListener). All three helpers are in users.go. See
 // core/proxyheader.
+//
+// Fourth local change, X-Forwarded-For believed only from a peer with a
+// reason to send it (#279): the transport is built by newServerTransport, in
+// users.go, rather than by v2ray.NewServerTransport -- one changed line, and
+// the v2ray import it no longer needs. See core/transport.
 package vless
 
 import (
@@ -47,7 +52,6 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing-box/transport/v2ray"
 	"github.com/sagernet/sing-vmess/packetaddr"
 	"github.com/sagernet/sing-vmess/vless"
 	"github.com/sagernet/sing/common"
@@ -119,7 +123,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		}
 	}
 	if options.Transport != nil {
-		inbound.transport, err = v2ray.NewServerTransport(ctx, logger, common.PtrValueOrDefault(options.Transport), inbound.tlsConfig, (*inboundTransportHandler)(inbound))
+		inbound.transport, err = newServerTransport(ctx, logger, common.PtrValueOrDefault(options.Transport), inbound.tlsConfig, (*inboundTransportHandler)(inbound))
 		if err != nil {
 			return nil, E.Cause(err, "create server transport: ", options.Transport.Type)
 		}
