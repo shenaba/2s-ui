@@ -6,6 +6,7 @@ require (
 	github.com/anytls/sing-anytls v0.0.13
 	github.com/caddyserver/certmagic v0.25.6
 	github.com/coder/websocket v1.8.15
+	github.com/enfein/mieru/v3 v3.39.0
 	github.com/gin-contrib/gzip v1.2.10
 	github.com/gin-contrib/sessions v1.1.4
 	github.com/gin-gonic/gin v1.12.0
@@ -13,7 +14,7 @@ require (
 	github.com/go-telegram/bot v1.27.0
 	github.com/gofrs/uuid/v5 v5.5.1
 	github.com/op/go-logging v0.0.0-20160315200505-970db520ece7
-	github.com/pires/go-proxyproto v0.8.1
+	github.com/pires/go-proxyproto v0.16.0
 	github.com/refraction-networking/utls v1.8.2
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sagernet/quic-go v0.61.0-sing-box-mod.12
@@ -29,6 +30,7 @@ require (
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.62.0
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
+	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.2
@@ -60,7 +62,6 @@ require (
 	github.com/dgryski/go-camellia v0.0.0-20191119043421-69a8a13fb23d // indirect
 	github.com/dgryski/go-metro v0.0.0-20180109044635-280f6062b5bc // indirect
 	github.com/ebitengine/purego v0.11.2 // indirect
-	github.com/enfein/mieru/v3 v3.39.0 // indirect
 	github.com/florianl/go-nfqueue/v2 v2.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
@@ -223,7 +224,6 @@ require (
 	golang.zx2c4.com/wireguard/windows v0.5.3 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260226221140-a57be14db171 // indirect
 	google.golang.org/grpc v1.81.1 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
 	lukechampine.com/blake3 v1.3.0 // indirect
 	zombiezen.com/go/capnproto2 v2.18.2+incompatible // indirect
 )
