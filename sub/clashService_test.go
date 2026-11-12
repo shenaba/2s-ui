@@ -11,6 +11,7 @@ import (
 	"github.com/shenaba/2s-ui/util"
 
 	"github.com/sagernet/sing-box/common/tls"
+	C "github.com/sagernet/sing-box/constant"
 
 	"gopkg.in/yaml.v3"
 )
@@ -169,6 +170,14 @@ func TestClashKeepsGoShapedFieldsOfExternalLinks(t *testing.T) {
 			link: "hysteria2://pw@e.com:443?sni=x.com&mport=443,20000-30000#node",
 			key:  "ports",
 			want: "443,20000-30000",
+		},
+		{
+			// hy2 builds the obfs object itself, and the hysteria2 branch
+			// below reads it back with a type assertion on that exact shape.
+			name: "hysteria2 gecko obfs",
+			link: "hysteria2://pw@e.com:443?sni=x.com&obfs=gecko&obfs-password=hunter2#node",
+			key:  "obfs",
+			want: "gecko",
 		},
 		{
 			// hy runs the bandwidths through strconv.Atoi, yielding ints.
@@ -349,5 +358,94 @@ func TestEchConfigForClashHandlesStoredShapes(t *testing.T) {
 				t.Errorf("echConfigForClash = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// The hysteria2 branch copied the obfs type and password and stopped there, so
+// a gecko inbound's packet sizes never reached a Clash subscriber (#292).
+// mihomo spells them obfs-min-packet-size and obfs-max-packet-size.
+func TestClashHysteria2GeckoPacketSizes(t *testing.T) {
+	setupSubDB(t)
+
+	tests := []struct {
+		name    string
+		obfs    map[string]interface{}
+		wantMin interface{} // nil = the key must be absent
+		wantMax interface{}
+	}{
+		{
+			name: "gecko with sizes",
+			obfs: map[string]interface{}{
+				"type": "gecko", "password": "hunter2",
+				"min_packet_size": float64(100), "max_packet_size": float64(1200),
+			},
+			wantMin: 100, wantMax: 1200,
+		},
+		{
+			// What a decoded link holds: the URI scheme carries no sizes.
+			name: "gecko without sizes",
+			obfs: map[string]interface{}{"type": "gecko", "password": "hunter2"},
+		},
+		{
+			name: "gecko with zero sizes",
+			obfs: map[string]interface{}{
+				"type": "gecko", "password": "hunter2",
+				"min_packet_size": float64(0), "max_packet_size": float64(0),
+			},
+		},
+		{
+			// A row that kept the sizes after its type was switched back.
+			name: "salamander ignores sizes",
+			obfs: map[string]interface{}{
+				"type": "salamander", "password": "hunter2",
+				"min_packet_size": float64(100), "max_packet_size": float64(1200),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			outbounds := []map[string]interface{}{{
+				"type": "hysteria2", "tag": "hy2", "server": "e.com",
+				"server_port": float64(443), "password": "pw",
+				"tls":  map[string]interface{}{"enabled": true, "server_name": "e.com"},
+				"obfs": tt.obfs,
+			}}
+			raw, err := (&ClashService{}).ConvertToClashMeta(&outbounds, basicClashConfig)
+			if err != nil {
+				t.Fatalf("ConvertToClashMeta: %v", err)
+			}
+			proxy := firstProxy(t, raw)
+			if proxy["obfs"] != tt.obfs["type"] || proxy["obfs-password"] != "hunter2" {
+				t.Errorf("obfs = %v / %v, want %v / hunter2:\n%s",
+					proxy["obfs"], proxy["obfs-password"], tt.obfs["type"], raw)
+			}
+			for key, want := range map[string]interface{}{
+				"obfs-min-packet-size": tt.wantMin,
+				"obfs-max-packet-size": tt.wantMax,
+			} {
+				got, ok := proxy[key]
+				if want == nil {
+					if ok {
+						t.Errorf("%s = %#v, want it absent:\n%s", key, got, raw)
+					}
+					continue
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Errorf("%s = %#v, want %#v:\n%s", key, got, want, raw)
+				}
+			}
+		})
+	}
+}
+
+// util repeats the two obfs type names instead of importing sing-box for them.
+// This is where a rename upstream would show.
+func TestHysteria2ObfsTypesMatchSingBox(t *testing.T) {
+	if util.Hysteria2ObfsSalamander != C.Hysteria2ObfsTypeSalamander {
+		t.Errorf("salamander = %q, sing-box has %q", util.Hysteria2ObfsSalamander, C.Hysteria2ObfsTypeSalamander)
+	}
+	if util.Hysteria2ObfsGecko != C.Hysteria2ObfsTypeGecko {
+		t.Errorf("gecko = %q, sing-box has %q", util.Hysteria2ObfsGecko, C.Hysteria2ObfsTypeGecko)
 	}
 }

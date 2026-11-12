@@ -383,6 +383,15 @@ func hy(u *url.URL, i int) (*map[string]interface{}, string, error) {
 	return &hy, tag, nil
 }
 
+// The hysteria2 obfs types, as sing-box's constant package spells them. This
+// package stays clear of the sing-box module, so they are repeated here once
+// for the link parser and the Clash export to share; a test in sub, which does
+// import sing-box, holds them to the originals.
+const (
+	Hysteria2ObfsSalamander = "salamander"
+	Hysteria2ObfsGecko      = "gecko"
+)
+
 func hy2(u *url.URL, i int) (*map[string]interface{}, string, error) {
 	query, _ := url.ParseQuery(u.RawQuery)
 	host, portStr, _ := net.SplitHostPort(u.Host)
@@ -419,10 +428,22 @@ func hy2(u *url.URL, i int) (*map[string]interface{}, string, error) {
 	if up > 0 {
 		hy2["up_mbps"] = up
 	}
-	if obfs == "salamander" {
-		hy2["obfs"] = map[string]interface{}{
-			"type":     "salamander",
-			"password": query.Get("obfs-password"),
+	// Both types sing-box knows. The URI scheme carries no packet sizes for
+	// gecko, and none are needed: they only shape what this side sends, and a
+	// client without them pads to its core's own default range.
+	//
+	// Only with a password, though. sing-box and mihomo both refuse an obfs
+	// that has none, and a refused outbound takes the subscriber's whole
+	// config with it, where an outbound with no obfs is one node that does
+	// not connect.
+	obfsPassword := query.Get("obfs-password")
+	switch obfs {
+	case Hysteria2ObfsSalamander, Hysteria2ObfsGecko:
+		if obfsPassword != "" {
+			hy2["obfs"] = map[string]interface{}{
+				"type":     obfs,
+				"password": obfsPassword,
+			}
 		}
 	}
 	if len(mport) > 0 {

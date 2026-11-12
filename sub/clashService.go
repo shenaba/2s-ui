@@ -251,6 +251,18 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 				if obfs, ok := obMap["obfs"].(map[string]interface{}); ok {
 					proxy["obfs"] = obfs["type"]
 					proxy["obfs-password"] = obfs["password"]
+					// Gecko's padding range, under mihomo's names for it. An
+					// unset or zero size is left out rather than written as 0.
+					if obfs["type"] == util.Hysteria2ObfsGecko {
+						for option, key := range map[string]string{
+							"min_packet_size": "obfs-min-packet-size",
+							"max_packet_size": "obfs-max-packet-size",
+						} {
+							if size, ok := util.AsInt64(obfs[option]); ok && size > 0 {
+								proxy[key] = size
+							}
+						}
+					}
 				}
 			}
 
