@@ -107,11 +107,11 @@ func TestTheScanRecognisesSQLAndNothingElse(t *testing.T) {
 
 func TestCallsReadTheColumnAsText(t *testing.T) {
 	cases := map[string]string{
-		Each("clients.inbounds"):                "json_each(CAST(clients.inbounds AS TEXT))",
+		Each("clients.inbounds"):                "json_each(CASE WHEN json_valid(CAST(clients.inbounds AS TEXT)) THEN CAST(clients.inbounds AS TEXT) END)",
 		Valid("out_json"):                       "json_valid(CAST(out_json AS TEXT))",
-		Extract("clients.config", "$.vless"):    "json_extract(CAST(clients.config AS TEXT), '$.vless')",
-		Extract("ext", "$.license_key"):         "json_extract(CAST(ext AS TEXT), '$.license_key')",
-		Extract("options", "$.domain_strategy"): "json_extract(CAST(options AS TEXT), '$.domain_strategy')",
+		Extract("clients.config", "$.vless"):    "json_extract(CASE WHEN json_valid(CAST(clients.config AS TEXT)) THEN CAST(clients.config AS TEXT) END, '$.vless')",
+		Extract("ext", "$.license_key"):         "json_extract(CASE WHEN json_valid(CAST(ext AS TEXT)) THEN CAST(ext AS TEXT) END, '$.license_key')",
+		Extract("options", "$.domain_strategy"): "json_extract(CASE WHEN json_valid(CAST(options AS TEXT)) THEN CAST(options AS TEXT) END, '$.domain_strategy')",
 	}
 	for got, want := range cases {
 		if got != want {

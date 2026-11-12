@@ -81,6 +81,7 @@ export function shuffleConfigs(configs: Config, key?: string) {
       case "socks":
       case "http":
       case "anytls":
+      case "mieru":
       case "trojan":
       case "naive":
       case "hysteria2":
@@ -160,6 +161,12 @@ export function randomConfigs(user: string): Config {
       flow: "xtls-rprx-vision",
     },
     anytls: {
+      name: user,
+      password: mixedPassword,
+    },
+    // mieru logs in by name as well as password, so the block carries the
+    // client's name: updateConfigs keeps it in step on a rename.
+    mieru: {
       name: user,
       password: mixedPassword,
     },

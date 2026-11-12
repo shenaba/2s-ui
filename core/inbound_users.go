@@ -4,6 +4,7 @@ import (
 	suiAnytls "github.com/shenaba/2s-ui/core/protocol/anytls"
 	suiHysteria "github.com/shenaba/2s-ui/core/protocol/hysteria"
 	suiHysteria2 "github.com/shenaba/2s-ui/core/protocol/hysteria2"
+	suiMieru "github.com/shenaba/2s-ui/core/protocol/mieru"
 	suiTrojan "github.com/shenaba/2s-ui/core/protocol/trojan"
 	suiTuic "github.com/shenaba/2s-ui/core/protocol/tuic"
 	suiVless "github.com/shenaba/2s-ui/core/protocol/vless"
@@ -54,6 +55,10 @@ func (c *Core) UpdateInboundUsers(config []byte) (bool, error) {
 		}
 	case *option.AnyTLSInboundOptions:
 		if in, ok := inb.(*suiAnytls.Inbound); ok {
+			return true, in.UpdateUsers(options.Users)
+		}
+	case *suiMieru.InboundOptions:
+		if in, ok := inb.(*suiMieru.Inbound); ok {
 			return true, in.UpdateUsers(options.Users)
 		}
 	case *option.ShadowsocksInboundOptions:

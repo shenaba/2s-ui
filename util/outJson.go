@@ -67,6 +67,8 @@ func FillOutJson(i *model.Inbound, hostname string) error {
 		trojanOut(&outJson, *inbound)
 	case "vmess":
 		vmessOut(&outJson, *inbound)
+	case "mieru":
+		mieruOut(&outJson, *inbound)
 	default:
 		for key := range outJson {
 			delete(outJson, key)
@@ -507,6 +509,33 @@ func trojanOut(out *map[string]interface{}, inbound map[string]interface{}) {
 	delete(*out, "transport")
 	if transport, ok := inbound["transport"]; ok {
 		(*out)["transport"] = transport
+	}
+}
+
+// MieruTransport is the transport a mieru inbound listens on, as the client
+// formats spell it: "UDP", or "TCP" for anything else. The listener takes the
+// name in either case and an empty one as TCP (normalizeTransport in
+// core/protocol/mieru), so everything that tells a client which transport to
+// use reads it through here. Matching "UDP" exactly, as each of them used to,
+// sent every subscriber of an inbound stored as "udp" to a TCP port that
+// nothing listens on.
+func MieruTransport(transport interface{}) string {
+	if name, _ := transport.(string); strings.EqualFold(name, "UDP") {
+		return "UDP"
+	}
+	return "TCP"
+}
+
+// mieruOut follows the outbound of enfein/mbox, the only sing-box that speaks
+// mieru: the transport has to match the listener's, and so does the traffic
+// pattern, which changes the bytes on the wire. mieru has no TLS of its own.
+// username and password are the client's, filled in per subscriber.
+func mieruOut(out *map[string]interface{}, inbound map[string]interface{}) {
+	delete(*out, "tls")
+	delete(*out, "traffic_pattern")
+	(*out)["transport"] = MieruTransport(inbound["transport"])
+	if pattern, ok := inbound["traffic_pattern"].(string); ok && pattern != "" {
+		(*out)["traffic_pattern"] = pattern
 	}
 }
 

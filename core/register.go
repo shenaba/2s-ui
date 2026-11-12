@@ -4,6 +4,7 @@ import (
 	suiAnytls "github.com/shenaba/2s-ui/core/protocol/anytls"
 	suiHysteria "github.com/shenaba/2s-ui/core/protocol/hysteria"
 	suiHysteria2 "github.com/shenaba/2s-ui/core/protocol/hysteria2"
+	suiMieru "github.com/shenaba/2s-ui/core/protocol/mieru"
 	suiTrojan "github.com/shenaba/2s-ui/core/protocol/trojan"
 	suiTuic "github.com/shenaba/2s-ui/core/protocol/tuic"
 	suiVless "github.com/shenaba/2s-ui/core/protocol/vless"
@@ -75,6 +76,7 @@ func InboundRegistry() *inbound.Registry {
 	shadowtls.RegisterInbound(registry)
 	suiVless.RegisterInbound(registry)
 	suiAnytls.RegisterInbound(registry)
+	suiMieru.RegisterInbound(registry)
 
 	suiHysteria.RegisterInbound(registry)
 	suiTuic.RegisterInbound(registry)

@@ -131,3 +131,78 @@ func assertNames(t *testing.T, what string, got, want []string) {
 		}
 	}
 }
+
+// The same failure with a different cause: a column that really is not JSON,
+// from a damaged backup or an edit by hand. json_extract and json_each fail
+// the statement on such a row too, so one broken client again kept every
+// inbound's config from being built. The row is left out instead; the others
+// are served, and database.reportUnreadableClients names it at start.
+func TestClientJSONColumnsSkipARowThatIsNotJSON(t *testing.T) {
+	db := newTestDB(t)
+	var svc InboundService
+
+	config := func(name string) json.RawMessage {
+		return json.RawMessage(`{"vless":{"name":"` + name + `","uuid":"u-` + name + `"}}`)
+	}
+	for _, client := range []model.Client{
+		{Name: "good", Inbounds: json.RawMessage(`[1]`), Config: config("good")},
+		{Name: "bad-config", Inbounds: json.RawMessage(`[1]`), Config: json.RawMessage(`{"vless":`)},
+		{Name: "bad-inbounds", Inbounds: json.RawMessage(`[1,`), Config: config("bad-inbounds")},
+	} {
+		client.Enable = true
+		client.Links = json.RawMessage(`[]`)
+		if err := db.Create(&client).Error; err != nil {
+			t.Fatalf("seed %s: %v", client.Name, err)
+		}
+	}
+	inbound := model.Inbound{
+		Type: "vless", Tag: "vless-in",
+		Options: json.RawMessage(`{"listen":"::","listen_port":443}`),
+	}
+	if err := db.Create(&inbound).Error; err != nil {
+		t.Fatal(err)
+	}
+	if inbound.Id != 1 {
+		t.Fatalf("seeded clients name inbound 1, got id %d", inbound.Id)
+	}
+
+	configs, err := svc.GetAllConfig(db)
+	if err != nil {
+		t.Fatalf("config generation: %v", err)
+	}
+	var decoded struct {
+		Users []struct {
+			Name string `json:"name"`
+		} `json:"users"`
+	}
+	if len(configs) != 1 {
+		t.Fatalf("want one inbound config, got %d", len(configs))
+	}
+	if err := json.Unmarshal(configs[0], &decoded); err != nil {
+		t.Fatal(err)
+	}
+	var users []string
+	for _, user := range decoded.Users {
+		users = append(users, user.Name)
+	}
+	assertNames(t, "config users", users, []string{"good"})
+
+	keep, err := svc.enabledClientNames(db, inbound.Id)
+	if err != nil {
+		t.Fatalf("enabled client names: %v", err)
+	}
+	var kept []string
+	for name := range keep {
+		kept = append(kept, name)
+	}
+	// bad-config is still attached -- its inbound list reads fine -- so its
+	// live connections are not cut as a removed user's would be.
+	assertNames(t, "enabled client names", kept, []string{"bad-config", "good"})
+
+	if err := svc.ClientService.UpdateLinksByInboundChange(db, &[]model.Inbound{inbound}, "example.com", ""); err != nil {
+		t.Fatalf("links on inbound change: %v", err)
+	}
+	if err := svc.ClientService.UpdateClientsOnInboundDelete(db, inbound.Id, inbound.Tag); err != nil {
+		t.Fatalf("clients on inbound delete: %v", err)
+	}
+}

@@ -685,6 +685,15 @@ export default {
       idleTimeout: "Idle Session Timeout",
       minIdle: "Minimum Idle Session",
     },
+    mieru: {
+      transport: "Transport",
+      transportHint: "A listener runs one transport. To offer both, add a second mieru inbound on the same port with the other one.",
+      trafficPattern: "Traffic pattern",
+      trafficPatternHint: "Optional. The base64 string mieru's tooling exports. It changes how the traffic looks on the wire, so clients must use the same one; the panel adds it to every generated client config.",
+      userHint: "Require user hint",
+      multiplexing: "Multiplexing",
+      multiplexingDefault: "Client default",
+    },
     naive: {
       insecureConcurrency: "Insecure Concurrency",
       quic: "QUIC",

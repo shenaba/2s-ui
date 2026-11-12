@@ -22,6 +22,7 @@ export const InTypes = {
   Hysteria2: 'hysteria2',
   VLESS: 'vless',
   AnyTls: 'anytls',
+  Mieru: 'mieru',
   Tun: 'tun',
   Redirect: 'redirect',
   TProxy: 'tproxy',
@@ -158,6 +159,15 @@ export interface AnyTls extends InboundBasics {
   padding_scheme: string[]
   tls: iTls
 }
+// mieru has no TLS: it encrypts on its own, keyed by each user's password.
+// One listener runs one transport; TCP and UDP on the same port are two
+// inbounds. traffic_pattern is mieru's base64 protobuf, which a client has to
+// carry too, so the panel passes it on to every generated client config.
+export interface Mieru extends InboundBasics {
+  transport?: "TCP" | "UDP"
+  traffic_pattern?: string
+  user_hint_is_mandatory?: boolean
+}
 export interface TUIC extends InboundBasics, QuicFields {
   congestion_control: ""|"cubic"|"new_reno"|"bbr"
   auth_timeout?: string
@@ -266,6 +276,7 @@ type InterfaceMap = {
   hysteria2: Hysteria2
   vless: VLESS
   anytls: AnyTls
+  mieru: Mieru
   tun: Tun
   redirect: Redirect
   tproxy: TProxy
@@ -302,6 +313,7 @@ const defaultValues: Record<InType, Inbound> = {
     "6=500-1000",
     "7=500-1000"
   ]},
+  mieru: <Mieru>{ type: InTypes.Mieru, transport: "TCP" },
   tun: <Tun>{ type: InTypes.Tun, mtu: 9000, stack: 'system', udp_timeout: '5m', auto_route: false },
   redirect: <Redirect>{ type: InTypes.Redirect },
   tproxy: <TProxy>{ type: InTypes.TProxy },

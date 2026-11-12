@@ -13,6 +13,7 @@ export const protoColor = (t: string): string =>
     naive: 'var(--sky)',
     shadowtls: 'var(--amber)',
     anytls: 'var(--emerald)',
+    mieru: 'var(--violet)',
     mixed: 'var(--text-3)',
   } as Record<string, string>)[t] || 'var(--text-3)'
 

@@ -51,6 +51,9 @@ func NewClientConfig(name string) (json.RawMessage, error) {
 		"vless":  {"name": name, "uuid": uid, "flow": "xtls-rprx-vision"},
 		"trojan": {"name": name, "password": shared},
 		"anytls": {"name": name, "password": shared},
+		// mieru authenticates on the name as well as the password: the name is
+		// the user the client logs in as, so it has to be the client's own.
+		"mieru": {"name": name, "password": shared},
 		// Shadowsocks keys are raw bytes in base64, and the length has to match
 		// the method -- 16 for the -128- variants, 32 for -256-.
 		"shadowsocks":   {"name": name, "password": ss32},

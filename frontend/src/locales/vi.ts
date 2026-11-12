@@ -685,6 +685,15 @@ export default {
       idleTimeout: "Thời gian chờ phiên nhàn rỗi",
       minIdle: "Số phiên nhàn rỗi tối thiểu"
     },
+    mieru: {
+      transport: "Giao thức truyền tải",
+      transportHint: "Mỗi listener chỉ chạy một kiểu truyền tải. Để cung cấp cả hai, hãy thêm một inbound mieru khác trên cùng cổng với kiểu còn lại.",
+      trafficPattern: "Mẫu lưu lượng",
+      trafficPatternHint: "Không bắt buộc. Chuỗi base64 do công cụ của mieru xuất ra. Nó thay đổi đặc trưng lưu lượng trên đường truyền, nên client phải dùng cùng một chuỗi; panel sẽ thêm nó vào mọi cấu hình client được tạo.",
+      userHint: "Bắt buộc gợi ý người dùng",
+      multiplexing: "Ghép kênh",
+      multiplexingDefault: "Mặc định của client",
+    },
   },
   in: {
     addr: "Địa chỉ",

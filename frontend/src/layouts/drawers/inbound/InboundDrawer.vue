@@ -60,10 +60,13 @@
         <Tuic v-if="inbound.type == inTypes.TUIC" direction="in" :data="inbound" />
         <Tun v-if="inbound.type == inTypes.Tun" :data="inbound" />
         <AnyTls v-if="inbound.type == inTypes.AnyTls" direction="in" :data="inbound" />
+        <Mieru v-if="inbound.type == inTypes.Mieru" direction="in" :data="inbound" />
         <Snell v-if="inbound.type == inTypes.Snell" direction="in" :data="inbound" />
         <Cloudflared v-if="inbound.type == inTypes.Cloudflared" :data="inbound" />
         <TProxy v-if="inbound.type == inTypes.TProxy" :inbound="inbound" />
-        <Transport v-if="Object.hasOwn(inbound, 'transport')" :data="inbound" />
+        <!-- mieru's transport is its own TCP/UDP string, not the V2Ray transport
+             object this form edits; switching that on would overwrite it. -->
+        <Transport v-if="Object.hasOwn(inbound, 'transport') && inbound.type != inTypes.Mieru" :data="inbound" />
         <Users v-if="hasUser" :clients="clients" :data="initUsers" />
         <InTLS v-if="hasTls" :inbound="inbound" :tls-configs="tlsConfigs" />
         <Multiplex v-if="muxAvailable" direction="in" :data="inbound" />
@@ -132,6 +135,7 @@ import ShadowTls from '@/components/forms/in/ShadowTls.vue'
 import Tuic from '@/components/forms/in/Tuic.vue'
 import Tun from '@/components/forms/in/Tun.vue'
 import AnyTls from '@/components/forms/in/AnyTls.vue'
+import Mieru from '@/components/forms/in/Mieru.vue'
 import Cloudflared from '@/components/forms/in/Cloudflared.vue'
 import Snell from '@/components/forms/out/protocols/Snell.vue'
 import TProxy from '@/components/forms/in/TProxy.vue'
@@ -167,6 +171,7 @@ const proxyTypes = [
   InTypes.TUIC,
   InTypes.Naive,
   InTypes.AnyTls,
+  InTypes.Mieru,
   InTypes.Snell,
 ]
 const localTypes = [
@@ -183,7 +188,7 @@ const localTypes = [
 // same capability sets as the legacy modal (layouts/modals/Inbound.vue)
 const inboundWithUsers = [
   'mixed', 'socks', 'http', 'shadowsocks', 'snell', 'vmess', 'trojan', 'naive',
-  'hysteria', 'shadowtls', 'tuic', 'hysteria2', 'vless', 'anytls',
+  'hysteria', 'shadowtls', 'tuic', 'hysteria2', 'vless', 'anytls', 'mieru',
 ]
 const HasInData = [
   InTypes.SOCKS,
@@ -197,6 +202,7 @@ const HasInData = [
   InTypes.Hysteria,
   InTypes.VLESS,
   InTypes.AnyTls,
+  InTypes.Mieru,
   InTypes.TUIC,
   InTypes.Hysteria2,
   InTypes.Naive,

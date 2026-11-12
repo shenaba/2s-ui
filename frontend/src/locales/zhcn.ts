@@ -685,6 +685,15 @@ export default {
       idleTimeout: "空闲会话超时",
       minIdle: "最小空闲会话数"
     },
+    mieru: {
+      transport: "传输协议",
+      transportHint: "一个监听只跑一种传输。要同时提供 TCP 和 UDP，就在同一端口再加一个使用另一种传输的 mieru 入站。",
+      trafficPattern: "流量模式",
+      trafficPatternHint: "可选。填 mieru 工具导出的 base64 字符串。它会改变流量在线路上的特征，客户端必须使用同一个；面板会把它写进所有生成的客户端配置。",
+      userHint: "要求客户端发送用户提示",
+      multiplexing: "多路复用",
+      multiplexingDefault: "客户端默认",
+    },
   },
   in: {
     addr: "地址",

@@ -108,6 +108,35 @@ type Client struct {
 	TotalDown int64 `json:"totalDown" form:"totalDown" gorm:"default:0;not null"`
 }
 
+// MarshalJSON writes a client whose stored JSON columns do not hold JSON as
+// one that has none: config and links left out, inbounds an empty list.
+//
+// encoding/json refuses a json.RawMessage that is not valid JSON, and the
+// refusal is the whole document's. One damaged row -- written by hand, or
+// restored from a broken backup -- made the client list, api/load and every
+// save response fail to encode, and gin answers that with a 200 and an empty
+// body, so the panel showed no clients at all and said nothing. Written this
+// way the row stays in the list, where it can be seen, fixed or deleted;
+// reportUnreadableClients names it in the log at start.
+func (c Client) MarshalJSON() ([]byte, error) {
+	type plain Client
+	p := plain(c)
+	if !validOrEmpty(p.Config) {
+		p.Config = nil
+	}
+	if !validOrEmpty(p.Inbounds) {
+		p.Inbounds = json.RawMessage("[]")
+	}
+	if !validOrEmpty(p.Links) {
+		p.Links = nil
+	}
+	return json.Marshal(p)
+}
+
+func validOrEmpty(raw json.RawMessage) bool {
+	return len(raw) == 0 || json.Valid(raw)
+}
+
 type Stats struct {
 	Id uint64 `json:"id" gorm:"primaryKey;autoIncrement"`
 	// date_time sits third in idx_stats_bucket, so that index cannot serve the

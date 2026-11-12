@@ -272,6 +272,19 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 			if ports := util.PortHoppingRanges(obMap["server_ports"]); ports != "" {
 				proxy["ports"] = ports
 			}
+		case "mieru":
+			// mihomo's mieru proxy: no TLS, and the transport has to be the
+			// listener's own. The traffic pattern changes the bytes on the
+			// wire, so a client without the server's would not connect.
+			proxy["username"] = obMap["username"]
+			proxy["password"] = obMap["password"]
+			proxy["transport"] = util.MieruTransport(obMap["transport"])
+			if pattern, _ := obMap["traffic_pattern"].(string); pattern != "" {
+				proxy["traffic-pattern"] = pattern
+			}
+			if level, _ := obMap["multiplexing"].(string); level != "" {
+				proxy["multiplexing"] = level
+			}
 		case "anytls":
 			// sni and skip-cert-verify come from the TLS block below, like
 			// every other protocol's. This branch used to copy them itself,
@@ -346,7 +359,7 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 				} else {
 					proxy["packet-encoding"] = "xudp"
 				}
-			case "trojan", "ss", "socks5", "anytls":
+			case "trojan", "ss", "socks5", "anytls", "mieru":
 				// anytls carries UDP too, and mihomo keeps it TCP-only
 				// unless the proxy opts in; leaving it out made the switch
 				// look as if it reached only some of the proxies (#1291).

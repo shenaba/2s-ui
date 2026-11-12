@@ -14,7 +14,7 @@ import (
 	"github.com/shenaba/2s-ui/util/common"
 )
 
-var InboundTypeWithLink = []string{"socks", "http", "mixed", "shadowsocks", "naive", "hysteria", "hysteria2", "anytls", "tuic", "vless", "trojan", "vmess"}
+var InboundTypeWithLink = []string{"socks", "http", "mixed", "shadowsocks", "naive", "hysteria", "hysteria2", "anytls", "tuic", "vless", "trojan", "vmess", "mieru"}
 
 type LinkParam struct {
 	Key   string
@@ -126,6 +126,13 @@ func LinkGenerator(clientConfig json.RawMessage, i *model.Inbound, hostname stri
 		return trojanLink(userConfig["trojan"], *inbound, Addrs)
 	case "vmess":
 		return vmessLink(userConfig["vmess"], *inbound, Addrs)
+	case "mieru":
+		// The client half is read leniently: a row without one, or with one
+		// that does not parse, still gets its link, only without the
+		// multiplexing level the operator may have picked there.
+		var outJson map[string]interface{}
+		_ = json.Unmarshal(i.OutJson, &outJson)
+		return mieruLink(userConfig["mieru"], *inbound, outJson, Addrs)
 	}
 
 	return []string{}
@@ -508,6 +515,56 @@ func anytlsLink(
 			AsString(addr["server"]), port, params, AsString(addr["remark"])))
 	}
 
+	return links
+}
+
+// mieruLink builds mieru's own "simple" link, mierus://, the form its client
+// imports. Unlike the other schemes the port is not in the authority but a
+// query parameter, paired with the transport it runs on, and the node's name
+// travels as the profile parameter, which the client requires. The remark is
+// repeated as the fragment for clients that list links by it.
+func mieruLink(
+	userConfig map[string]interface{},
+	inbound map[string]interface{},
+	outJson map[string]interface{},
+	addrs []map[string]interface{}) []string {
+
+	name, _ := userConfig["name"].(string)
+	password, _ := userConfig["password"].(string)
+	if name == "" || password == "" {
+		return nil
+	}
+	transport := MieruTransport(inbound["transport"])
+	pattern, _ := inbound["traffic_pattern"].(string)
+	multiplexing, _ := outJson["multiplexing"].(string)
+
+	var links []string
+	for _, addr := range addrs {
+		port, _ := addr["server_port"].(float64)
+		remark := AsString(addr["remark"])
+		profile := remark
+		if profile == "" {
+			profile = "mieru"
+		}
+		q := url.Values{}
+		q.Set("profile", profile)
+		q.Set("port", fmt.Sprintf("%.0f", port))
+		q.Set("protocol", transport)
+		if pattern != "" {
+			q.Set("traffic-pattern", pattern)
+		}
+		if multiplexing != "" {
+			q.Set("multiplexing", multiplexing)
+		}
+		u := url.URL{
+			Scheme:   "mierus",
+			User:     url.UserPassword(name, password),
+			Host:     HostForURI(AsString(addr["server"])),
+			RawQuery: q.Encode(),
+			Fragment: remark,
+		}
+		links = append(links, u.String())
+	}
 	return links
 }
 

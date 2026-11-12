@@ -31,6 +31,11 @@ echo "comparing core/protocol/ against sing-box $VERSION"
 # compare them with.
 LOCAL_ONLY="users.go"
 
+# Protocol directories that are ours as a whole: upstream sing-box has no such
+# protocol, so nothing in them is a copy. mieru (issue #288) is built on the
+# mieru library, not on any sing-box file.
+LOCAL_DIRS="mieru"
+
 # Lines each copy is expected to differ by, beyond the shared header comment,
 # keyed by "<protocol>/<file>". These are not a tolerance: each is the exact
 # size of changes we made on purpose, so a bump that alters the file anywhere
@@ -93,6 +98,9 @@ status=0
 checked=0
 for dir in core/protocol/*/; do
   proto=$(basename "$dir")
+  case " $LOCAL_DIRS " in
+    *" $proto "*) continue ;;
+  esac
   for local_file in "$dir"*.go; do
     [ -f "$local_file" ] || continue
     file=$(basename "$local_file")

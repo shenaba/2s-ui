@@ -137,7 +137,7 @@ func InitDB(dbPath string) error {
 		return err
 	}
 
-	err = db.AutoMigrate(
+	models := []interface{}{
 		&model.Setting{},
 		&model.Tls{},
 		&model.Inbound{},
@@ -153,7 +153,14 @@ func InitDB(dbPath string) error {
 		&model.Node{},
 		&model.Cert{},
 		&model.LoginAttempt{},
-	)
+	}
+	err = db.AutoMigrate(models...)
+	if err != nil {
+		return err
+	}
+	// Ahead of every migration below, each of which loads rows into these
+	// columns and would fail on a TEXT one.
+	err = normalizeJSONStorage(db, models...)
 	if err != nil {
 		return err
 	}
@@ -200,9 +207,17 @@ func InitDB(dbPath string) error {
 	if err != nil {
 		return err
 	}
+	// Not fatal: without it a client cannot use a mieru inbound, which is no
+	// reason to stop every other inbound from starting.
+	if err := backfillMieruClientConfig(); err != nil {
+		log.Printf("clients: mieru credentials not backfilled: %v", err)
+	}
 	// The two deprecations that cannot be migrated without changing how names
 	// resolve are reported for the operator instead; see migrateSingBox114.
 	reportSingBox114Manual()
+	// Clients no query can read are left out of every answer rather than
+	// failing it; this says which ones.
+	reportUnreadableClients()
 
 	return nil
 }
