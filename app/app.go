@@ -100,6 +100,10 @@ func (a *APP) Start() error {
 		logger.Warning("clearing traffic history failed: ", err)
 	}
 
+	// Before the core starts: its PROXY-enabled inbounds read it from their
+	// first connection on.
+	service.ApplyProxyProtocol()
+
 	// The hub must exist before the cron jobs first fire into it and before
 	// the web server accepts the first upgrade.
 	service.StartHub()
@@ -154,7 +158,9 @@ func (a *APP) Start() error {
 // vhost while switching the panel side off — that vhost is the 443 the current page
 // arrives on, so the follow-up api/save and api/restartApp would never be sent, and
 // the panel would end up plaintext with nobody answering on 443. It also heals
-// pre-rename s-ui-panel-*.conf files and orphans left by an earlier switch-off.
+// pre-rename s-ui-panel-*.conf files and orphans left by an earlier switch-off —
+// this instance's own only: another panel on the same host (a second SUI_DB_FOLDER)
+// shares conf.d, and its vhosts are not ours to remove.
 //
 // Failures are logged only: whether nginx is installed, or whether the panel runs as
 // root, must never block startup.

@@ -12,6 +12,7 @@
           <div class="pop-item"><SwitchLabel v-model="optionTCP" :label="$t('listen.tcpOptions')" /></div>
           <div class="pop-item"><SwitchLabel v-model="optionUDP" :label="$t('listen.udpOptions')" /></div>
           <div class="pop-item"><SwitchLabel v-model="optionTcpKeepAlive" :label="$t('listen.tcpKeepAlive')" /></div>
+          <div v-if="proxyProtocol || optionProxyProtocol" class="pop-item"><SwitchLabel v-model="optionProxyProtocol" :label="$t('listen.proxyProtocol')" /></div>
         </div>
       </Pop>
     </div>
@@ -32,6 +33,12 @@
         <input class="input mono" type="number" min="1" v-model.number="udpTimeout" />
       </Field>
     </div>
+
+    <MHint v-if="proxyProtocol && optionProxyProtocol" style="margin-bottom: 14px;">{{ $t('listen.proxyProtocolHint') }}</MHint>
+    <!-- A relay on this host is refused a PROXY-enabled inbound's port by any
+         name (core/proxyheader): on a port clients use, that is all their
+         traffic to it through such a relay. -->
+    <MHint v-if="proxyProtocol && optionProxyProtocol && CommonPorts.includes(Number(d().listen_port))" style="margin-bottom: 14px;">{{ $t('listen.proxyProtocolCommonPort', { port: d().listen_port }) }}</MHint>
 
     <div v-if="optionTCP || optionUDP" style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 14px;">
       <SwitchLabel v-if="optionTCP" v-model="tcpFastOpen" label="TCP Fast Open" />
@@ -63,9 +70,17 @@ import Btn from '@/components/ui/Btn.vue'
 import Pop from '@/components/ui/Pop.vue'
 import SwitchLabel from '@/components/ui/SwitchLabel.vue'
 import SectionLabel from '@/components/ui/SectionLabel.vue'
+import MHint from '@/components/ui/MHint.vue'
 import { valueField } from '@/plugins/formField'
 
-const props = defineProps<{ data: any; inTags?: string[] }>()
+// proxyProtocol: whether this inbound can read a PROXY header at all
+// (ProxyProtocolTypes, and not over the QUIC transport). The switch is not
+// offered otherwise -- except to turn it off where it is already on, which
+// the save would refuse.
+const props = defineProps<{ data: any; inTags?: string[]; proxyProtocol?: boolean }>()
+// Ports clients ask for all the time -- the web's, and the ones Cloudflare
+// proxies -- which a PROXY-enabled inbound should leave to its front.
+const CommonPorts = [80, 443, 8080, 8443, 8880, 2052, 2053, 2082, 2083, 2086, 2087, 2095, 2096]
 
 const d = () => props.data
 
@@ -99,6 +114,15 @@ const optionUDP = computed({
 const optionDetour = computed({
   get: (): boolean => props.data.detour != undefined,
   set: (v: boolean) => { props.data.detour = v ? (props.inTags ?? [])[0] ?? '' : undefined },
+})
+// Present only while on: sing-box's own listener refuses the field outright,
+// and only the panel's copies of these protocols take it back out (#260).
+const optionProxyProtocol = computed({
+  get: (): boolean => props.data.proxy_protocol == true,
+  set: (v: boolean) => {
+    if (v) props.data.proxy_protocol = true
+    else delete props.data.proxy_protocol
+  },
 })
 const optionTcpKeepAlive = computed({
   get: (): boolean =>
