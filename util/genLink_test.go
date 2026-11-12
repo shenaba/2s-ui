@@ -750,3 +750,67 @@ func TestHysteriaLinkRequiresBandwidth(t *testing.T) {
 		})
 	}
 }
+
+// hy2() only knew salamander, so a link naming gecko decoded to an outbound
+// with no obfs at all -- one that cannot reach a server that obfuscates (#292).
+// The link is the one hysteria2Link writes for a gecko inbound, so this is the
+// panel reading back its own output.
+func TestHysteria2LinkObfsRoundTrips(t *testing.T) {
+	for _, obfsType := range []string{"salamander", "gecko"} {
+		t.Run(obfsType, func(t *testing.T) {
+			links := hysteria2Link(
+				map[string]interface{}{"password": "p4ss"},
+				map[string]interface{}{
+					"obfs": map[string]interface{}{
+						"type":            obfsType,
+						"password":        "hunter2",
+						"min_packet_size": float64(100),
+						"max_packet_size": float64(1200),
+					},
+				},
+				[]map[string]interface{}{{
+					"server":      "example.com",
+					"server_port": float64(443),
+					"remark":      "hy2-in",
+				}},
+			)
+			if len(links) != 1 {
+				t.Fatalf("got %d links %v, want 1", len(links), links)
+			}
+
+			out, _, err := GetOutbound(links[0], 0)
+			if err != nil {
+				t.Fatalf("the generated link does not decode: %q: %v", links[0], err)
+			}
+			// The URI scheme has no packet-size parameters, so type and
+			// password are the whole of what a link can carry.
+			want := map[string]interface{}{"type": obfsType, "password": "hunter2"}
+			if got := (*out)["obfs"]; !reflect.DeepEqual(got, want) {
+				t.Errorf("obfs = %#v, want %#v (link %q)", got, want, links[0])
+			}
+		})
+	}
+}
+
+// An obfs sing-box would refuse is dropped rather than passed on: a type it
+// does not have, or either type with no password. The refusal is of the whole
+// config, so one such link would cost a subscriber every other node too.
+func TestHysteria2LinkUnusableObfsIsDropped(t *testing.T) {
+	for name, query := range map[string]string{
+		"unknown type":              "obfs=nonesuch&obfs-password=x",
+		"gecko without password":    "obfs=gecko",
+		"gecko, empty password":     "obfs=gecko&obfs-password=",
+		"salamander, no password":   "obfs=salamander",
+		"password without any type": "obfs-password=x",
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, _, err := GetOutbound("hy2://pw@example.com:443?"+query+"#n", 0)
+			if err != nil {
+				t.Fatalf("GetOutbound: %v", err)
+			}
+			if obfs, ok := (*out)["obfs"]; ok {
+				t.Errorf("obfs = %#v, want it absent", obfs)
+			}
+		})
+	}
+}
