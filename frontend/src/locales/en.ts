@@ -177,6 +177,13 @@ export default {
     logout: "Logout",
   },
   node: {
+    assignNoGroup: "No group",
+    assignExisting: "Assign imported inbounds to clients",
+    assignAll: "All clients",
+    assignGroups: "Groups",
+    assignSelected: "Selected clients",
+    assignNone: "Nobody (import only)",
+    searchClients: "Search clients",
     name: "Name",
     baseUrl: "Panel URL",
     baseUrlHint: "scheme://host:port of the node panel, e.g. https://1.2.3.4:2095",

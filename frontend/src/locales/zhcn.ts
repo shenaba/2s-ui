@@ -175,6 +175,13 @@ export default {
     logout: "退出登录",
   },
   node: {
+    assignNoGroup: "未分组",
+    assignExisting: "分配导入的 Inbound 给客户端",
+    assignAll: "所有客户端",
+    assignGroups: "指定分组",
+    assignSelected: "指定客户端",
+    assignNone: "仅导入（不分配）",
+    searchClients: "搜索客户端",
     name: "名称",
     baseUrl: "面板地址",
     baseUrlHint: "节点面板的 scheme://host:port,如 https://1.2.3.4:2095",

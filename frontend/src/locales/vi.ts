@@ -175,6 +175,13 @@ export default {
     logout: "Đăng xuất",
   },
   node: {
+    assignNoGroup: "Không có nhóm",
+    assignExisting: "Gán inbound đã nhập cho khách hàng",
+    assignAll: "Tất cả khách hàng",
+    assignGroups: "Nhóm",
+    assignSelected: "Khách hàng đã chọn",
+    assignNone: "Không ai (chỉ nhập)",
+    searchClients: "Tìm kiếm khách hàng",
     name: "Tên",
     baseUrl: "Địa chỉ bảng điều khiển",
     baseUrlHint: "scheme://host:port của bảng node, ví dụ https://1.2.3.4:2095",
