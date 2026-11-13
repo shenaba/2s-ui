@@ -22,10 +22,33 @@
         </div>
         <Chip v-if="ib.adopted" color="emerald">{{ $t('node.adopted') }}</Chip>
       </label>
+      <div class="assign-box">
+        <b>{{ $t('node.assignExisting') }}</b>
+        <select v-model="assignMode" class="input">
+          <option value="all">{{ $t('node.assignAll') }}</option>
+          <option value="groups">{{ $t('node.assignGroups') }}</option>
+          <option value="selected">{{ $t('node.assignSelected') }}</option>
+          <option value="none">{{ $t('node.assignNone') }}</option>
+        </select>
+        <div v-if="assignMode==='groups'" class="assign-list">
+          <div v-for="g in groups" :key="g" class="assign-row">
+            <Check :checked="chosenGroups.has(g)" @toggle="toggleGroup(g)" /> {{ g || $t('node.assignNoGroup') }}
+          </div>
+        </div>
+        <div v-if="assignMode==='selected'">
+          <input v-model="search" class="input" :placeholder="$t('node.searchClients')" />
+          <div class="assign-list">
+            <div v-for="c in clients" :key="c.id" class="assign-row">
+              <Check :checked="chosenClients.has(c.id)" @toggle="toggleClient(c.id)" />
+              {{ c.name }} <small>{{ c.group }}</small>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
     <template #footer>
       <Btn @click="$emit('close')">{{ $t('actions.cancel') }}</Btn>
-      <Btn variant="primary" :loading="importing" :disabled="selected.size === 0" @click="doImport">
+      <Btn variant="primary" :loading="importing" :disabled="!canImport" @click="doImport">
         <Ico name="download" :size="15" /> {{ $t('node.import') }}
       </Btn>
     </template>
@@ -33,7 +56,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import Data from '@/store/modules/data'
 import HttpUtils from '@/plugins/httputil'
 import Modal from '@/components/ui/Modal.vue'
@@ -56,6 +79,18 @@ const inbounds = ref<RemoteInbound[]>([])
 const selected = ref<Set<string>>(new Set())
 const loading = ref(false)
 const importing = ref(false)
+const assignMode = ref<'none'|'all'|'groups'|'selected'>('all')
+const chosenGroups = ref<Set<string>>(new Set())
+const chosenClients = ref<Set<number>>(new Set())
+const search = ref('')
+const eligible = computed(() => (Data().clients ?? []).filter((c:any) => c.group!=='@cluster'))
+const groups = computed(() => [...new Set<string>(eligible.value.map((c: any) => String(c.group ?? '')))].sort())
+const clients = computed(() => eligible.value.filter((c:any)=>`${c.name} ${c.group}`.toLowerCase().includes(search.value.toLowerCase())))
+const canImport = computed(() => !importing.value && selected.value.size>0 &&
+  (assignMode.value!=='groups'||chosenGroups.value.size>0) &&
+  (assignMode.value!=='selected'||chosenClients.value.size>0))
+const toggleGroup=(g:string)=>{ const next=new Set(chosenGroups.value); next.has(g)?next.delete(g):next.add(g);chosenGroups.value=next }
+const toggleClient=(id:number)=>{ const next=new Set(chosenClients.value); next.has(id)?next.delete(id):next.add(id);chosenClients.value=next }
 
 const toggle = (tag: string) => {
   const next = new Set(selected.value)
@@ -66,6 +101,10 @@ const toggle = (tag: string) => {
 const load = async () => {
   loading.value = true
   selected.value = new Set()
+  chosenGroups.value = new Set()
+  chosenClients.value = new Set()
+  search.value = ''
+  assignMode.value = 'all'
   inbounds.value = []
   const msg = await HttpUtils.get('api/nodeInbounds', { id: props.nodeId })
   loading.value = false
@@ -77,6 +116,9 @@ const doImport = async () => {
   const msg = await HttpUtils.post('api/adoptInbounds', {
     id: props.nodeId,
     tags: JSON.stringify([...selected.value]),
+    assignMode: assignMode.value,
+    assignGroups: JSON.stringify([...chosenGroups.value]),
+    clientIds: JSON.stringify([...chosenClients.value]),
   })
   importing.value = false
   if (msg.success) {
@@ -101,4 +143,8 @@ watch(() => props.visible, (v) => { if (v) load() })
 .imp-row.disabled { cursor: default; opacity: 0.6; }
 .imp-tag { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .imp-type { font-size: 11.5px; color: var(--text-3); }
+.assign-box { border-top:1px solid var(--line); margin-top:12px; padding-top:14px; display:grid; gap:10px; }
+.assign-list { max-height:180px; overflow:auto; border:1px solid var(--line); border-radius:8px; }
+.assign-row {display:flex;gap:9px;align-items:center;padding:8px;border-bottom:1px solid var(--line);font-size:12px;}
+.assign-row small {margin-left:auto;color:var(--text-3);}
 </style>

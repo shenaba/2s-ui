@@ -1118,7 +1118,23 @@ func (a *ApiService) AdoptInbounds(c *gin.Context, loginUser string) {
 		jsonMsg(c, "adoptInbounds", common.NewError("invalid tags"))
 		return
 	}
-	if err := a.NodeSyncService.AdoptInbounds(uint(id), tags, loginUser); err != nil {
+	assignment := service.InboundAssignment{Mode: c.PostForm("assignMode")}
+	if assignment.Mode == "" {
+		assignment.Mode = "none"
+	}
+	if assignment.Mode == "groups" {
+		if err := json.Unmarshal([]byte(c.PostForm("assignGroups")), &assignment.Groups); err != nil {
+			jsonMsg(c, "adoptInbounds", common.NewError("invalid groups"))
+			return
+		}
+	}
+	if assignment.Mode == "selected" {
+		if err := json.Unmarshal([]byte(c.PostForm("clientIds")), &assignment.ClientIDs); err != nil {
+			jsonMsg(c, "adoptInbounds", common.NewError("invalid client ids"))
+			return
+		}
+	}
+	if err := a.NodeSyncService.AdoptInbounds(uint(id), tags, loginUser, assignment); err != nil {
 		jsonMsg(c, "adoptInbounds", err)
 		return
 	}

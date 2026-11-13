@@ -216,10 +216,115 @@ func (s *NodeSyncService) adoptedTags(nodeId uint) (map[string]bool, error) {
 	return m, nil
 }
 
+// InboundAssignment applies adopted replica IDs to existing master clients.
+type InboundAssignment struct {
+	Mode      string
+	Groups    []string
+	ClientIDs []uint
+}
+
+func (a InboundAssignment) validate() error {
+	switch a.Mode {
+	case "none", "all":
+		return nil
+	case "groups":
+		if len(a.Groups) == 0 {
+			return common.NewError("select a client group")
+		}
+		for _, g := range a.Groups {
+			if (g != "" && strings.TrimSpace(g) == "") || g == clusterGroup {
+				return common.NewError("invalid group")
+			}
+		}
+		return nil
+	case "selected":
+		if len(a.ClientIDs) == 0 {
+			return common.NewError("select clients")
+		}
+		for _, id := range a.ClientIDs {
+			if id == 0 {
+				return common.NewError("invalid client id")
+			}
+		}
+		return nil
+	default:
+		return common.NewError("invalid assignment mode")
+	}
+}
+func assignAdoptedNodeInbounds(tx *gorm.DB, adopted []uint, a InboundAssignment) (int, error) {
+	if err := a.validate(); err != nil {
+		return 0, err
+	}
+	if a.Mode == "none" || len(adopted) == 0 {
+		return 0, nil
+	}
+	q := tx.Model(&model.Client{}).Select("id", "inbounds").Where("COALESCE(`group`, '') <> ?", clusterGroup)
+	if a.Mode == "groups" {
+		q = q.Where("COALESCE(`group`, '') IN ?", a.Groups)
+	}
+	if a.Mode == "selected" {
+		q = q.Where("id IN ?", a.ClientIDs)
+	}
+	var clients []model.Client
+	if err := q.Find(&clients).Error; err != nil {
+		return 0, err
+	}
+	if a.Mode == "groups" && len(clients) == 0 {
+		return 0, common.NewError("group has no clients")
+	}
+	if a.Mode == "selected" {
+		wanted := map[uint]bool{}
+		for _, id := range a.ClientIDs {
+			wanted[id] = true
+		}
+		if len(clients) != len(wanted) {
+			return 0, common.NewError("selected client no longer exists")
+		}
+	}
+	changed := 0
+	for _, c := range clients {
+		var ids []uint
+		if err := json.Unmarshal(c.Inbounds, &ids); err != nil {
+			return 0, err
+		}
+		seen := map[uint]bool{}
+		for _, id := range ids {
+			seen[id] = true
+		}
+		modified := false
+		for _, id := range adopted {
+			if !seen[id] {
+				ids = append(ids, id)
+				seen[id] = true
+				modified = true
+			}
+		}
+		if !modified {
+			continue
+		}
+		encoded, err := json.Marshal(ids)
+		if err != nil {
+			return 0, err
+		}
+		if err := tx.Model(&model.Client{}).Where("id = ?", c.Id).Update("inbounds", json.RawMessage(encoded)).Error; err != nil {
+			return 0, err
+		}
+		changed++
+	}
+	return changed, nil
+}
+
 // AdoptInbounds pulls the full panel-shape inbound for each selected tag and
 // stores it as a local replica row (node_id set). tag collisions fail loudly —
 // the tag is the reconciliation key, so we never silently rename.
-func (s *NodeSyncService) AdoptInbounds(nodeId uint, tags []string, actor string) error {
+func (s *NodeSyncService) AdoptInbounds(nodeId uint, tags []string, actor string, options ...InboundAssignment) error {
+	assignment := InboundAssignment{Mode: "none"}
+	if len(options) > 0 {
+		assignment = options[0]
+	}
+	if err := assignment.validate(); err != nil {
+		return err
+	}
 	if len(tags) == 0 {
 		return nil
 	}
@@ -279,6 +384,7 @@ func (s *NodeSyncService) AdoptInbounds(nodeId uint, tags []string, actor string
 	err = db.Transaction(func(tx *gorm.DB) error {
 		dt := time.Now().Unix()
 		adopted := 0
+		var adoptedIDs []uint
 		for _, raw := range payload.Inbounds {
 			var meta struct {
 				Tag string `json:"tag"`
@@ -304,14 +410,20 @@ func (s *NodeSyncService) AdoptInbounds(nodeId uint, tags []string, actor string
 			if err := tx.Create(replica).Error; err != nil {
 				return err
 			}
+			adoptedIDs = append(adoptedIDs, replica.Id)
 			adopted++
 		}
-		if adopted == 0 {
-			return common.NewError("no matching inbounds found on the node")
+		if adopted != len(wanted) {
+			return common.NewError("a requested inbound disappeared from the node")
 		}
+		assigned, err := assignAdoptedNodeInbounds(tx, adoptedIDs, assignment)
+		if err != nil {
+			return err
+		}
+
 		if err := tx.Create(&model.Changes{
 			DateTime: dt, Actor: actor, Key: "inbounds", Action: "adopt",
-			Obj: json.RawMessage(mustJSON(map[string]interface{}{"nodeId": nodeId, "tags": tags})),
+			Obj: json.RawMessage(mustJSON(map[string]interface{}{"nodeId": nodeId, "tags": tags, "assignMode": assignment.Mode, "assignedClients": assigned})),
 		}).Error; err != nil {
 			return err
 		}

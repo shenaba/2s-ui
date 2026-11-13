@@ -176,6 +176,13 @@ export default {
     logout: "Выйти",
   },
   node: {
+    assignNoGroup: "Без группы",
+    assignExisting: "Назначить импортированные inbounds клиентам",
+    assignAll: "Всем клиентам",
+    assignGroups: "Группам",
+    assignSelected: "Выбранным клиентам",
+    assignNone: "Никому (только импорт)",
+    searchClients: "Поиск клиентов",
     name: "Название",
     baseUrl: "Адрес панели",
     baseUrlHint: "scheme://host:port панели узла, напр. https://1.2.3.4:2095",
