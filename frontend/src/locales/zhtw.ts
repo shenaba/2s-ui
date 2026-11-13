@@ -175,6 +175,13 @@ export default {
     logout: "退出登錄",
   },
   node: {
+    assignNoGroup: "未分組",
+    assignExisting: "分配匯入的 Inbound 給客戶端",
+    assignAll: "所有客戶端",
+    assignGroups: "指定分組",
+    assignSelected: "指定客戶端",
+    assignNone: "僅匯入（不分配）",
+    searchClients: "搜尋客戶端",
     name: "名稱",
     baseUrl: "面板位址",
     baseUrlHint: "節點面板的 scheme://host:port,如 https://1.2.3.4:2095",

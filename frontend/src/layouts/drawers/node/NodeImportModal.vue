@@ -14,15 +14,16 @@
         :key="ib.tag"
         class="imp-row"
         :class="{ disabled: ib.adopted }"
+        @click.prevent="!ib.adopted && toggle(ib.tag)"
       >
-        <Check :checked="selected.has(ib.tag)" @toggle="!ib.adopted && toggle(ib.tag)" />
+        <Check :checked="selected.has(ib.tag)" />
         <div style="flex: 1; min-width: 0;">
           <div class="imp-tag">{{ ib.tag }}</div>
           <div class="imp-type">{{ ib.type }}</div>
         </div>
         <Chip v-if="ib.adopted" color="emerald">{{ $t('node.adopted') }}</Chip>
       </label>
-      <div class="assign-box">
+      <div v-if="!loading && inbounds.length > 0" class="assign-box">
         <b>{{ $t('node.assignExisting') }}</b>
         <Select v-model="assignMode">
           <option value="all">{{ $t('node.assignAll') }}</option>
@@ -31,17 +32,19 @@
           <option value="none">{{ $t('node.assignNone') }}</option>
         </Select>
         <div v-if="assignMode==='groups'" class="assign-list">
-          <div v-for="g in groups" :key="g" class="assign-row">
-            <Check :checked="chosenGroups.has(g)" @toggle="toggleGroup(g)" /> {{ g || $t('node.assignNoGroup') }}
-          </div>
+          <label v-for="g in groups" :key="g" class="assign-row" @click.prevent="toggleGroup(g)">
+            <Check :checked="chosenGroups.has(g)" />
+            <span class="assign-name">{{ g || $t('node.assignNoGroup') }}</span>
+          </label>
         </div>
         <div v-if="assignMode==='selected'">
           <input v-model="search" class="input" :placeholder="$t('node.searchClients')" />
           <div class="assign-list">
-            <div v-for="c in clients" :key="c.id" class="assign-row">
-              <Check :checked="chosenClients.has(c.id)" @toggle="toggleClient(c.id)" />
-              {{ c.name }} <small>{{ c.group }}</small>
-            </div>
+            <label v-for="c in clients" :key="c.id" class="assign-row" @click.prevent="toggleClient(c.id)">
+              <Check :checked="chosenClients.has(c.id)" />
+              <span class="assign-name">{{ c.name }}</span>
+              <small>{{ c.group }}</small>
+            </label>
           </div>
         </div>
       </div>
@@ -86,7 +89,7 @@ const chosenClients = ref<Set<number>>(new Set())
 const search = ref('')
 const eligible = computed(() => (Data().clients ?? []).filter((c:any) => c.group!=='@cluster'))
 const groups = computed(() => [...new Set<string>(eligible.value.map((c: any) => String(c.group ?? '')))].sort())
-const clients = computed(() => eligible.value.filter((c:any)=>`${c.name} ${c.group}`.toLowerCase().includes(search.value.toLowerCase())))
+const clients = computed(() => eligible.value.filter((c:any)=>`${c.name ?? ''} ${c.group ?? ''}`.toLowerCase().includes(search.value.toLowerCase())))
 const canImport = computed(() => !importing.value && selected.value.size>0 &&
   (assignMode.value!=='groups'||chosenGroups.value.size>0) &&
   (assignMode.value!=='selected'||chosenClients.value.size>0))
@@ -146,6 +149,9 @@ watch(() => props.visible, (v) => { if (v) load() })
 .imp-type { font-size: 11.5px; color: var(--text-3); }
 .assign-box { border-top:1px solid var(--line); margin-top:12px; padding-top:14px; display:grid; gap:10px; }
 .assign-list { max-height:180px; overflow:auto; border:1px solid var(--line); border-radius:8px; }
-.assign-row {display:flex;gap:9px;align-items:center;padding:8px;border-bottom:1px solid var(--line);font-size:12px;}
-.assign-row small {margin-left:auto;color:var(--text-3);}
+.assign-row { display:flex; gap:9px; align-items:center; padding:8px 10px; border-bottom:1px solid var(--line); font-size:12px; cursor:pointer; user-select:none; }
+.assign-row:last-child { border-bottom: none; }
+.assign-row:hover { background: var(--surface-3); }
+.assign-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.assign-row small { margin-left:auto; color:var(--text-3); flex-shrink: 0; }
 </style>

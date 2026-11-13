@@ -175,6 +175,13 @@ export default {
     logout: "خروج",
   },
   node: {
+    assignNoGroup: "بدون گروه",
+    assignExisting: "اختصاص اینباندهای وارد شده به کلاینت‌ها",
+    assignAll: "همه کلاینت‌ها",
+    assignGroups: "گروه‌ها",
+    assignSelected: "کلاینت‌های انتخاب شده",
+    assignNone: "هیچ‌کس (فقط وارد کردن)",
+    searchClients: "جستجوی کلاینت‌ها",
     name: "نام",
     baseUrl: "آدرس پنل",
     baseUrlHint: "scheme://host:port پنل نود، مثل https://1.2.3.4:2095",

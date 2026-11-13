@@ -284,8 +284,11 @@ func assignAdoptedNodeInbounds(tx *gorm.DB, adopted []uint, a InboundAssignment)
 	changed := 0
 	for _, c := range clients {
 		var ids []uint
-		if err := json.Unmarshal(c.Inbounds, &ids); err != nil {
-			return 0, err
+		trimmed := bytes.TrimSpace(c.Inbounds)
+		if len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) {
+			if err := json.Unmarshal(trimmed, &ids); err != nil {
+				return 0, err
+			}
 		}
 		seen := map[uint]bool{}
 		for _, id := range ids {

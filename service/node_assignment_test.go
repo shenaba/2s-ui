@@ -40,7 +40,7 @@ func TestAssignAdoptedNodeInbounds(t *testing.T) {
 			defer tx.Rollback()
 
 			rows := []model.Client{
-				{Name: "ungrouped", Inbounds: json.RawMessage(`[]`)},
+				{Name: "ungrouped", Inbounds: nil},
 				{Name: "team-client", Group: "team", Inbounds: json.RawMessage(`[2,10]`)},
 				{Name: "node-client", Group: "@cluster", Inbounds: json.RawMessage(`[5]`)},
 			}
@@ -72,13 +72,15 @@ func TestAssignAdoptedNodeInbounds(t *testing.T) {
 					t.Fatal(err)
 				}
 				var got, want []uint
-				if err := json.Unmarshal(saved.Inbounds, &got); err != nil {
-					t.Fatal(err)
+				if len(saved.Inbounds) > 0 && string(saved.Inbounds) != "null" {
+					if err := json.Unmarshal(saved.Inbounds, &got); err != nil {
+						t.Fatal(err)
+					}
 				}
 				if err := json.Unmarshal([]byte(expected), &want); err != nil {
 					t.Fatal(err)
 				}
-				if !reflect.DeepEqual(got, want) {
+				if (len(got) > 0 || len(want) > 0) && !reflect.DeepEqual(got, want) {
 					t.Errorf("%s: inbounds %v, expected %v", rows[i].Name, got, want)
 				}
 			}
