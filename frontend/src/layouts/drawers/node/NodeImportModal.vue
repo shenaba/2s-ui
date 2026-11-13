@@ -24,12 +24,12 @@
       </label>
       <div class="assign-box">
         <b>{{ $t('node.assignExisting') }}</b>
-        <select v-model="assignMode" class="input">
+        <Select v-model="assignMode">
           <option value="all">{{ $t('node.assignAll') }}</option>
           <option value="groups">{{ $t('node.assignGroups') }}</option>
           <option value="selected">{{ $t('node.assignSelected') }}</option>
           <option value="none">{{ $t('node.assignNone') }}</option>
-        </select>
+        </Select>
         <div v-if="assignMode==='groups'" class="assign-list">
           <div v-for="g in groups" :key="g" class="assign-row">
             <Check :checked="chosenGroups.has(g)" @toggle="toggleGroup(g)" /> {{ g || $t('node.assignNoGroup') }}
@@ -60,6 +60,7 @@ import { computed, ref, watch } from 'vue'
 import Data from '@/store/modules/data'
 import HttpUtils from '@/plugins/httputil'
 import Modal from '@/components/ui/Modal.vue'
+import Select from '@/components/ui/Select.vue'
 import Btn from '@/components/ui/Btn.vue'
 import Ico from '@/components/ui/Ico.vue'
 import Chip from '@/components/ui/Chip.vue'
