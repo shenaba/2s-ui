@@ -1293,3 +1293,43 @@ func TestSubLeavesOutDisabledInbounds(t *testing.T) {
 		t.Errorf("clash output does not leave out just the disabled inbound:\n%s", *clash)
 	}
 }
+
+// The JSON subscription gives a ws outbound with no Host the SNI its share link
+// carries, each address its own (upstream #1334).
+func TestAddrCopiesFallBackToSniForWsHost(t *testing.T) {
+	e := &subEntry{
+		inTag:    "ws-in",
+		protocol: "vless",
+		outbound: map[string]interface{}{
+			"type":      "vless",
+			"tls":       map[string]interface{}{"enabled": true, "server_name": "origin.example.com"},
+			"transport": map[string]interface{}{"type": "ws", "path": "/ws"},
+		},
+		addrs: []map[string]interface{}{
+			{"server": "1.2.3.4", "server_port": float64(443), "remark": "-a",
+				"tls": map[string]interface{}{"server_name": "a.example.com"}},
+			{"server": "5.6.7.8", "server_port": float64(443), "remark": "-b"},
+		},
+	}
+	copies := addrCopies(e, "")
+	want := []string{"a.example.com", "origin.example.com"}
+	for i, c := range copies {
+		transport := c.outs[0]["transport"].(map[string]interface{})
+		headers, _ := transport["headers"].(map[string]interface{})
+		if headers["Host"] != want[i] {
+			t.Errorf("address %d Host = %v, want %q", i, headers["Host"], want[i])
+		}
+	}
+	if _, ok := e.outbound["transport"].(map[string]interface{})["headers"]; ok {
+		t.Error("the inbound's shared transport map was written into")
+	}
+
+	// TLS off: the server address is the only Host there is.
+	plain := &subEntry{inTag: "p", protocol: "vless", outbound: map[string]interface{}{
+		"type": "vless", "transport": map[string]interface{}{"type": "ws"},
+	}}
+	out := addrCopies(plain, "")[0].outs[0]
+	if _, ok := out["transport"].(map[string]interface{})["headers"]; ok {
+		t.Errorf("no-TLS outbound got a Host: %v", out["transport"])
+	}
+}

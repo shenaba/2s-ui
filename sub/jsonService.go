@@ -340,6 +340,9 @@ func (j *JsonService) getOutbounds(clientConfig json.RawMessage, inbounds []*mod
 		// never dialled at all.
 		for _, tc := range target.copies {
 			newOut := cloneOutbound(e.outbound)
+			// The rider skips addrCopies, where every other entry gets this;
+			// without it a ws rider sends its own server as the Host.
+			applyDefaultHost(newOut)
 			newOut["tag"] = util.JoinRemark(clientRemark, e.inTag+tc.remark)
 			c := subCopy{remark: tc.remark, outs: splitMixed(e.protocol, newOut)}
 			for _, out := range c.outs {
@@ -371,6 +374,7 @@ func addrCopies(e *subEntry, clientRemark string) []subCopy {
 	// addresses have nothing to override.
 	_, viaRealm := outbound["realm"]
 	if len(e.addrs) == 0 || viaRealm {
+		applyDefaultHost(outbound)
 		outbound["tag"] = util.JoinRemark(clientRemark, tag)
 		return []subCopy{{outs: splitMixed(e.protocol, outbound)}}
 	}
@@ -395,6 +399,8 @@ func addrCopies(e *subEntry, clientRemark string) []subCopy {
 			util.StripServerTlsFields(outTls)
 			newOut["tls"] = outTls
 		}
+		// After the override: an address's own server_name is its Host.
+		applyDefaultHost(newOut)
 
 		remark, _ := addr["remark"].(string)
 		// Multiple addresses share one inbound tag, so the name only
@@ -472,6 +478,16 @@ func dropSingBoxUnsupported(outbounds []map[string]interface{}, tags []string, l
 
 // cloneOutbound copies an outbound one level deep, plus its TLS map, so one
 // copy's override can't leak into the next -- a shallow copy would share it.
+// applyDefaultHost gives a ws or httpupgrade outbound with no Host of its own
+// the one its share link carries, the TLS server_name (util.DefaultTransportHost).
+func applyDefaultHost(out map[string]interface{}) {
+	tls, _ := out["tls"].(map[string]interface{})
+	transport, _ := out["transport"].(map[string]interface{})
+	if host := util.DefaultTransportHost(transport, tls); host != "" {
+		out["transport"] = util.SetTransportHost(transport, host)
+	}
+}
+
 func cloneOutbound(outbound map[string]interface{}) map[string]interface{} {
 	newOut := make(map[string]interface{}, len(outbound))
 	for key, value := range outbound {

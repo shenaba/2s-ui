@@ -22,7 +22,7 @@ import (
 // generateECHKeyPair splits a PEM that ends in a newline, so the stored list
 // carries a trailing empty entry and a positional slice left "-----END ECH
 // CONFIGS-----" glued to the end of the value.
-func TestEchConfigForClashStripsPemArmor(t *testing.T) {
+func TestECHConfigBase64StripsPemArmor(t *testing.T) {
 	configPem, _, err := tls.ECHKeygenDefault("example.com")
 	if err != nil {
 		t.Fatalf("ECHKeygenDefault: %v", err)
@@ -34,7 +34,7 @@ func TestEchConfigForClashStripsPemArmor(t *testing.T) {
 		stored = append(stored, line)
 	}
 
-	got := echConfigForClash(stored)
+	got := util.ECHConfigBase64(stored)
 	if got == "" {
 		t.Fatalf("no ech config produced from %q", configPem)
 	}
@@ -286,7 +286,7 @@ func firstProxy(t *testing.T, raw string) map[string]interface{} {
 // one, and generateECHKeyPair hands the operator both concatenated into one
 // array while the field is a free-text textarea. Without a type check, pasting
 // the wrong half published the ECH private key to every subscriber.
-func TestEchConfigForClashRefusesTheKeyBlock(t *testing.T) {
+func TestECHConfigBase64RefusesTheKeyBlock(t *testing.T) {
 	configPem, keyPem, err := tls.ECHKeygenDefault("example.com")
 	if err != nil {
 		t.Fatalf("ECHKeygenDefault: %v", err)
@@ -300,22 +300,22 @@ func TestEchConfigForClashRefusesTheKeyBlock(t *testing.T) {
 		return out
 	}
 
-	if got := echConfigForClash(list(keyPem)); got != "" {
+	if got := util.ECHConfigBase64(list(keyPem)); got != "" {
 		t.Errorf("an ECH KEYS block must never reach a subscriber, got %q", got)
 	}
 	// The whole generator output, keys first, is what an operator pasting the
 	// button's result wholesale would produce.
-	if got := echConfigForClash(list(keyPem + configPem)); got != "" {
+	if got := util.ECHConfigBase64(list(keyPem + configPem)); got != "" {
 		t.Errorf("a key block in front must not be published, got %q", got)
 	}
-	if got := echConfigForClash(list(configPem)); got == "" {
+	if got := util.ECHConfigBase64(list(configPem)); got == "" {
 		t.Errorf("the config block itself must still be accepted")
 	}
 }
 
 // Every one of these is a shape the textarea in the TLS drawer can produce, or
 // that an older row can hold.
-func TestEchConfigForClashHandlesStoredShapes(t *testing.T) {
+func TestECHConfigBase64HandlesStoredShapes(t *testing.T) {
 	const body = "AEb+DQBCAAAgACCcU7maLJBQY8q0VucyTJIVJ9DThF3CI8NjiSMlChH2NQAMAAEA"
 	const body2 = "AQABAAIAAQADAAtleGFtcGxlLmNvbQAA"
 	want := body + body2
@@ -354,8 +354,8 @@ func TestEchConfigForClashHandlesStoredShapes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := echConfigForClash(tt.stored); got != tt.want {
-				t.Errorf("echConfigForClash = %q, want %q", got, tt.want)
+			if got := util.ECHConfigBase64(tt.stored); got != tt.want {
+				t.Errorf("ECHConfigBase64 = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -447,5 +447,103 @@ func TestHysteria2ObfsTypesMatchSingBox(t *testing.T) {
 	}
 	if util.Hysteria2ObfsGecko != C.Hysteria2ObfsTypeGecko {
 		t.Errorf("gecko = %q, sing-box has %q", util.Hysteria2ObfsGecko, C.Hysteria2ObfsTypeGecko)
+	}
+}
+
+// With no config the client looks ECH up in DNS only under an explicit
+// query_server_name; a config that does not convert leaves ech-opts out whole.
+func TestClashEchOpts(t *testing.T) {
+	configPem, keyPem, err := tls.ECHKeygenDefault("public.example.com")
+	if err != nil {
+		t.Fatalf("ECHKeygenDefault: %v", err)
+	}
+	lines := func(s string) []interface{} {
+		var out []interface{}
+		for _, l := range strings.Split(s, "\n") {
+			out = append(out, l)
+		}
+		return out
+	}
+	cases := []struct {
+		name string
+		ech  map[string]interface{}
+		want map[string]interface{} // nil = no ech-opts
+	}{
+		{"config", map[string]interface{}{"enabled": true, "config": lines(configPem), "query_server_name": "q.example.com"},
+			map[string]interface{}{"enable": true, "config": util.ECHConfigBase64(lines(configPem))}},
+		{"query name only", map[string]interface{}{"enabled": true, "query_server_name": "q.example.com"},
+			map[string]interface{}{"enable": true, "query-server-name": "q.example.com"}},
+		// Neither: ECH is left to the server's tolerance of plain TLS rather
+		// than a DNS lookup that a key_path or config_path row cannot answer.
+		{"neither", map[string]interface{}{"enabled": true}, nil},
+		{"config_path only", map[string]interface{}{"enabled": true, "config_path": "/etc/ech.pem"}, nil},
+		{"key pasted as config", map[string]interface{}{"enabled": true, "config": lines(keyPem)}, nil},
+		{"off", map[string]interface{}{"enabled": false, "config": lines(configPem)}, nil},
+	}
+	for _, tc := range cases {
+		outbounds := []map[string]interface{}{{
+			"type": "trojan", "tag": "tr", "server": "e.com", "server_port": float64(443), "password": "pw",
+			"tls": map[string]interface{}{"enabled": true, "server_name": "e.com", "ech": tc.ech},
+		}}
+		raw, err := (&ClashService{}).ConvertToClashMeta(&outbounds, basicClashConfig)
+		if err != nil {
+			t.Fatalf("%s: ConvertToClashMeta: %v", tc.name, err)
+		}
+		got, _ := firstProxy(t, raw)["ech-opts"].(map[string]interface{})
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: ech-opts = %#v, want %#v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestClashVlessEncryption(t *testing.T) {
+	const enc = "mlkem768x25519plus.native.0rtt.AAAA"
+	outbounds := []map[string]interface{}{{
+		"type": "vless", "tag": "v", "server": "e.com", "server_port": float64(443),
+		"uuid": "00000000-0000-4000-8000-000000000001", "encryption": enc,
+	}}
+	raw, err := (&ClashService{}).ConvertToClashMeta(&outbounds, basicClashConfig)
+	if err != nil {
+		t.Fatalf("ConvertToClashMeta: %v", err)
+	}
+	if got := firstProxy(t, raw)["encryption"]; got != enc {
+		t.Errorf("encryption = %v, want %q", got, enc)
+	}
+}
+
+// Clash reads the Host through the same helper as links and the JSON
+// subscription: the transport's own, else the SNI under TLS, never an empty one.
+func TestClashWsHostFollowsSharedRule(t *testing.T) {
+	tlsOn := map[string]interface{}{"enabled": true, "server_name": "cdn.example.com"}
+	for _, tc := range []struct {
+		name      string
+		transport map[string]interface{}
+		tls       map[string]interface{}
+		want      interface{}
+	}{
+		{"own header", map[string]interface{}{"type": "ws", "headers": map[string]interface{}{"Host": "own.example.com"}}, tlsOn, "own.example.com"},
+		{"header list", map[string]interface{}{"type": "ws", "headers": map[string]interface{}{"Host": []interface{}{"list.example.com"}}}, tlsOn, "list.example.com"},
+		{"empty header", map[string]interface{}{"type": "ws", "headers": map[string]interface{}{"Host": ""}}, tlsOn, "cdn.example.com"},
+		{"httpupgrade host", map[string]interface{}{"type": "httpupgrade", "host": "hu.example.com"}, tlsOn, "hu.example.com"},
+		{"sni fallback", map[string]interface{}{"type": "ws"}, tlsOn, "cdn.example.com"},
+		{"no tls", map[string]interface{}{"type": "ws"}, nil, nil},
+	} {
+		ob := map[string]interface{}{
+			"type": "vless", "tag": "v", "server": "1.2.3.4", "server_port": float64(443),
+			"uuid": "00000000-0000-4000-8000-000000000001", "transport": tc.transport,
+		}
+		if tc.tls != nil {
+			ob["tls"] = tc.tls
+		}
+		outbounds := []map[string]interface{}{ob}
+		raw, err := (&ClashService{}).ConvertToClashMeta(&outbounds, basicClashConfig)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		wsOpts, _ := firstProxy(t, raw)["ws-opts"].(map[string]interface{})
+		headers, _ := wsOpts["headers"].(map[string]interface{})
+		if got := headers["Host"]; got != tc.want {
+			t.Errorf("%s: Host = %#v, want %#v", tc.name, got, tc.want)
+		}
 	}
 }

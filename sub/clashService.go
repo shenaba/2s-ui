@@ -1,8 +1,6 @@
 package sub
 
 import (
-	"encoding/base64"
-	"encoding/pem"
 	"regexp"
 	"strings"
 
@@ -63,53 +61,6 @@ const ProxyGroups = `- name: Proxy
   interval: 300
   tolerance: 50
 `
-
-// echConfigPemType is the block sing-box writes for an ECH config; its key goes
-// into an "ECH KEYS" block, which must never leave the panel.
-const echConfigPemType = "ECH CONFIGS"
-
-// echConfigForClash converts a stored ECH config into what mihomo's ech-opts
-// wants, and returns "" when there is nothing usable to convert.
-//
-// The two sides disagree on shape. sing-box holds the PEM text line by line
-// (common/tls/ech.go joins the list with newlines and pem.Decodes it, block
-// type "ECH CONFIGS"), while mihomo wants the bare base64 of the ECHConfigList
-// with no armor around it.
-//
-// Decoding the PEM is what makes that robust. Slicing the list positionally --
-// everything but the first and last entry -- is right only when it holds
-// exactly BEGIN, one body line, END: generateECHKeyPair splits a PEM that ends
-// in a newline, so the panel's own output carries a trailing empty entry, and a
-// body over 64 characters wraps onto a second line. Both shapes left the END
-// marker in the value mihomo received.
-//
-// Concatenating every line instead, which upstream changed this to in 1.6.1,
-// hands mihomo the armor in every case. Do not follow it.
-// The stored value is read through util.AsStringList rather than asserted:
-// config is Listable[string], so a PEM pasted as one string with embedded
-// newlines -- and anything sing-box itself wrote for a single-entry list --
-// arrives as a bare string. That read as absent, and ech-opts was then left
-// out of a profile whose server requires ECH.
-func echConfigForClash(config interface{}) string {
-	lines := util.AsStringList(config)
-	if len(lines) == 0 {
-		return ""
-	}
-	// The type is checked, not just the parse. pem.Decode is just as happy with
-	// an "ECH KEYS" or "CERTIFICATE" block, and generateECHKeyPair hands the
-	// operator the config PEM and the key PEM concatenated into one array while
-	// the field itself is a free-text textarea -- so pasting the wrong half
-	// would have published the ECH private key to every subscriber, silently.
-	block, _ := pem.Decode([]byte(strings.Join(lines, "\n") + "\n"))
-	if block == nil || block.Type != echConfigPemType {
-		logger.Warning("sub: stored ECH config is not a ", echConfigPemType,
-			" PEM block, omitting ech-opts")
-		return ""
-	}
-	// Standard base64 with padding, which is byte for byte the PEM body this
-	// used to concatenate -- so a config that already worked keeps working.
-	return base64.StdEncoding.EncodeToString(block.Bytes)
-}
 
 func (s *ClashService) GetClash(subId string) (*string, []string, error) {
 
@@ -212,6 +163,10 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 			if t == "vless" {
 				if flow, ok := obMap["flow"].(string); ok {
 					proxy["flow"] = flow
+				}
+				// Only an external link carries this (util.GetOutboundForClash).
+				if encryption, ok := obMap["encryption"].(string); ok && encryption != "" {
+					proxy["encryption"] = encryption
 				}
 			}
 			if t == "tuic" {
@@ -426,10 +381,29 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 			}
 			// ech outbounds
 			if ech, ok := tls["ech"].(map[string]interface{}); ok && util.AsBool(ech["enabled"]) {
-				if ech_string := echConfigForClash(ech["config"]); ech_string != "" {
+				if util.HasECHConfig(ech["config"]) {
+					// A config that does not convert is left out whole rather
+					// than sent as ECH with a lookup the operator never asked
+					// for; ECHConfigBase64 has logged why.
+					if config := util.ECHConfigBase64(ech["config"]); config != "" {
+						proxy["ech-opts"] = map[string]interface{}{
+							"enable": true,
+							"config": config,
+						}
+					}
+				} else if name, _ := ech["query_server_name"].(string); strings.TrimSpace(name) != "" {
+					// No config, but a name to look it up under: the client
+					// asks that domain's DNS (the HTTPS record) for it.
+					//
+					// Only then. With neither, ech-opts used to be left out and
+					// the node connected without ECH, which the server still
+					// accepts; a lookup under the server's own name instead
+					// stops every row whose config lives in a key_path file, or
+					// in a client-side config_path Clash cannot read, the moment
+					// there is no HTTPS record to find.
 					proxy["ech-opts"] = map[string]interface{}{
-						"enable": true,
-						"config": ech_string,
+						"enable":            true,
+						"query-server-name": strings.TrimSpace(name),
 					}
 				}
 			}
@@ -480,30 +454,15 @@ func (s *ClashService) ConvertToClashMeta(outbounds *[]map[string]interface{}, b
 				if path, ok := transport["path"].(string); ok {
 					wsOpts["path"] = path
 				}
-				wsHeaders := make(map[string]interface{})
-				// Only the Host header is carried into Clash
-				if headers, ok := transport["headers"].(map[string]interface{}); ok {
-					if v, ok := headers["Host"]; ok {
-						if arr, ok := v.([]interface{}); ok {
-							if len(arr) > 0 {
-								wsHeaders["Host"] = arr[0]
-							}
-						} else {
-							wsHeaders["Host"] = v
-						}
-					}
+				// Only the Host header is carried into Clash: the transport's
+				// own, else the SNI -- the same rule links and the JSON
+				// subscription follow.
+				host := util.TransportHost(transport)
+				if host == "" {
+					host = util.DefaultTransportHost(transport, tls)
 				}
-				if _, hasHost := wsHeaders["Host"]; !hasHost {
-					if host, ok := transport["host"].(string); ok && host != "" {
-						wsHeaders["Host"] = host
-					} else if isTls {
-						if sni := util.TlsServerName(tls); sni != "" {
-							wsHeaders["Host"] = sni
-						}
-					}
-				}
-				if len(wsHeaders) > 0 {
-					wsOpts["headers"] = wsHeaders
+				if host != "" {
+					wsOpts["headers"] = map[string]interface{}{"Host": host}
 				}
 				// mihomo needs both keys before it will use early data: the
 				// header name alone leaves max-early-data at 0, which disables it.
