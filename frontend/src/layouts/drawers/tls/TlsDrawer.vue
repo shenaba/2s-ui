@@ -268,7 +268,7 @@
 
     <!-- ===================== ECH ===================== -->
     <MSwitchRow v-model="echEnabled" :label="$t('ui.echTitle')" :desc="$t('ui.echDesc')" />
-    <Ech :iTls="inTls" :oTls="outTls" :requireSni="requireSni" />
+    <Ech :iTls="inTls" :oTls="outTls" />
   </MDrawer>
 </template>
 
@@ -428,8 +428,9 @@ const splitPem = (lines: string[]): { key: string[]; cert: string[] } => {
   return { key, cert }
 }
 
-// A self-signed certificate and ECH keys are both generated for the SNI, and
-// the panel refuses an empty one. The field is off by default, tucked into the
+// A self-signed certificate is generated for the SNI, and the panel refuses an
+// empty one. (ECH keys are not: Ech.vue asks for their public name on its own,
+// since using the SNI there would send the hidden name in the clear.) The field is off by default, tucked into the
 // TLS Options menu, so the refusal alone named nothing on screen: switch it on
 // and put the cursor there instead of sending a request bound to fail.
 const sniInput = ref<HTMLInputElement>()

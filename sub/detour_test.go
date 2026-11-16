@@ -539,3 +539,38 @@ func TestApplyDialerProxiesCascades(t *testing.T) {
 		t.Errorf("a rides nothing, got a dialer-proxy")
 	}
 }
+
+// A rider is built outside addrCopies, so it has to get the ws Host fallback
+// on its own: without it sing-box sends the rider's server as the Host.
+func TestJsonDetourRiderGetsWsHostFallback(t *testing.T) {
+	front := &model.Inbound{
+		Type: "vless", Tag: "front",
+		OutJson: json.RawMessage(`{"type":"vless","tag":"front","server":"front.example.com","server_port":443}`),
+		Addrs:   json.RawMessage(`[]`),
+	}
+	rider := &model.Inbound{
+		Type: "vless", Tag: "rider",
+		OutJson: json.RawMessage(`{"type":"vless","tag":"rider","server":"panel.example.com","server_port":8443,` +
+			`"detour":"front","tls":{"enabled":true,"server_name":"cdn.example.com"},"transport":{"type":"ws","path":"/ws"}}`),
+		Addrs: json.RawMessage(`[]`),
+	}
+	outbounds, _, _, err := (&JsonService{}).getOutbounds(json.RawMessage(`{"vless":{"uuid":"u"}}`),
+		[]*model.Inbound{front, rider}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, out := range *outbounds {
+		if out["tag"] != "rider" {
+			continue
+		}
+		found = true
+		headers, _ := out["transport"].(map[string]interface{})["headers"].(map[string]interface{})
+		if headers["Host"] != "cdn.example.com" {
+			t.Errorf("rider Host = %v, want the SNI", headers["Host"])
+		}
+	}
+	if !found {
+		t.Fatalf("no rider outbound in %v", *outbounds)
+	}
+}
