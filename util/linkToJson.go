@@ -228,6 +228,12 @@ func vmess(data string, i int) (*map[string]interface{}, string, error) {
 				"fingerprint": tls_fp,
 			}
 		}
+		// vmessLink writes it since #1339; read it back like the URI forms.
+		if tls_ech, _ := dataJson["ech"].(string); tls_ech != "" {
+			if ech := echFromLink(tls_ech); ech != nil {
+				tls["ech"] = ech
+			}
+		}
 	}
 	tag, _ := dataJson["ps"].(string)
 	if i > 0 {
@@ -787,6 +793,13 @@ func GetOutboundForClash(uri string, i int) (*map[string]interface{}, string, er
 		return outbound, tag, err
 	}
 	q := u.Query()
+	// Xray's VLESS Encryption (the mlkem768x25519plus... string). mihomo
+	// speaks it, sing-box has no such field and rejects an outbound carrying
+	// one, so like XHTTP it rides only this path. "none" is the default and
+	// says nothing.
+	if encryption := strings.TrimSpace(q.Get("encryption")); encryption != "" && encryption != "none" {
+		(*outbound)["encryption"] = encryption
+	}
 	tp := strings.ToLower(q.Get("type"))
 	if tp != "xhttp" && tp != "splithttp" {
 		return outbound, tag, err
@@ -851,13 +864,8 @@ func getTls(security string, q *url.Values) map[string]interface{} {
 			"fingerprint": tls_fp,
 		}
 	}
-	if len(tls_ech) > 0 {
-		tls["ech"] = map[string]interface{}{
-			"enabled": true,
-			"config": []string{
-				tls_ech,
-			},
-		}
+	if ech := echFromLink(tls_ech); ech != nil {
+		tls["ech"] = ech
 	}
 	if disable_sni == "1" || disable_sni == "true" {
 		tls["disable_sni"] = true
