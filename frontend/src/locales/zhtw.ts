@@ -698,6 +698,7 @@ export default {
     },
   },
   in: {
+    offHint: "已停用：用戶端仍保留此入站，但在重新啟用前不會取得它的連結。",
     addr: "地址",
     port: "端口",
     ssMethod: "方法",

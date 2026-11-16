@@ -366,6 +366,7 @@ const inboundItems = computed(() => props.inboundTags.map((it) => {
     type: inb?.type ?? '',
     port: inb?.listen_port ?? '',
     online: Data().onlines?.inbound ? Data().onlines.inbound.includes(it.title) : false,
+    off: inb?.enable === false,
     node,
   }
 }))

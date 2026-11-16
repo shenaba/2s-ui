@@ -353,7 +353,14 @@ func buildReplicaInbound(raw json.RawMessage, nodeId uint) (*model.Inbound, erro
 	if outJson, ok := full["out_json"]; ok && outJson != nil {
 		inb.OutJson, _ = json.MarshalIndent(outJson, "", "  ")
 	}
-	for _, k := range []string{"id", "tls_id", "tls", "addrs", "out_json", "users", "node_id", "type", "tag"} {
+	// The node's own switch. A node too old to have one sends nothing, and its
+	// inbounds all run. Taken out of the options either way, which the panel
+	// shape spreads back out and would then report twice.
+	inb.Enable = true
+	if enable, ok := full["enable"].(bool); ok {
+		inb.Enable, inb.EnableSet = enable, true
+	}
+	for _, k := range []string{"id", "tls_id", "tls", "addrs", "out_json", "users", "node_id", "type", "tag", "enable"} {
 		delete(full, k)
 	}
 	options, err := json.MarshalIndent(full, "", "  ")
@@ -837,6 +844,7 @@ func (s *NodeSyncService) refreshReplicas(node *model.Node, client *http.Client,
 		// map keys, so identical node state re-encodes to identical bytes. It also
 		// gets nil == nil right, which jsonEqual (Unmarshal on empty input) does not.
 		if fresh.Type == cur.Type &&
+			fresh.Enable == cur.Enable &&
 			bytes.Equal(fresh.Options, cur.Options) &&
 			bytes.Equal(fresh.OutJson, cur.OutJson) &&
 			bytes.Equal(fresh.Addrs, cur.Addrs) {
@@ -848,6 +856,7 @@ func (s *NodeSyncService) refreshReplicas(node *model.Node, client *http.Client,
 			// rewritten from the node's shape.
 			if err := tx.Model(model.Inbound{}).Where("id = ?", cur.Id).Updates(map[string]interface{}{
 				"type":     fresh.Type,
+				"enable":   fresh.Enable,
 				"options":  fresh.Options,
 				"out_json": fresh.OutJson,
 				"addrs":    fresh.Addrs,
@@ -912,7 +921,12 @@ func (s *NodeSyncService) refreshNodeLinks(node *model.Node) {
 		var desired []map[string]string
 		for _, id := range ids {
 			rep, ok := replicaById[id]
-			if !ok {
+			// Switched off on its node: not running there, so no link here
+			// either, and the ones served before are stripped below. Gated
+			// here, on the stored row, rather than in genNodeReplicaLinks,
+			// where every Inbound literal -- enable false at its zero value --
+			// would read as switched off.
+			if !ok || !rep.Enable {
 				continue
 			}
 			linkClient := *c

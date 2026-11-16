@@ -120,7 +120,9 @@ func (j *JsonService) getData(subId string) (*model.Client, []*model.Inbound, er
 	// sing-box and mihomo both reject outright — and that second copy is the
 	// broken one, since adoption clears tls_id and getOutbounds then drops flow.
 	// service/client.go applies the same filter for the plain link subscription.
-	err = db.Model(model.Inbound{}).Preload("Tls").Where("id in ? and node_id IS NULL", clientInbounds).Find(&inbounds).Error
+	// A disabled inbound is not running, and its links are gone too
+	// (service.inboundLinks): served here it would be a node that never answers.
+	err = db.Model(model.Inbound{}).Preload("Tls").Where("id in ? and node_id IS NULL and enable = ?", clientInbounds, true).Find(&inbounds).Error
 	if err != nil {
 		return nil, nil, err
 	}

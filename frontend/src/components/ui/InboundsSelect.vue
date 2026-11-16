@@ -32,6 +32,7 @@
           <div class="ib-tag">{{ it.tag }}</div>
           <div class="mono ib-meta">{{ it.type }} · :{{ it.port }}</div>
         </div>
+        <span v-if="it.off" class="chip ib-off" :title="$t('in.offHint')">{{ $t('ui.off') }}</span>
         <span v-if="it.node" class="ib-node">{{ it.node }}</span>
         <Check :checked="isSel(it.id)" />
       </label>
@@ -47,7 +48,9 @@ import Pop from './Pop.vue'
 import Ico from './Ico.vue'
 import Check from './Check.vue'
 
-type Item = { id: number; tag: string; type: string; port: string | number; online: boolean; node?: string }
+// off: the inbound is switched off -- still assignable, so the client is on it
+// once it comes back, but serving nothing and giving no link until then.
+type Item = { id: number; tag: string; type: string; port: string | number; online: boolean; node?: string; off?: boolean }
 
 const props = defineProps<{
   modelValue: number[]
@@ -157,5 +160,6 @@ const summary = computed(() => {
   color: var(--brand); background: var(--brand-soft);
   padding: 2px 7px; border-radius: 6px; white-space: nowrap;
 }
+.ib-off { flex: none; height: 18px; font-size: 10.5px; padding: 0 6px; }
 .ib-empty { padding: 16px; text-align: center; color: var(--text-3); font-size: 12.5px; }
 </style>
