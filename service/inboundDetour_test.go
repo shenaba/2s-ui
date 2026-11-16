@@ -87,7 +87,7 @@ func TestDeleteRefusedWhileRidden(t *testing.T) {
 	db := newTestDB(t)
 	seedRiders(t, db)
 
-	err := (&InboundService{}).Save(db, "del", json.RawMessage(`"stls-in"`), "", "")
+	_, err := (&InboundService{}).Save(db, "del", json.RawMessage(`"stls-in"`), "", "")
 	if err == nil || !strings.Contains(err.Error(), "ss-a, ss-b") {
 		t.Fatalf("err = %v, want a refusal naming ss-a, ss-b", err)
 	}
@@ -112,7 +112,7 @@ func TestCheckClientDetour(t *testing.T) {
 	}
 
 	ss := func(detour string) *model.Inbound {
-		return &model.Inbound{Id: 100, Type: "shadowsocks", Tag: "ss-new",
+		return &model.Inbound{Id: 100, Type: "shadowsocks", Tag: "ss-new", Enable: true,
 			OutJson: json.RawMessage(`{"type":"shadowsocks","detour":"` + detour + `"}`)}
 	}
 	for _, tt := range []struct {
@@ -132,12 +132,12 @@ func TestCheckClientDetour(t *testing.T) {
 
 	// From the other side: the ridden ShadowTLS moved back to v2, which
 	// FillOutJson empties to its tls block, is refused while ridden.
-	downgraded := &model.Inbound{Id: 1, Type: "shadowtls", Tag: "stls-in",
+	downgraded := &model.Inbound{Id: 1, Type: "shadowtls", Tag: "stls-in", Enable: true,
 		OutJson: json.RawMessage(`{"tls":{"enabled":true}}`)}
 	if err := checkClientDetour(db, downgraded, "stls-in"); err == nil || !strings.Contains(err.Error(), "ss-a, ss-b") {
 		t.Errorf("err = %v, want a refusal naming the riders", err)
 	}
-	if err := checkClientDetour(db, &model.Inbound{Id: v2.Id, Type: "shadowtls", Tag: "stls-v2",
+	if err := checkClientDetour(db, &model.Inbound{Id: v2.Id, Type: "shadowtls", Tag: "stls-v2", Enable: true,
 		OutJson: v2.OutJson}, "stls-v2"); err != nil {
 		t.Errorf("a v2 nothing rides has to stay editable: %v", err)
 	}
@@ -159,7 +159,8 @@ func saveDetourDB(t *testing.T) *gorm.DB {
 }
 
 func saveInbound(db *gorm.DB, act string, payload string) error {
-	return (&InboundService{}).Save(db, act, json.RawMessage(payload), "", "panel.example.com")
+	_, err := (&InboundService{}).Save(db, act, json.RawMessage(payload), "", "panel.example.com")
+	return err
 }
 
 func detourStored(t *testing.T, db *gorm.DB, tag string) interface{} {
@@ -285,5 +286,45 @@ func TestReadClientConfig(t *testing.T) {
 		if got := readClientConfig(json.RawMessage(tt.raw)); got != tt.want {
 			t.Errorf("readClientConfig(%s) = %+v, want %+v", tt.raw, got, tt.want)
 		}
+	}
+}
+
+// Switching an inbound off is refused while an enabled client config rides
+// it -- the rider would dial its own, often loopback-only, port -- and a rider
+// cannot be switched on over a disabled target. Disabled riders do not count.
+func TestCheckClientDetourWithDisabledInbounds(t *testing.T) {
+	db := newTestDB(t)
+	target := seedRiders(t, db)
+
+	off := &model.Inbound{Id: target.Id, Type: "shadowtls", Tag: "stls-in", Enable: false,
+		OutJson: target.OutJson}
+	if err := checkClientDetour(db, off, "stls-in"); err == nil || !strings.Contains(err.Error(), "ss-a, ss-b") {
+		t.Errorf("disabling a ridden inbound: err = %v, want a refusal naming the riders", err)
+	}
+
+	// With both riders off, the target may go off too.
+	if err := db.Model(model.Inbound{}).Where("tag IN ?", []string{"ss-a", "ss-b"}).Update("enable", false).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := checkClientDetour(db, off, "stls-in"); err != nil {
+		t.Errorf("disabling an inbound only disabled configs ride: %v", err)
+	}
+	if err := db.Model(model.Inbound{}).Where("tag = ?", "stls-in").Update("enable", false).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// And a rider cannot come back on over the disabled target...
+	rider := &model.Inbound{Type: "shadowsocks", Tag: "ss-a", Enable: true,
+		OutJson: json.RawMessage(`{"type":"shadowsocks","detour":"stls-in"}`)}
+	if err := db.Model(model.Inbound{}).Select("id").Where("tag = ?", "ss-a").Scan(&rider.Id).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := checkClientDetour(db, rider, "ss-a"); err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Errorf("enabling a rider of a disabled inbound: err = %v, want a refusal", err)
+	}
+	// ...though it can be edited while it stays off.
+	rider.Enable = false
+	if err := checkClientDetour(db, rider, "ss-a"); err != nil {
+		t.Errorf("editing a disabled rider of a disabled inbound: %v", err)
 	}
 }

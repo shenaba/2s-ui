@@ -704,6 +704,7 @@ export default {
     },
   },
   in: {
+    offHint: "Switched off: the client keeps it, but gets no link for it until it is switched back on.",
     addr: "Address",
     port: "Port",
     ssMethod: "Method",

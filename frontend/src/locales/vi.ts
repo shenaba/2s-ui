@@ -698,6 +698,7 @@ export default {
     },
   },
   in: {
+    offHint: "Đã tắt: client vẫn được gán, nhưng không nhận liên kết cho đến khi bật lại.",
     addr: "Địa chỉ",
     port: "Cổng",
     ssMethod: "Phương thức",

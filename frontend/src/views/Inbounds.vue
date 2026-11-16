@@ -28,16 +28,29 @@
 
     <!-- ===================== cards ===================== -->
     <div class="entity-grid">
-      <div v-for="item in rows" :key="item.id" class="card inb-card">
+      <div v-for="item in rows" :key="item.id" class="card inb-card" :class="{ 'inb-off': !isEnabled(item) }">
         <div class="inb-head">
           <div class="inb-ico" :style="iconStyle(item.type)"><Ico name="inbound" :size="19" /></div>
-          <div style="flex: 1; min-width: 0;">
+          <div class="inb-title">
             <div class="inb-tag">{{ item.tag }}</div>
             <div class="inb-type" :style="{ color: protoColor(item.type) }">{{ item.type }}</div>
           </div>
           <Chip v-if="nodeNameOf(item)" color="brand">{{ nodeNameOf(item) }}</Chip>
-          <Chip v-else-if="isOnline(item.tag)" color="emerald" dot>{{ $t('ui.live') }}</Chip>
-          <Chip v-else>{{ $t('ui.idle') }}</Chip>
+          <Chip v-if="!isEnabled(item)">{{ $t('ui.off') }}</Chip>
+          <template v-else-if="!nodeNameOf(item)">
+            <Chip v-if="isOnline(item.tag)" color="emerald" dot>{{ $t('ui.live') }}</Chip>
+            <Chip v-else>{{ $t('ui.idle') }}</Chip>
+          </template>
+          <!-- A replica is switched on its node, where it runs. -->
+          <Toggle
+            v-if="!nodeNameOf(item)"
+            :model-value="isEnabled(item)"
+            :scale="0.8"
+            :title="$t(isEnabled(item) ? 'disable' : 'enable')"
+            :aria-label="$t(isEnabled(item) ? 'disable' : 'enable')"
+            :style="{ flex: 'none', opacity: toggling[item.id] ? 0.5 : 1, pointerEvents: toggling[item.id] ? 'none' : 'auto' }"
+            @update:model-value="toggleEnable(item)"
+          />
         </div>
         <div class="inb-meta">
           <div>
@@ -97,6 +110,7 @@ import Chip from '@/components/ui/Chip.vue'
 import DeleteConfirm from '@/components/ui/DeleteConfirm.vue'
 import Segmented from '@/components/ui/Segmented.vue'
 import CardBtn from '@/components/ui/CardBtn.vue'
+import Toggle from '@/components/ui/Toggle.vue'
 import InboundDrawer from '@/layouts/drawers/inbound/InboundDrawer.vue'
 import StatsModal from '@/layouts/drawers/StatsModal.vue'
 
@@ -159,6 +173,28 @@ const usersTitle = (item: any): string | undefined =>
 const trafficOf = (item: any): string =>
   item.node_id ? '—' : HumanReadable.sizeFormat(dataStore.inboundTraffic[item.tag] ?? 0)
 
+// ---------------- enable switch ----------------
+// Absent is on: rows from a panel that predates the switch carry no flag.
+const isEnabled = (item: any): boolean => item.enable !== false
+
+// The list rows are a projection, so the full inbound is fetched and saved
+// back with only the switch changed -- as the clients list does. Off, the
+// panel takes it out of the core and its links out of the subscriptions; a
+// refusal (a client config still riding it) is shown by the save itself.
+const toggling = ref<Record<number, boolean>>({})
+const toggleEnable = async (item: any) => {
+  if (toggling.value[item.id] || nodeNameOf(item)) return
+  toggling.value = { ...toggling.value, [item.id]: true }
+  try {
+    const full = (await Data().loadInbounds([item.id]))[0]
+    if (full?.id) {
+      await Data().save('inbounds', 'edit', { ...full, enable: !isEnabled(item) })
+    }
+  } finally {
+    toggling.value = { ...toggling.value, [item.id]: false }
+  }
+}
+
 // ---------------- drawer ----------------
 const drawer = ref({ visible: false, id: 0 })
 const openDrawer = (id: number) => {
@@ -209,6 +245,9 @@ const clone = async (id: number) => {
     }
     const newInbound = createInbound(inbound.type, {
       ...inbound,
+      // A copy is a fresh inbound to start from, on even if the original is
+      // parked: the original's state is not what the operator is copying.
+      enable: true,
       id: 0,
       tag: freeTag(inbound.type),
       listen_port: newPort,
@@ -265,6 +304,10 @@ const showStats = (tag: string) => {
   align-items: center;
   justify-content: center;
 }
+.inb-title {
+  flex: 1;
+  min-width: 0;
+}
 .inb-tag {
   font-weight: 700;
   font-size: 14px;
@@ -291,6 +334,13 @@ const showStats = (tag: string) => {
 .m-v {
   font-size: 13px;
   font-weight: 600;
+}
+/* Dimmed rather than hidden: it is still configured, and its clients keep it.
+   The switch stays at full strength, so it reads as the way back. */
+.inb-off .inb-ico,
+.inb-off .inb-title,
+.inb-off .inb-meta {
+  opacity: 0.55;
 }
 .inb-actions {
   display: flex;
