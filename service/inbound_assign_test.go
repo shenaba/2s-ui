@@ -115,6 +115,8 @@ func TestInboundTakesUsers(t *testing.T) {
 		{"shadowtls", `{"version": 2}`, false},
 		{"shadowtls", `{"version": 3}`, true},
 		{"shadowtls", `not json`, false},
+		{"shadowsocks", `{"method": "aes-128-gcm"}`, true},
+		{"shadowsocks", `{"method": "2022-blake3-aes-128-gcm", "managed": true}`, false},
 	} {
 		ib := &model.Inbound{Type: tc.typ, Options: json.RawMessage(tc.options)}
 		if got := inboundTakesUsers(ib); got != tc.want {

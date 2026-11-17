@@ -47,7 +47,6 @@ import Chip from '@/components/ui/Chip.vue'
 import Check from '@/components/ui/Check.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Users from '@/components/forms/in/Users.vue'
-import { InboundTypesWithUsers } from '@/types/inbounds'
 import { InitUsers, resolveInitUsers } from '@/types/clients'
 
 const props = defineProps<{
@@ -57,7 +56,10 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ close: [] }>()
 
-interface RemoteInbound { id: number; type: string; tag: string; adopted: boolean }
+// takesUsers: whether clients can be bound to it (the node's own rule, which
+// sees the shadowtls version and the shadowsocks managed flag; the type alone
+// cannot tell those apart).
+interface RemoteInbound { id: number; type: string; tag: string; adopted: boolean; takesUsers?: boolean }
 
 const inbounds = ref<RemoteInbound[]>([])
 const selected = ref<Set<string>>(new Set())
@@ -68,10 +70,10 @@ const importing = ref(false)
 // (@cluster) are that master's to assign, not ours.
 const initUsers = ref<InitUsers>({ model: 'none', values: [] })
 const eligible = computed(() => (Data().clients ?? []).filter((c: any) => c.group !== '@cluster'))
-// Only offered when something selected can carry users; the backend skips the
-// rest (and shadowtls before v3, which the list cannot tell apart) anyway.
+// Only offered when something selected can carry users; the backend binds
+// clients to those alone, so offering it otherwise would assign nobody.
 const assignable = computed(() =>
-  inbounds.value.some((ib) => selected.value.has(ib.tag) && InboundTypesWithUsers.includes(ib.type)))
+  inbounds.value.some((ib) => selected.value.has(ib.tag) && ib.takesUsers))
 
 const toggle = (tag: string) => {
   const next = new Set(selected.value)

@@ -58,7 +58,6 @@ func (s *InboundService) GetAll() (*[]map[string]interface{}, error) {
 	var data []map[string]interface{}
 	for _, inbound := range inbounds {
 		var shadowtls_version uint
-		ss_managed := false
 		inbData := map[string]interface{}{
 			"id":     inbound.Id,
 			"type":   inbound.Type,
@@ -80,13 +79,11 @@ func (s *InboundService) GetAll() (*[]map[string]interface{}, error) {
 				// Only v3 has a client config, so only v3 is offered to ride (#255).
 				inbData["version"] = shadowtls_version
 			}
-			if inbound.Type == "shadowsocks" {
-				json.Unmarshal(restFields["managed"], &ss_managed)
-			}
 		}
-		if s.hasUser(inbound.Type) &&
-			!(inbound.Type == "shadowtls" && shadowtls_version < 3) &&
-			!(inbound.Type == "shadowsocks" && ss_managed) {
+		// The list's "users" key is present exactly when the inbound takes
+		// users: a master adopting from this panel reads it that way
+		// (FetchNodeInbounds), so it must stay on inboundTakesUsers.
+		if inboundTakesUsers(&inbound) {
 			users := []string{}
 			err = db.Raw("SELECT clients.name FROM clients, "+jsonsql.Each("clients.inbounds")+" AS je WHERE je.value = ?", inbound.Id).Scan(&users).Error
 			if err != nil {
@@ -340,21 +337,28 @@ func (s *InboundService) hasUser(inboundType string) bool {
 	return false
 }
 
-// inboundTakesUsers reports whether clients can be bound to inbound at all: a
-// type with a user list, and for shadowtls only v3, the one fetchUsers fills.
-// It is the Go side of the inbound drawer's hasUser gate, for a row that never
-// went through the drawer (a replica adopted from a node).
+// inboundTakesUsers is the one rule for whether an inbound carries a
+// per-client user list, so whether clients can be bound to it at all: a type
+// with users, shadowtls only from v3 (the only version with a client config,
+// #255), and no managed shadowsocks (its users live outside the panel). The
+// inbounds list (GetAll) and node adoption both decide by it; the SPA's
+// counterpart is the inbound drawer's hasUser.
 func inboundTakesUsers(inbound *model.Inbound) bool {
 	if !(&InboundService{}).hasUser(inbound.Type) {
 		return false
 	}
-	if inbound.Type == "shadowtls" {
+	switch inbound.Type {
+	case "shadowtls":
 		var opt struct {
 			Version int `json:"version"`
 		}
-		if json.Unmarshal(inbound.Options, &opt) != nil || opt.Version < 3 {
-			return false
+		return json.Unmarshal(inbound.Options, &opt) == nil && opt.Version >= 3
+	case "shadowsocks":
+		var opt struct {
+			Managed bool `json:"managed"`
 		}
+		_ = json.Unmarshal(inbound.Options, &opt)
+		return !opt.Managed
 	}
 	return true
 }

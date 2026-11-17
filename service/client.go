@@ -769,8 +769,12 @@ func (s *ClientService) AddInboundsToClients(tx *gorm.DB, clientIds []uint, inbo
 		return nil
 	}
 	remarkPrefix := (&SettingService{}).SubRemarkPrefix(tx)
+	// Only what the links are built from and the two columns written back:
+	// node adoption can name every client, and a whole-row Save per client
+	// would also rewrite columns (traffic, enable) nothing here changed.
 	var clients []model.Client
-	err := tx.Model(model.Client{}).Where("id in ?", clientIds).Find(&clients).Error
+	err := tx.Model(model.Client{}).Select("id", "config", "inbounds", "links", "remark").
+		Where("id in ?", clientIds).Find(&clients).Error
 	if err != nil {
 		return err
 	}
@@ -838,7 +842,7 @@ func (s *ClientService) AddInboundsToClients(tx *gorm.DB, clientIds []uint, inbo
 		if err != nil {
 			return err
 		}
-		err = tx.Save(&client).Error
+		err = tx.Model(&client).Select("inbounds", "links").Updates(&client).Error
 		if err != nil {
 			return err
 		}

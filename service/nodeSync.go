@@ -151,6 +151,11 @@ type remoteInbound struct {
 	Type    string `json:"type"`
 	Tag     string `json:"tag"`
 	Adopted bool   `json:"adopted"`
+	// TakesUsers is whether clients can be bound to it once adopted. The
+	// node's list carries a "users" key exactly when its inboundTakesUsers
+	// holds, which is the only place the version of a shadowtls or the managed
+	// flag of a shadowsocks shows without fetching the inbound in full.
+	TakesUsers bool `json:"takesUsers"`
 }
 
 // nodeClient builds a short-lived HTTP client honouring the node's TLS mode,
@@ -181,9 +186,10 @@ func (s *NodeSyncService) FetchNodeInbounds(nodeId uint) ([]remoteInbound, error
 	}
 	var payload struct {
 		Inbounds []struct {
-			Id   uint   `json:"id"`
-			Type string `json:"type"`
-			Tag  string `json:"tag"`
+			Id    uint            `json:"id"`
+			Type  string          `json:"type"`
+			Tag   string          `json:"tag"`
+			Users json.RawMessage `json:"users"`
 		} `json:"inbounds"`
 	}
 	if err := json.Unmarshal(obj, &payload); err != nil {
@@ -197,7 +203,8 @@ func (s *NodeSyncService) FetchNodeInbounds(nodeId uint) ([]remoteInbound, error
 	for _, ib := range payload.Inbounds {
 		out = append(out, remoteInbound{
 			Id: ib.Id, Type: ib.Type, Tag: ib.Tag,
-			Adopted: adopted[ib.Tag],
+			Adopted:    adopted[ib.Tag],
+			TakesUsers: len(ib.Users) > 0 && string(ib.Users) != "null",
 		})
 	}
 	return out, nil
@@ -323,13 +330,25 @@ func (s *NodeSyncService) AdoptInbounds(nodeId uint, tags []string, initUsers st
 		if adopted == 0 {
 			return common.NewError("no matching inbounds found on the node")
 		}
-		if err := (&ClientService{}).AddInboundsToClients(tx, clientIds, assignable, ""); err != nil {
-			return err
-		}
-
 		obj := map[string]interface{}{"nodeId": nodeId, "tags": tags}
 		if len(clientIds) > 0 && len(assignable) > 0 {
-			obj["initUsers"] = clientIds
+			// A @cluster client here belongs to a master this panel is a node
+			// of: that master's reconcile rewrites its inbounds, so binding it
+			// to our replica would only flip back and forth. What remains is
+			// also what the audit row names -- the ids actually bound, not the
+			// ones asked for (a stale tab can send a deleted one).
+			var bound []uint
+			if err := tx.Model(model.Client{}).
+				Where("id IN ? AND COALESCE(`group`, '') <> ?", clientIds, clusterGroup).
+				Pluck("id", &bound).Error; err != nil {
+				return err
+			}
+			if err := (&ClientService{}).AddInboundsToClients(tx, bound, assignable, ""); err != nil {
+				return err
+			}
+			if len(bound) > 0 {
+				obj["initUsers"] = bound
+			}
 		}
 		if err := tx.Create(&model.Changes{
 			DateTime: dt, Actor: actor, Key: "inbounds", Action: "adopt",
