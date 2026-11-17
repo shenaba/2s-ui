@@ -209,6 +209,40 @@ export function coerceResetDayOfMonth(v: unknown): number {
   return n > 31 ? 31 : n
 }
 
+// The choice made in the shared clients picker (components/forms/in/Users.vue):
+// none / all / group (values = group names) / client (values = client ids).
+export interface InitUsers { model: string; values: any[] }
+
+// The clients this panel may bind to an inbound by its own choice: not the
+// @cluster ones, which a master this panel is a node of pushed here and whose
+// inbounds that master's reconcile rewrites. The backend skips them anyway
+// (bindableClientsWhere); offering them would only show a choice that is
+// dropped.
+export function bindableClients(clients: any[]): any[] {
+  return clients.filter((c: any) => c.group !== '@cluster')
+}
+
+// A group or client pick with nothing ticked resolves to nobody -- the very
+// request "none" makes -- so a form refuses it rather than go ahead as if the
+// operator had chosen none (the backend cannot tell the two apart).
+export function initUsersIncomplete(init: InitUsers): boolean {
+  return (init.model === 'group' || init.model === 'client') && init.values.length === 0
+}
+
+// Resolves that choice to the client ids the backend's initUsers field takes,
+// for a new local inbound and for inbounds adopted from a node alike.
+export function resolveInitUsers(clients: any[], init: InitUsers): number[] {
+  switch (init.model) {
+    case 'all':
+      return clients.map((c: any) => c.id)
+    case 'group':
+      return clients.filter((c: any) => init.values.includes(c.group)).map((c: any) => c.id)
+    case 'client':
+      return [...init.values]
+  }
+  return []
+}
+
 export function createClient<T extends Client>(json?: Partial<T>): Client {
   defaultClient.name = RandomUtil.randomSeq(8)
   const defaultObject: Client = { ...defaultClient, ...(json || {}) }

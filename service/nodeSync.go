@@ -151,6 +151,25 @@ type remoteInbound struct {
 	Type    string `json:"type"`
 	Tag     string `json:"tag"`
 	Adopted bool   `json:"adopted"`
+	// TakesUsers is whether clients can be bound to it once adopted
+	// (nodeInboundTakesUsers) -- the same answer AdoptInbounds acts on.
+	TakesUsers bool `json:"takesUsers"`
+}
+
+// nodeInboundTakesUsers decides, from one entry of a node's inbounds list,
+// whether clients adopted onto it can be bound. The import modal shows the
+// clients picker on it and AdoptInbounds binds by it, so the two cannot
+// disagree.
+//
+// Two halves, each the side that knows. The node's list carries a "users" key
+// exactly when its own rule holds (takesUsers): only it sees a shadowtls's
+// version or a shadowsocks's managed flag, and a node too old to know a type
+// lists no users for it. And this panel must know the type too: the client
+// config it pushes has no block for a protocol it has never heard of, so a
+// newer node's type would bind clients the node then serves none of.
+func nodeInboundTakesUsers(inboundType string, users json.RawMessage) bool {
+	listed := len(users) > 0 && string(users) != "null"
+	return listed && (&InboundService{}).hasUser(inboundType)
 }
 
 // nodeClient builds a short-lived HTTP client honouring the node's TLS mode,
@@ -181,9 +200,10 @@ func (s *NodeSyncService) FetchNodeInbounds(nodeId uint) ([]remoteInbound, error
 	}
 	var payload struct {
 		Inbounds []struct {
-			Id   uint   `json:"id"`
-			Type string `json:"type"`
-			Tag  string `json:"tag"`
+			Id    uint            `json:"id"`
+			Type  string          `json:"type"`
+			Tag   string          `json:"tag"`
+			Users json.RawMessage `json:"users"`
 		} `json:"inbounds"`
 	}
 	if err := json.Unmarshal(obj, &payload); err != nil {
@@ -197,7 +217,8 @@ func (s *NodeSyncService) FetchNodeInbounds(nodeId uint) ([]remoteInbound, error
 	for _, ib := range payload.Inbounds {
 		out = append(out, remoteInbound{
 			Id: ib.Id, Type: ib.Type, Tag: ib.Tag,
-			Adopted: adopted[ib.Tag],
+			Adopted:    adopted[ib.Tag],
+			TakesUsers: nodeInboundTakesUsers(ib.Type, ib.Users),
 		})
 	}
 	return out, nil
@@ -219,7 +240,17 @@ func (s *NodeSyncService) adoptedTags(nodeId uint) (map[string]bool, error) {
 // AdoptInbounds pulls the full panel-shape inbound for each selected tag and
 // stores it as a local replica row (node_id set). tag collisions fail loudly —
 // the tag is the reconciliation key, so we never silently rename.
-func (s *NodeSyncService) AdoptInbounds(nodeId uint, tags []string, actor string) error {
+//
+// initUsers is the same comma-separated client id list `api/save` takes for a
+// new local inbound, and goes through the same AddInboundsToClients: the
+// clients it names are bound to every adopted replica that carries users
+// (issue #287). The none/all/group/client choice is resolved to ids by the
+// SPA's shared Users picker, exactly as for a local inbound.
+func (s *NodeSyncService) AdoptInbounds(nodeId uint, tags []string, initUsers string, actor string) error {
+	clientIds, err := parseClientIds(initUsers)
+	if err != nil {
+		return err
+	}
 	if len(tags) == 0 {
 		return nil
 	}
@@ -247,17 +278,21 @@ func (s *NodeSyncService) AdoptInbounds(nodeId uint, tags []string, actor string
 	}
 	var list struct {
 		Inbounds []struct {
-			Id  uint   `json:"id"`
-			Tag string `json:"tag"`
+			Id    uint            `json:"id"`
+			Type  string          `json:"type"`
+			Tag   string          `json:"tag"`
+			Users json.RawMessage `json:"users"`
 		} `json:"inbounds"`
 	}
 	if err := json.Unmarshal(listObj, &list); err != nil {
 		return common.NewError("unexpected inbounds payload from node")
 	}
 	var ids []string
+	takes := map[string]bool{}
 	for _, ib := range list.Inbounds {
 		if wanted[ib.Tag] {
 			ids = append(ids, strconv.FormatUint(uint64(ib.Id), 10))
+			takes[ib.Tag] = nodeInboundTakesUsers(ib.Type, ib.Users)
 		}
 	}
 	if len(ids) == 0 {
@@ -279,6 +314,7 @@ func (s *NodeSyncService) AdoptInbounds(nodeId uint, tags []string, actor string
 	err = db.Transaction(func(tx *gorm.DB) error {
 		dt := time.Now().Unix()
 		adopted := 0
+		var assignable []uint
 		for _, raw := range payload.Inbounds {
 			var meta struct {
 				Tag string `json:"tag"`
@@ -304,14 +340,37 @@ func (s *NodeSyncService) AdoptInbounds(nodeId uint, tags []string, actor string
 			if err := tx.Create(replica).Error; err != nil {
 				return err
 			}
+			if takes[meta.Tag] {
+				assignable = append(assignable, replica.Id)
+			}
 			adopted++
 		}
 		if adopted == 0 {
 			return common.NewError("no matching inbounds found on the node")
 		}
+		obj := map[string]interface{}{"nodeId": nodeId, "tags": tags}
+		if len(clientIds) > 0 {
+			// Clients were asked for, so binding nobody is a failure, not an
+			// import-only success: the caller would otherwise believe access
+			// was granted. The modal never asks in either case (it offers the
+			// picker on the same nodeInboundTakesUsers, and only bindable
+			// clients), so this is a direct API caller or a stale tab.
+			if len(assignable) == 0 {
+				return common.NewError("none of the selected inbounds takes users: import them without clients")
+			}
+			bound, err := (&ClientService{}).AddInboundsToClients(tx, clientIds, assignable, "")
+			if err != nil {
+				return err
+			}
+			if len(bound) == 0 {
+				return common.NewError("none of the selected clients can be bound (deleted, or managed by another master)")
+			}
+			// The ids actually bound, not the ones asked for.
+			obj["initUsers"] = bound
+		}
 		if err := tx.Create(&model.Changes{
 			DateTime: dt, Actor: actor, Key: "inbounds", Action: "adopt",
-			Obj: json.RawMessage(mustJSON(map[string]interface{}{"nodeId": nodeId, "tags": tags})),
+			Obj: json.RawMessage(mustJSON(obj)),
 		}).Error; err != nil {
 			return err
 		}

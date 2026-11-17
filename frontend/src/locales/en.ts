@@ -33,6 +33,7 @@ export default {
     dplData: "Duplicate Data",
     core: "Sing-Box Error",
     invalidData: "Invalid Data",
+    pickClients: "Tick at least one group or client, or set the clients to none.",
   },
   // The push socket carries every live number and the config payload; when it is
   // down the UI has nothing to fall back on, so both states must say why.

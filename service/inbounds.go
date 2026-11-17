@@ -86,9 +86,10 @@ func (s *InboundService) GetAll() (*[]map[string]interface{}, error) {
 				json.Unmarshal(restFields["managed"], &ss_managed)
 			}
 		}
-		if s.hasUser(inbound.Type) &&
-			!(inbound.Type == "shadowtls" && shadowtls_version < 3) &&
-			!(inbound.Type == "shadowsocks" && ss_managed) {
+		// The list's "users" key is present exactly when the inbound takes
+		// users: a master adopting from this panel reads it that way
+		// (nodeInboundTakesUsers), so it must stay on takesUsers.
+		if takesUsers(inbound.Type, int(shadowtls_version), ss_managed) {
 			users := []string{}
 			err = db.Raw("SELECT clients.name FROM clients, "+jsonsql.Each("clients.inbounds")+" AS je WHERE je.value = ?", inbound.Id).Scan(&users).Error
 			if err != nil {
@@ -407,6 +408,26 @@ func (s *InboundService) hasUser(inboundType string) bool {
 	return false
 }
 
+// takesUsers is the one rule for whether an inbound carries a
+// per-client user list, so whether clients can be bound to it at all: a type
+// with users, shadowtls only from v3 (the only version with a client config,
+// #255), and no managed shadowsocks (its users live outside the panel). The
+// inbounds list (GetAll) decides by it, and so, through that list, does a
+// master adopting from this panel; the SPA's counterpart is the inbound
+// drawer's hasUser.
+func takesUsers(inboundType string, shadowtlsVersion int, ssManaged bool) bool {
+	if !(&InboundService{}).hasUser(inboundType) {
+		return false
+	}
+	switch inboundType {
+	case "shadowtls":
+		return shadowtlsVersion >= 3
+	case "shadowsocks":
+		return !ssManaged
+	}
+	return true
+}
+
 // fetchUsers collects the per-client config for one inbound type. condition is
 // a WHERE fragment and args are its placeholders -- callers must not build
 // values into the fragment, since one of them comes from a request.
@@ -542,7 +563,9 @@ func (s *InboundService) initUsers(db *gorm.DB, inboundJson []byte, clientIds st
 		return nil, err
 	}
 
-	inbound["users"], err = s.fetchUsers(db, inboundType, "id IN ?", inbound, ClientIds)
+	// The same clients AddInboundsToClients binds, or the core would serve a
+	// @cluster client whose row never gets the inbound.
+	inbound["users"], err = s.fetchUsers(db, inboundType, "id IN ? AND "+bindableClientsWhere, inbound, ClientIds, clusterGroup)
 	if err != nil {
 		return nil, err
 	}

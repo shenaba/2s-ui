@@ -33,6 +33,7 @@ export default {
     dplData: "重复数据",
     core: "Sing-Box 错误",
     invalidData: "无效数据",
+    pickClients: "请至少勾选一个分组或客户端，或将客户端设为“无”。",
   },
   ws: {
     down: "连接已断开",

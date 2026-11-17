@@ -1114,7 +1114,10 @@ func (a *ApiService) AdoptInbounds(c *gin.Context, loginUser string) {
 		jsonMsg(c, "adoptInbounds", common.NewError("invalid tags"))
 		return
 	}
-	if err := a.NodeSyncService.AdoptInbounds(uint(id), tags, loginUser); err != nil {
+	// Same field, same format as api/save's initUsers for a new local inbound;
+	// empty means import only.
+	initUsers := c.PostForm("initUsers")
+	if err := a.NodeSyncService.AdoptInbounds(uint(id), tags, initUsers, loginUser); err != nil {
 		jsonMsg(c, "adoptInbounds", err)
 		return
 	}

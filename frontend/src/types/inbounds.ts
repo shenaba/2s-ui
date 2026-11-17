@@ -36,6 +36,14 @@ type InType = typeof InTypes[keyof typeof InTypes]
 // service/inboundProxyProtocol.go, which refuses the rest on save.
 export const ProxyProtocolTypes: string[] = [InTypes.VLESS, InTypes.VMess, InTypes.Trojan, InTypes.AnyTls]
 
+// The inbounds clients can be bound to (shadowtls only from version 3). Keep in
+// step with inboundTypesWithUsers in service/inbounds.go: the inbound drawer and
+// the node import modal both gate the clients picker on it.
+export const InboundTypesWithUsers: string[] = [
+  'mixed', 'socks', 'http', 'shadowsocks', 'snell', 'vmess', 'trojan', 'naive',
+  'hysteria', 'shadowtls', 'tuic', 'hysteria2', 'vless', 'anytls', 'mieru',
+]
+
 export interface Addr {
   server: string
   server_port: number
