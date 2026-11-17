@@ -47,7 +47,7 @@ import Chip from '@/components/ui/Chip.vue'
 import Check from '@/components/ui/Check.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Users from '@/components/forms/in/Users.vue'
-import { InitUsers, resolveInitUsers } from '@/types/clients'
+import { InitUsers, bindableClients, resolveInitUsers } from '@/types/clients'
 
 const props = defineProps<{
   visible: boolean
@@ -65,13 +65,12 @@ const inbounds = ref<RemoteInbound[]>([])
 const selected = ref<Set<string>>(new Set())
 const loading = ref(false)
 const importing = ref(false)
-// The same clients picker the inbound drawer shows for a new inbound, resolved
-// to ids the same way. Clients this panel holds as a node of another master
-// (@cluster) are that master's to assign, not ours.
+// The same clients picker the inbound drawer shows for a new inbound, over the
+// same bindable clients, resolved to ids the same way.
 const initUsers = ref<InitUsers>({ model: 'none', values: [] })
-const eligible = computed(() => (Data().clients ?? []).filter((c: any) => c.group !== '@cluster'))
-// Only offered when something selected can carry users; the backend binds
-// clients to those alone, so offering it otherwise would assign nobody.
+const eligible = computed(() => bindableClients(Data().clients ?? []))
+// Only offered when something selected can carry users. takesUsers is the
+// backend's nodeInboundTakesUsers, the same test adoption binds by.
 const assignable = computed(() =>
   inbounds.value.some((ib) => selected.value.has(ib.tag) && ib.takesUsers))
 

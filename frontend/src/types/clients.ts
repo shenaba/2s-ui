@@ -213,6 +213,15 @@ export function coerceResetDayOfMonth(v: unknown): number {
 // none / all / group (values = group names) / client (values = client ids).
 export interface InitUsers { model: string; values: any[] }
 
+// The clients this panel may bind to an inbound by its own choice: not the
+// @cluster ones, which a master this panel is a node of pushed here and whose
+// inbounds that master's reconcile rewrites. The backend skips them anyway
+// (bindableClientsWhere); offering them would only show a choice that is
+// dropped.
+export function bindableClients(clients: any[]): any[] {
+  return clients.filter((c: any) => c.group !== '@cluster')
+}
+
 // Resolves that choice to the client ids the backend's initUsers field takes,
 // for a new local inbound and for inbounds adopted from a node alike.
 export function resolveInitUsers(clients: any[], init: InitUsers): number[] {

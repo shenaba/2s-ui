@@ -112,7 +112,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Data from '@/store/modules/data'
 import { InTypes, ProxyProtocolTypes, InboundTypesWithUsers, createInbound, Addr, followListenPort } from '@/types/inbounds'
-import { InitUsers, resolveInitUsers } from '@/types/clients'
+import { InitUsers, bindableClients, resolveInitUsers } from '@/types/clients'
 import { checkHopInterval } from '@/types/hysteria2'
 import { push } from 'notivue'
 import RandomUtil from '@/plugins/randomUtil'
@@ -247,7 +247,7 @@ const subTitle = computed(() => {
   return inbound.value.type + (port ? ' · :' + port : '')
 })
 
-const clients = computed((): any[] => Data().clients ?? [])
+const clients = computed((): any[] => bindableClients(Data().clients ?? []))
 
 const addrsList = computed((): any[] => inbound.value.addrs ?? [])
 

@@ -751,8 +751,18 @@ func (s *ClientService) UpdateClientsOnInboundAdd(tx *gorm.DB, initIds string, i
 	if err != nil {
 		return err
 	}
-	return s.AddInboundsToClients(tx, clientIds, []uint{inboundId}, hostname)
+	_, err = s.AddInboundsToClients(tx, clientIds, []uint{inboundId}, hostname)
+	return err
 }
+
+// bindableClientsWhere narrows a client query (one placeholder: clusterGroup)
+// to the clients this panel may bind to inbounds by its own choice. A @cluster
+// client was pushed here by a master this panel is a node of, and that
+// master's reconcile compares and rewrites its inbounds: an id bound here would
+// be stripped again, its access flipping on and off with every round. Both
+// binding paths -- a new local inbound (initUsers, including the core user
+// list it builds) and node adoption -- go through it.
+const bindableClientsWhere = "COALESCE(`group`, '') <> ?"
 
 // AddInboundsToClients appends inboundIds to each client's inbound list and
 // gives it the links they produce. It is the one write path for "these new
@@ -763,10 +773,12 @@ func (s *ClientService) UpdateClientsOnInboundAdd(tx *gorm.DB, initIds string, i
 // panel's hostname. Its real link is the node's own "external" entry, which
 // refreshNodeLinks folds in on the next reconcile — the same reason the other
 // link paths filter on node_id IS NULL. An id the client already holds is not
-// added twice, and a client id that matches no row is skipped, as before.
-func (s *ClientService) AddInboundsToClients(tx *gorm.DB, clientIds []uint, inboundIds []uint, hostname string) error {
+// added twice, and a client id that matches no row is skipped, as before; so
+// is a @cluster client (bindableClientsWhere). It returns the ids of the
+// clients it did bind.
+func (s *ClientService) AddInboundsToClients(tx *gorm.DB, clientIds []uint, inboundIds []uint, hostname string) ([]uint, error) {
 	if len(clientIds) == 0 || len(inboundIds) == 0 {
-		return nil
+		return nil, nil
 	}
 	remarkPrefix := (&SettingService{}).SubRemarkPrefix(tx)
 	// Only what the links are built from and the two columns written back:
@@ -774,15 +786,16 @@ func (s *ClientService) AddInboundsToClients(tx *gorm.DB, clientIds []uint, inbo
 	// would also rewrite columns (traffic, enable) nothing here changed.
 	var clients []model.Client
 	err := tx.Model(model.Client{}).Select("id", "config", "inbounds", "links", "remark").
-		Where("id in ?", clientIds).Find(&clients).Error
+		Where("id in ? AND "+bindableClientsWhere, clientIds, clusterGroup).Find(&clients).Error
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var inbounds []model.Inbound
 	err = tx.Model(model.Inbound{}).Preload("Tls").Where("id in ?", inboundIds).Find(&inbounds).Error
 	if err != nil {
-		return err
+		return nil, err
 	}
+	var bound []uint
 	// Local inbounds whose links this call regenerates, by tag: a stale link
 	// under one of these remarks is replaced rather than kept beside the new.
 	localTags := map[string]bool{}
@@ -812,7 +825,7 @@ func (s *ClientService) AddInboundsToClients(tx *gorm.DB, clientIds []uint, inbo
 		}
 		client.Inbounds, err = json.MarshalIndent(clientInbounds, "", "  ")
 		if err != nil {
-			return err
+			return nil, err
 		}
 		// Add links
 		var clientLinks []map[string]string
@@ -840,14 +853,15 @@ func (s *ClientService) AddInboundsToClients(tx *gorm.DB, clientIds []uint, inbo
 
 		client.Links, err = json.MarshalIndent(newClientLinks, "", "  ")
 		if err != nil {
-			return err
+			return nil, err
 		}
 		err = tx.Model(&client).Select("inbounds", "links").Updates(&client).Error
 		if err != nil {
-			return err
+			return nil, err
 		}
+		bound = append(bound, client.Id)
 	}
-	return nil
+	return bound, nil
 }
 
 func (s *ClientService) UpdateClientsOnInboundDelete(tx *gorm.DB, id uint, tag string) error {
