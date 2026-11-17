@@ -23,6 +23,11 @@ func (s *DepleteJob) Run() {
 	// config before the commit would come up with the depleted clients still
 	// enabled, and the hot update below would have skipped the core.
 	service.HoldCore(func() {
+		// Inbounds over their own cap (#289) first, so the client pass below
+		// does not rebuild one that is about to go.
+		if _, inbErr := s.InboundService.DepleteInbounds(); inbErr != nil {
+			logger.Warning("Disable depleted inbounds failed: ", inbErr)
+		}
 		var inboundIds []uint
 		inboundIds, enableChanged, err = s.ClientService.DepleteClients()
 		if err != nil || len(inboundIds) == 0 {

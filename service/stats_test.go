@@ -72,10 +72,14 @@ func TestTopTags(t *testing.T) {
 // The inbounds list shows one traffic figure per inbound. It cannot be the sum
 // of that inbound's clients: a client's up/down is its total across every
 // inbound it belongs to, so two inbounds sharing one busy client reported the
-// same number. This is the figure the core actually measured per inbound —
-// seeded from the stats table, then advanced by each flush.
-func TestInboundTrafficSeedsThenAccumulates(t *testing.T) {
+// same number. This is the figure the core actually measured per inbound,
+// folded into the row's own counters by the flush -- the same ones the
+// inbound's cap is judged against (#289), whether or not traffic history is
+// kept.
+func TestInboundTrafficAccumulatesOnTheRow(t *testing.T) {
 	logger.InitLogger(logging.CRITICAL)
+	resetPending()
+	t.Cleanup(resetPending)
 
 	dir := t.TempDir()
 	if err := database.InitDB(filepath.Join(dir, "inboundtraffic.db")); err != nil {
@@ -88,54 +92,60 @@ func TestInboundTrafficSeedsThenAccumulates(t *testing.T) {
 	})
 	db := database.GetDB()
 
-	now := time.Now().Unix()
-	rows := []model.Stats{
-		{Resource: "inbound", Tag: "busy", DateTime: now - 60, Direction: true, Traffic: 300},
-		{Resource: "inbound", Tag: "busy", DateTime: now - 60, Direction: false, Traffic: 200},
-		// An older bucket still counts: this is a total, not a window.
-		{Resource: "inbound", Tag: "busy", DateTime: now - 90000, Direction: true, Traffic: 1},
-		{Resource: "inbound", Tag: "quiet", DateTime: now - 60, Direction: true, Traffic: 10},
-		// The same client's traffic under another resource must not be folded in.
-		{Resource: "user", Tag: "alice", DateTime: now - 60, Direction: true, Traffic: 500},
-		{Resource: "outbound", Tag: "direct", DateTime: now - 60, Direction: true, Traffic: 700},
-	}
-	for _, row := range rows {
-		if err := db.Create(&row).Error; err != nil {
-			t.Fatalf("seed %s/%s: %v", row.Resource, row.Tag, err)
+	nodeId := uint(3)
+	for _, inb := range []*model.Inbound{
+		{Type: "mixed", Tag: "busy", Up: 500, Down: 1, Options: []byte(`{}`)},
+		{Type: "mixed", Tag: "quiet", Options: []byte(`{}`)},
+		{Type: "mixed", Tag: "remote", NodeId: &nodeId, Options: []byte(`{}`)},
+	} {
+		if err := db.Create(inb).Error; err != nil {
+			t.Fatalf("seed inbound %s: %v", inb.Tag, err)
 		}
 	}
 
-	// Package state outlives one test.
-	InvalidateInboundTraffic()
-	t.Cleanup(InvalidateInboundTraffic)
-
+	// What a stopped core leaves for the next flush. With no core running,
+	// SaveStats commits exactly this.
+	carryPending([]model.Stats{
+		{Resource: "inbound", Tag: "busy", Direction: true, Traffic: 7},
+		{Resource: "inbound", Tag: "busy", Direction: false, Traffic: 3},
+		{Resource: "inbound", Tag: "quiet", Direction: false, Traffic: 10},
+		// A replica's tag is counted on its node, never here.
+		{Resource: "inbound", Tag: "remote", Direction: true, Traffic: 40},
+		// An endpoint's traffic arrives as an inbound's; there is no row.
+		{Resource: "inbound", Tag: "wg-endpoint", Direction: true, Traffic: 40},
+		// A client's traffic under the same tag is not the inbound's.
+		{Resource: "user", Tag: "busy", Direction: true, Traffic: 900},
+	})
 	var stats StatsService
-	got := stats.GetInboundTraffic()
-	want := map[string]int64{"busy": 501, "quiet": 10}
-	if len(got) != len(want) {
-		t.Fatalf("seeded totals %v, want %v", got, want)
+	// Traffic history off: the counters must move all the same.
+	if err := stats.SaveStats(false, 60); err != nil {
+		t.Fatalf("save stats: %v", err)
 	}
-	for tag, traffic := range want {
-		if got[tag] != traffic {
-			t.Errorf("seeded %q = %d, want %d", tag, got[tag], traffic)
+
+	want := map[string][2]int64{"busy": {507, 4}, "quiet": {0, 10}, "remote": {0, 0}}
+	var rows []model.Inbound
+	if err := db.Find(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, inb := range rows {
+		if w := want[inb.Tag]; inb.Up != w[0] || inb.Down != w[1] {
+			t.Errorf("%s: up/down = %d/%d, want %d/%d", inb.Tag, inb.Up, inb.Down, w[0], w[1])
 		}
 	}
-
-	// A flush advances the totals without re-reading the table, and an inbound
-	// with no history at all starts from its delta.
-	addInboundTraffic(map[string]int64{"busy": 7, "brandnew": 3})
-	got = stats.GetInboundTraffic()
-	if got["busy"] != 508 {
-		t.Errorf("busy after flush = %d, want 508", got["busy"])
-	}
-	if got["brandnew"] != 3 {
-		t.Errorf("brandnew after flush = %d, want 3", got["brandnew"])
+	var history int64
+	db.Model(model.Stats{}).Count(&history)
+	if history != 0 {
+		t.Errorf("history off wrote %d stats rows", history)
 	}
 
-	// The returned map is a copy: a caller mutating it must not corrupt the
-	// published totals.
-	got["busy"] = 0
-	if again := stats.GetInboundTraffic(); again["busy"] != 508 {
-		t.Errorf("busy = %d after a caller mutated an earlier result, want 508", again["busy"])
+	got := stats.GetInboundTraffic()
+	wantTotals := map[string]int64{"busy": 511, "quiet": 10}
+	if len(got) != len(wantTotals) {
+		t.Fatalf("totals %v, want %v (replicas left out)", got, wantTotals)
+	}
+	for tag, traffic := range wantTotals {
+		if got[tag] != traffic {
+			t.Errorf("total %q = %d, want %d", tag, got[tag], traffic)
+		}
 	}
 }

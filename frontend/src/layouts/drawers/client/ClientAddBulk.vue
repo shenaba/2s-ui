@@ -87,6 +87,7 @@
             <div style="font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ it.tag }}</div>
             <div class="mono" style="font-size: 11.5px; color: var(--text-3);">{{ it.type }} · :{{ it.port }}</div>
           </div>
+          <span v-if="it.off" class="chip" style="flex: none; height: 18px; font-size: 10.5px; padding: 0 6px;" :title="$t('in.offHint')">{{ $t('ui.off') }}</span>
           <Check :checked="bulkData.clientInbounds.includes(it.id)" />
         </label>
       </div>
@@ -176,6 +177,7 @@ const inboundItems = computed(() => props.inboundTags.map((it) => {
     type: inb?.type ?? '',
     port: inb?.listen_port ?? '',
     online: Data().onlines?.inbound ? Data().onlines.inbound.includes(it.title) : false,
+    off: inb?.enable === false,
   }
 }))
 

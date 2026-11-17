@@ -114,3 +114,34 @@ func TestGetOutboundForClashExtraNumbersAndPresence(t *testing.T) {
 		t.Fatalf("numeric precision/type changed: %v", extra)
 	}
 }
+
+// VLESS Encryption reaches the Clash export, which mihomo can use, and never the
+// sing-box one, which would reject the outbound (upstream #1337).
+func TestGetOutboundForClashVlessEncryption(t *testing.T) {
+	const enc = "mlkem768x25519plus.native.0rtt.AAAA"
+	for _, tc := range []struct {
+		query url.Values
+		want  interface{}
+	}{
+		{url.Values{"security": {"tls"}, "encryption": {enc}}, enc},
+		{url.Values{"type": {"xhttp"}, "security": {"tls"}, "encryption": {enc}}, enc},
+		{url.Values{"security": {"tls"}, "encryption": {"none"}}, nil},
+		{url.Values{"security": {"tls"}}, nil},
+	} {
+		uri := xhttpTestURI(tc.query)
+		clash, _, err := GetOutboundForClash(uri, 0)
+		if err != nil {
+			t.Fatalf("%s: %v", uri, err)
+		}
+		if got := (*clash)["encryption"]; got != tc.want {
+			t.Errorf("%s: clash encryption = %v, want %v", uri, got, tc.want)
+		}
+		singbox, _, err := GetOutbound(uri, 0)
+		if err != nil {
+			t.Fatalf("%s: %v", uri, err)
+		}
+		if _, ok := (*singbox)["encryption"]; ok {
+			t.Errorf("%s: encryption reached the sing-box outbound", uri)
+		}
+	}
+}

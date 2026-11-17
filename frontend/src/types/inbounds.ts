@@ -91,6 +91,15 @@ interface InboundBasics extends Listen {
   id: number
   type: InType
   tag: string
+  // false keeps the inbound but runs nothing for it: it is out of the core and
+  // its links are out of every subscription. Absent on a new one means on; an
+  // edit that leaves it out keeps what is stored.
+  enable?: boolean
+  // The traffic cap and the server's counters (#289). Panel-only like the
+  // fields above; a save never writes up/down.
+  volume?: number
+  up?: number
+  down?: number
   tls_id: number
   // Set when this inbound is a read-only replica of one living on a node.
   node_id?: number

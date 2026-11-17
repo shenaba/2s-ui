@@ -696,10 +696,6 @@ func (a *ApiService) ImportDb(c *gin.Context) {
 	defer file.Close()
 	err = database.ImportDB(file)
 	if err == nil {
-		// The imported file carries its own stats history, and the panel keeps
-		// running on the swapped database — so the cached totals belong to a
-		// database that is gone.
-		service.InvalidateInboundTraffic()
 		// The core reads the trusted PROXY protocol fronts from memory, not
 		// the database; the imported file names its own.
 		service.ApplyProxyProtocol()

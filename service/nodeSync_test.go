@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -427,5 +428,128 @@ func TestRefreshReplicasPullsNodeSideEdits(t *testing.T) {
 	}
 	if changes != 1 {
 		t.Errorf("changes rows = %d after an unchanged refresh, want the first 1", changes)
+	}
+}
+
+// A node's own switch reaches its replica here: switched off there, the replica
+// reads off and its "[node] " links go; back on, they return. A node too old to
+// send the field keeps its replicas on, and the field never lands in Options.
+func TestRefreshReplicasFollowsTheNodeSwitch(t *testing.T) {
+	logger.InitLogger(logging.CRITICAL)
+	if err := database.InitDB(filepath.Join(t.TempDir(), "replicas.db")); err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	db := database.GetDB()
+	t.Cleanup(func() {
+		if err := database.CloseDBForTest(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	})
+
+	nid := uint(3)
+	replica := model.Inbound{
+		Type: "vless", Tag: "vless-node", NodeId: &nid,
+		Options: json.RawMessage(`{"listen_port":443}`),
+		OutJson: json.RawMessage(`{"server":"node.example","server_port":443}`),
+		Addrs:   json.RawMessage(`[]`),
+	}
+	if err := db.Create(&replica).Error; err != nil {
+		t.Fatalf("seed replica: %v", err)
+	}
+
+	enableField := `,"enable":false`
+	node := &model.Node{Id: nid, Name: "tokyo", Enable: true}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"obj":{"inbounds":[
+			{"id":9,"type":"vless","tag":"vless-node","addrs":[]` + enableField + `,
+			 "out_json":{"server":"node.example","server_port":443},"listen_port":443}]}}`))
+	}))
+	defer srv.Close()
+	node.BaseUrl = srv.URL
+	var svc NodeSyncService
+	tagToId := map[string]uint{"vless-node": 9}
+	client := &model.Client{Name: "u1", Config: json.RawMessage(`{"vless":{"uuid":"uuid-1"}}`)}
+
+	reload := func() model.Inbound {
+		t.Helper()
+		var got model.Inbound
+		if err := db.Where("id = ?", replica.Id).First(&got).Error; err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(got.Options), "enable") {
+			t.Errorf("enable landed in the replica's options: %s", got.Options)
+		}
+		return got
+	}
+
+	if !svc.refreshReplicas(node, srv.Client(), tagToId) {
+		t.Fatal("switching the node's inbound off was not picked up")
+	}
+	got := reload()
+	if got.Enable {
+		t.Error("replica still on after the node switched it off")
+	}
+	// The links themselves, through the reconcile's own refresh.
+	nodeLinkCount := func() int {
+		t.Helper()
+		svc.refreshNodeLinks(node)
+		var c model.Client
+		if err := db.Where("name = ?", "u1").First(&c).Error; err != nil {
+			t.Fatal(err)
+		}
+		var links []map[string]string
+		_ = json.Unmarshal(c.Links, &links)
+		return len(links)
+	}
+	if err := db.Create(&model.Client{Enable: true, Name: "u1", Config: client.Config,
+		Inbounds: json.RawMessage(`[` + strconv.FormatUint(uint64(replica.Id), 10) + `]`),
+		Links:    json.RawMessage(`[{"remark":"[tokyo] vless-node","type":"external","uri":"vless://old"}]`)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if n := nodeLinkCount(); n != 0 {
+		t.Errorf("a switched-off replica still serves %d links", n)
+	}
+
+	enableField = `,"enable":true`
+	if !svc.refreshReplicas(node, srv.Client(), tagToId) {
+		t.Fatal("switching it back on was not picked up")
+	}
+	got = reload()
+	if !got.Enable {
+		t.Error("replica still off after the node switched it back on")
+	}
+	if n := nodeLinkCount(); n != 1 {
+		t.Errorf("replica back on serves %d links, want 1", n)
+	}
+
+	// An older node says nothing: its inbounds run, so nothing moves.
+	enableField = ``
+	if svc.refreshReplicas(node, srv.Client(), tagToId) {
+		t.Error("a node without the field changed the replica")
+	}
+	if !reload().Enable {
+		t.Error("a node without the field switched the replica off")
+	}
+}
+
+// Adopting an inbound the node has switched off stores it off.
+func TestBuildReplicaInboundCarriesTheSwitch(t *testing.T) {
+	off, err := buildReplicaInbound(json.RawMessage(`{"type":"vless","tag":"a","enable":false,"listen_port":1}`), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if off.Enable || !off.EnableSet {
+		t.Errorf("enable=false from the node: Enable=%v EnableSet=%v", off.Enable, off.EnableSet)
+	}
+	if strings.Contains(string(off.Options), "enable") {
+		t.Errorf("enable left in options: %s", off.Options)
+	}
+	old, err := buildReplicaInbound(json.RawMessage(`{"type":"vless","tag":"a","listen_port":1}`), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !old.Enable {
+		t.Error("a node without the field gave a disabled replica")
 	}
 }

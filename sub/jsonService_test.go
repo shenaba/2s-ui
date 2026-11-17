@@ -1245,3 +1245,91 @@ func TestGetOutboundsRealmIgnoresAddrs(t *testing.T) {
 		}
 	}
 }
+
+// A disabled inbound is not running: the JSON and Clash subscriptions leave it
+// out, and serve the client's other inbounds as before.
+func TestSubLeavesOutDisabledInbounds(t *testing.T) {
+	setupSubDB(t)
+	db := database.GetDB()
+	var ids []string
+	for _, row := range []struct {
+		tag    string
+		enable bool
+	}{{"on-in", true}, {"off-in", false}} {
+		inbound := &model.Inbound{
+			Type: "vless", Tag: row.tag, Enable: row.enable, EnableSet: true,
+			Addrs:   json.RawMessage(`[]`),
+			OutJson: json.RawMessage(`{"type":"vless","tag":"` + row.tag + `","server":"panel.example.com","server_port":443}`),
+			Options: json.RawMessage(`{}`),
+		}
+		if err := db.Create(inbound).Error; err != nil {
+			t.Fatalf("seed inbound: %v", err)
+		}
+		ids = append(ids, fmt.Sprint(inbound.Id))
+	}
+	if err := db.Create(&model.Client{
+		Enable: true, Name: "subdis", Config: json.RawMessage(clientVlessConfig),
+		Inbounds: json.RawMessage(`[` + strings.Join(ids, ",") + `]`), Links: json.RawMessage(`[]`),
+	}).Error; err != nil {
+		t.Fatalf("seed client: %v", err)
+	}
+
+	raw, _, err := (&JsonService{}).GetJson("subdis", "json")
+	if err != nil {
+		t.Fatalf("GetJson: %v", err)
+	}
+	tags := map[string]bool{}
+	for _, ob := range outboundsOf(t, *raw) {
+		tags[fmt.Sprint(ob["tag"])] = true
+	}
+	if !tags["on-in"] || tags["off-in"] {
+		t.Errorf("json outbounds = %v, want on-in without off-in", tags)
+	}
+	clash, _, err := (&ClashService{}).GetClash("subdis")
+	if err != nil {
+		t.Fatalf("GetClash: %v", err)
+	}
+	if strings.Contains(*clash, "off-in") || !strings.Contains(*clash, "on-in") {
+		t.Errorf("clash output does not leave out just the disabled inbound:\n%s", *clash)
+	}
+}
+
+// The JSON subscription gives a ws outbound with no Host the SNI its share link
+// carries, each address its own (upstream #1334).
+func TestAddrCopiesFallBackToSniForWsHost(t *testing.T) {
+	e := &subEntry{
+		inTag:    "ws-in",
+		protocol: "vless",
+		outbound: map[string]interface{}{
+			"type":      "vless",
+			"tls":       map[string]interface{}{"enabled": true, "server_name": "origin.example.com"},
+			"transport": map[string]interface{}{"type": "ws", "path": "/ws"},
+		},
+		addrs: []map[string]interface{}{
+			{"server": "1.2.3.4", "server_port": float64(443), "remark": "-a",
+				"tls": map[string]interface{}{"server_name": "a.example.com"}},
+			{"server": "5.6.7.8", "server_port": float64(443), "remark": "-b"},
+		},
+	}
+	copies := addrCopies(e, "")
+	want := []string{"a.example.com", "origin.example.com"}
+	for i, c := range copies {
+		transport := c.outs[0]["transport"].(map[string]interface{})
+		headers, _ := transport["headers"].(map[string]interface{})
+		if headers["Host"] != want[i] {
+			t.Errorf("address %d Host = %v, want %q", i, headers["Host"], want[i])
+		}
+	}
+	if _, ok := e.outbound["transport"].(map[string]interface{})["headers"]; ok {
+		t.Error("the inbound's shared transport map was written into")
+	}
+
+	// TLS off: the server address is the only Host there is.
+	plain := &subEntry{inTag: "p", protocol: "vless", outbound: map[string]interface{}{
+		"type": "vless", "transport": map[string]interface{}{"type": "ws"},
+	}}
+	out := addrCopies(plain, "")[0].outs[0]
+	if _, ok := out["transport"].(map[string]interface{})["headers"]; ok {
+		t.Errorf("no-TLS outbound got a Host: %v", out["transport"])
+	}
+}

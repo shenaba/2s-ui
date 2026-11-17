@@ -63,6 +63,8 @@ func (s *InboundService) GetAll() (*[]map[string]interface{}, error) {
 			"id":     inbound.Id,
 			"type":   inbound.Type,
 			"tag":    inbound.Tag,
+			"enable": inbound.Enable,
+			"volume": inbound.Volume,
 			"tls_id": inbound.TlsId,
 		}
 		if inbound.NodeId != nil {
@@ -111,7 +113,43 @@ func (s *InboundService) FromIds(ids []uint) ([]*model.Inbound, error) {
 	return inbounds, nil
 }
 
-func (s *InboundService) Save(tx *gorm.DB, act string, data json.RawMessage, initUserIds string, hostname string) error {
+// Save writes an inbound change and applies it to the running core. What it
+// returns besides the error is what is left to do to the core once the
+// transaction has committed, or nil.
+//
+// Taking an inbound out of the core -- a delete, or switching it off -- is that
+// part. It used to happen inside the transaction, ahead of the writes, so any
+// later failure (a client row whose links do not parse, the changes row) rolled
+// the row back with the listener already gone and its connections closed: the
+// panel showed the inbound as it was while nothing listened until the next
+// restart. A removal cannot be refused the way a start can, so nothing needs
+// judging first; it just has to wait for the commit. Adding stays inside:
+// a listener that cannot start has to fail the save.
+func (s *InboundService) Save(tx *gorm.DB, act string, data json.RawMessage, initUserIds string, hostname string) (func(), error) {
+	var afterCommit func()
+	if err := s.save(tx, act, data, initUserIds, hostname, &afterCommit); err != nil {
+		return nil, err
+	}
+	return afterCommit, nil
+}
+
+// removeFromCore takes the inbound running as tag out of the core, and what
+// it accepted with it: closing a listener leaves its connections open.
+func removeFromCore(tag string) func() {
+	return func() {
+		if !corePtr.IsRunning() {
+			return
+		}
+		if err := corePtr.RemoveInbound(tag); err != nil && err != os.ErrInvalid {
+			logger.Warning("inbound ", tag, ": could not take it out of the core after the save: ", err)
+		}
+		if tracker := liveConnTracker(); tracker != nil {
+			tracker.CloseConnByInbound(tag)
+		}
+	}
+}
+
+func (s *InboundService) save(tx *gorm.DB, act string, data json.RawMessage, initUserIds string, hostname string, afterCommit *func()) error {
 	var err error
 
 	switch act {
@@ -135,9 +173,13 @@ func (s *InboundService) Save(tx *gorm.DB, act string, data json.RawMessage, ini
 			}
 		}
 		var oldTag string
+		// Whether the core holds the stored inbound: a disabled one is not in
+		// it, so there is nothing to rename, replace or remove.
+		oldRunning := false
 		if act == "edit" {
 			var old model.Inbound
-			err = tx.Model(model.Inbound{}).Select("tag", "node_id").Where("id = ?", inbound.Id).Find(&old).Error
+			err = tx.Model(model.Inbound{}).Select("tag", "node_id", "enable", "volume", "up", "down").
+				Where("id = ?", inbound.Id).Find(&old).Error
 			if err != nil {
 				return err
 			}
@@ -145,6 +187,18 @@ func (s *InboundService) Save(tx *gorm.DB, act string, data json.RawMessage, ini
 				return common.NewError("inbound belongs to a node: manage it on the node panel")
 			}
 			oldTag = old.Tag
+			oldRunning = old.Enable
+			// An edit that does not say keeps what is stored. Read as "on" --
+			// the default a new inbound gets -- a caller that predates the
+			// switch, or a form that rebuilt the object, would turn a
+			// disabled inbound back on.
+			if !inbound.EnableSet {
+				inbound.Enable = old.Enable
+			}
+			err = keepInboundCap(&inbound, &old)
+			if err != nil {
+				return err
+			}
 		}
 		err = tagFreeAcross(tx, model.Inbound{}, "inbound", inbound.Tag, inbound.Id)
 		if err != nil {
@@ -175,6 +229,10 @@ func (s *InboundService) Save(tx *gorm.DB, act string, data json.RawMessage, ini
 			if err != nil {
 				return err
 			}
+			err = checkListenDetour(tx, &inbound, ridersKnowItAs)
+			if err != nil {
+				return err
+			}
 			// Its riders follow a rename. Only rows, so it goes before the
 			// core is touched: failing after it would leave the core renamed
 			// under a save that rolled back. After checkClientDetour, which
@@ -188,35 +246,44 @@ func (s *InboundService) Save(tx *gorm.DB, act string, data json.RawMessage, ini
 		}
 
 		if inbound.NodeId == nil && corePtr.IsRunning() {
-			inboundConfig, err := inbound.MarshalJSON()
-			if err != nil {
-				return err
-			}
+			if inbound.Enable {
+				inboundConfig, err := inbound.MarshalJSON()
+				if err != nil {
+					return err
+				}
 
-			if act == "edit" {
-				inboundConfig, err = s.addUsers(tx, inboundConfig, inbound.Id, inbound.Type)
-			} else {
-				inboundConfig, err = s.initUsers(tx, inboundConfig, initUserIds, inbound.Type)
-			}
-			if err != nil {
-				return err
-			}
+				if act == "edit" {
+					inboundConfig, err = s.addUsers(tx, inboundConfig, inbound.Id, inbound.Type)
+				} else {
+					inboundConfig, err = s.initUsers(tx, inboundConfig, initUserIds, inbound.Type)
+				}
+				if err != nil {
+					return err
+				}
 
-			// Replaced in place, or renamed in place: either way one that
-			// fails to start brings the old one back (core/managers.go).
-			// Removing it first left nothing running while the failed save
-			// rolled the row back.
-			if act == "edit" && oldTag != inbound.Tag {
-				err = corePtr.RenameInbound(oldTag, inboundConfig)
-			} else {
-				err = corePtr.AddInbound(inboundConfig)
-			}
-			if err != nil {
-				return err
+				// Replaced in place, or renamed in place: either way one that
+				// fails to start brings the old one back (core/managers.go).
+				// Removing it first left nothing running while the failed save
+				// rolled the row back. One switched back on is simply added:
+				// the core holds nothing under either tag.
+				if act == "edit" && oldRunning && oldTag != inbound.Tag {
+					err = corePtr.RenameInbound(oldTag, inboundConfig)
+				} else {
+					err = corePtr.AddInbound(inboundConfig)
+				}
+				if err != nil {
+					return err
+				}
 			}
 		}
+		// Switched off: out of the core under the tag it ran as, once the
+		// save has committed (see Save).
+		if inbound.NodeId == nil && oldRunning && !inbound.Enable {
+			*afterCommit = removeFromCore(oldTag)
+		}
 
-		err = tx.Save(&inbound).Error
+		// The counters are the stats flush's alone (see model.Inbound).
+		err = tx.Omit("up", "down").Save(&inbound).Error
 		if err != nil {
 			return err
 		}
@@ -252,11 +319,9 @@ func (s *InboundService) Save(tx *gorm.DB, act string, data json.RawMessage, ini
 		}
 		// Deleting a replica (de-adopt) is DB-only; the inbound keeps running
 		// on its node and reconciliation strips the pushed users afterwards.
-		if old.NodeId == nil && corePtr.IsRunning() {
-			err = corePtr.RemoveInbound(tag)
-			if err != nil && err != os.ErrInvalid {
-				return err
-			}
+		// A local one leaves the core once the delete has committed.
+		if old.NodeId == nil {
+			*afterCommit = removeFromCore(tag)
 		}
 		id := old.Id
 		err = s.ClientService.UpdateClientsOnInboundDelete(tx, id, tag)
@@ -267,6 +332,8 @@ func (s *InboundService) Save(tx *gorm.DB, act string, data json.RawMessage, ini
 		if err != nil {
 			return err
 		}
+	case "resetTraffic":
+		return s.resetTraffic(tx, data, hostname)
 	default:
 		return common.NewErrorf("unknown action: %s", act)
 	}
@@ -300,8 +367,8 @@ func (s *InboundService) GetAllConfig(db *gorm.DB) ([]json.RawMessage, error) {
 	var inbounds []*model.Inbound
 	// node_id IS NULL: replicas of remote inbounds must never reach the local
 	// core — their ports live on other machines and binding them here would
-	// wedge the core in its 15s restart loop.
-	err := db.Model(model.Inbound{}).Preload("Tls").Where("node_id IS NULL").Find(&inbounds).Error
+	// wedge the core in its 15s restart loop. A disabled inbound stays out too.
+	err := db.Model(model.Inbound{}).Preload("Tls").Where("node_id IS NULL AND enable = ?", true).Find(&inbounds).Error
 	if err != nil {
 		return nil, err
 	}
@@ -529,8 +596,9 @@ func (s *InboundService) UpdateInboundsUsers(tx *gorm.DB, ids []uint) error {
 	// Same filter as RestartInbounds: a client edit passes in the union of its
 	// inbound ids, which may include node replicas. Those are not in the local
 	// core, so the fallback below would AddInbound them here and bind the remote
-	// node's port locally.
-	err := tx.Model(model.Inbound{}).Preload("Tls").Where("id in ?", ids).Where("node_id IS NULL").Find(&inbounds).Error
+	// node's port locally. A disabled inbound is not in the core either, and
+	// the fallback would switch it back on.
+	err := tx.Model(model.Inbound{}).Preload("Tls").Where("id in ?", ids).Where("node_id IS NULL AND enable = ?", true).Find(&inbounds).Error
 	if err != nil {
 		return err
 	}
@@ -608,8 +676,9 @@ func (s *InboundService) RestartInbounds(tx *gorm.DB, ids []uint) error {
 	}
 	var inbounds []*model.Inbound
 	// Client edits pass in the union of their inbound ids, which may include
-	// node replicas — those must not be hot-plugged into the local core.
-	err := tx.Model(model.Inbound{}).Preload("Tls").Where("id in ?", ids).Where("node_id IS NULL").Find(&inbounds).Error
+	// node replicas — those must not be hot-plugged into the local core. Nor
+	// a disabled inbound: a TLS edit would otherwise switch it back on.
+	err := tx.Model(model.Inbound{}).Preload("Tls").Where("id in ?", ids).Where("node_id IS NULL AND enable = ?", true).Find(&inbounds).Error
 	if err != nil {
 		return err
 	}
@@ -633,6 +702,28 @@ func (s *InboundService) RestartInbounds(tx *gorm.DB, ids []uint) error {
 		if tracker := liveConnTracker(); tracker != nil {
 			tracker.CloseConnByInbound(inbound.Tag)
 		}
+	}
+	return nil
+}
+
+// keepInboundCap settles an edit's traffic cap against the stored row (#289).
+//
+// A volume the request did not carry keeps the stored one, as Enable does: a
+// caller written before the cap would otherwise lift it with an unrelated
+// edit. The counters are carried over only so that the check below, and
+// anything reading the struct after the save, see them -- the save never
+// writes them.
+//
+// Switching a spent inbound back on is refused: DepleteJob would take it out
+// again within the minute, which reads as the switch not working. Resetting
+// its traffic, or raising the cap in the same save, is what lets it back.
+func keepInboundCap(inbound, old *model.Inbound) error {
+	if !inbound.VolumeSet {
+		inbound.Volume = old.Volume
+	}
+	inbound.Up, inbound.Down = old.Up, old.Down
+	if inbound.Enable && !old.Enable && inbound.Depleted() {
+		return common.NewErrorf("inbound %s has used up its traffic limit: reset its traffic or raise the limit first", inbound.Tag)
 	}
 	return nil
 }

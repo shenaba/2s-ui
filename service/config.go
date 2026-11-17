@@ -533,6 +533,8 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 	// write back while the core is already running a config that was never
 	// saved.
 	var restartCore bool
+	// What a write leaves for the core once it has committed (InboundService.Save).
+	var afterCommit func()
 
 	// Judged before the transaction: neither needs it, and the write lock BEGIN
 	// takes would hold the stats flush and every other save behind them.
@@ -556,7 +558,17 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 			startMu.RUnlock()
 			return
 		}
-		tx.Commit()
+		if cerr := tx.Commit().Error; cerr != nil {
+			// Nothing was written, so nothing the write left for the core
+			// applies either.
+			logger.Error("save ", obj, ": commit failed: ", cerr)
+			afterCommit = nil
+		}
+		// Still under the read side: the core cannot be restarted between
+		// the commit and this.
+		if afterCommit != nil {
+			afterCommit()
+		}
 		// Marks the change and wakes the hub, and both halves have to
 		// happen after the commit. The hub reads on its own pooled
 		// connection, so notifying earlier publishes a pre-commit view.
@@ -595,7 +607,7 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 	case "tls":
 		restartCore, err = s.TlsService.Save(tx, act, data, hostname)
 	case "inbounds":
-		err = s.InboundService.Save(tx, act, data, initUsers, hostname)
+		afterCommit, err = s.InboundService.Save(tx, act, data, initUsers, hostname)
 	case "outbounds":
 		restartCore, err = s.OutboundService.Save(tx, act, data)
 	case "services":

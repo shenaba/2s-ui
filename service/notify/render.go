@@ -150,6 +150,15 @@ func describe(e Event) (string, map[string]string) {
 		p["names"] = ""
 		return "client.depleted", p
 
+	case InboundDepleted:
+		p["count"] = "0"
+		p["names"] = ""
+		if d, ok := e.Data.(*InboundData); ok && len(d.Tags) > 0 {
+			p["count"] = strconv.Itoa(len(d.Tags))
+			p["names"] = strings.Join(d.Tags, ", ")
+		}
+		return "inbound.depleted", p
+
 	case ClientOnline, ClientOffline:
 		key := "client.online"
 		if e.Kind == ClientOffline {

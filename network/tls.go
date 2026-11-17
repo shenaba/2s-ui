@@ -3,6 +3,7 @@ package network
 import (
 	"crypto/tls"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -72,10 +73,30 @@ func NewTLSConfig(certFile, keyFile, domain string) (*tls.Config, error) {
 	}
 	return &tls.Config{
 		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-			if domain != "" && !strings.EqualFold(hello.ServerName, domain) {
+			if !serverNameMatches(domain, hello.ServerName) {
 				return nil, fmt.Errorf("tls: unrecognized server name %q", hello.ServerName)
 			}
 			return reloader.getCertificate(), nil
 		},
 	}, nil
+}
+
+// serverNameMatches decides whether a ClientHello's SNI belongs to domain.
+//
+// A client sends no SNI for an IP address (RFC 6066 section 3), so with the
+// domain set to the server's IP every handshake used to be refused as an
+// unrecognized name: an IP domain accepts an empty SNI. It keeps accepting the
+// IP itself too, which some stacks send against the RFC and which matched
+// before. DomainValidator still pins the Host either way.
+func serverNameMatches(domain, sni string) bool {
+	if domain == "" {
+		return true
+	}
+	if ip := net.ParseIP(strings.TrimSuffix(strings.TrimPrefix(domain, "["), "]")); ip != nil {
+		if sni == "" {
+			return true
+		}
+		return ip.Equal(net.ParseIP(strings.TrimSuffix(strings.TrimPrefix(sni, "["), "]")))
+	}
+	return strings.EqualFold(sni, domain)
 }

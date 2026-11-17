@@ -51,11 +51,74 @@ var detourColumn = jsonsql.Extract("out_json", "$.detour")
 // quietly fall back to dialling itself directly, which in the ShadowTLS setup
 // is a loopback-only port.
 func clientDetourRiders(tx *gorm.DB, id uint, tag string) ([]string, error) {
-	var riders []string
-	err := tx.Model(model.Inbound{}).
-		Where("id <> ? AND node_id IS NULL AND "+detourColumn+" = ?", id, tag).
-		Order("id").Pluck("tag", &riders).Error
-	return riders, err
+	return inboundsNaming(tx, detourColumn, id, tag, false)
+}
+
+// enabledClientDetourRiders is clientDetourRiders without the disabled ones,
+// which are served nowhere.
+func enabledClientDetourRiders(tx *gorm.DB, id uint, tag string) ([]string, error) {
+	return inboundsNaming(tx, detourColumn, id, tag, true)
+}
+
+// listenDetourColumn is the inbound a listener hands its connections on to
+// (sing-box's listen detour): a ShadowTLS inbound forwarding to the
+// loopback shadowsocks behind it. Unlike the client config's detour, the core
+// itself follows this one -- per connection, so a missing target fails every
+// connection rather than the start.
+var listenDetourColumn = jsonsql.Extract("options", "$.detour")
+
+// inboundsNaming lists, in id order, the local inbounds other than id whose
+// column names tag -- all of them, or only the enabled ones. One query for
+// both detours, so what counts as naming an inbound is decided once.
+func inboundsNaming(tx *gorm.DB, column string, id uint, tag string, onlyEnabled bool) ([]string, error) {
+	var tags []string
+	q := tx.Model(model.Inbound{}).Where("id <> ? AND node_id IS NULL AND "+column+" = ?", id, tag)
+	if onlyEnabled {
+		q = q.Where("enable = ?", true)
+	}
+	err := q.Order("id").Pluck("tag", &tags).Error
+	return tags, err
+}
+
+// checkListenDetour refuses a save that would leave an enabled inbound handing
+// its connections to one the core does not run: switching off an inbound an
+// enabled one forwards to, or switching on one whose own detour is off. The
+// core resolves the detour per connection, so neither fails the save or the
+// start -- the forwarding inbound just loses every connection, while its card
+// looks as healthy as before. tag is the name the forwarders know it by, as
+// for checkClientDetour.
+func checkListenDetour(tx *gorm.DB, inbound *model.Inbound, tag string) error {
+	if !inbound.Enable {
+		if tag == "" {
+			return nil
+		}
+		users, err := inboundsNaming(tx, listenDetourColumn, inbound.Id, tag, true)
+		if err != nil {
+			return err
+		}
+		if len(users) > 0 {
+			return common.NewErrorf("inbound %s receives the connections of %s (their detour): disable those first",
+				tag, strings.Join(users, ", "))
+		}
+		return nil
+	}
+	var options struct {
+		Detour string `json:"detour"`
+	}
+	_ = json.Unmarshal(inbound.Options, &options)
+	if options.Detour == "" {
+		return nil
+	}
+	var target model.Inbound
+	err := tx.Model(model.Inbound{}).Select("id", "enable").
+		Where("tag = ? AND node_id IS NULL AND id <> ?", options.Detour, inbound.Id).Limit(1).Find(&target).Error
+	if err != nil {
+		return err
+	}
+	if target.Id != 0 && !target.Enable {
+		return common.NewErrorf("inbound %s: its detour %s is disabled, enable that first", inbound.Tag, options.Detour)
+	}
+	return nil
 }
 
 // renameClientDetours carries a rename of inbound id over to the client
@@ -102,7 +165,7 @@ func checkClientDetour(tx *gorm.DB, inbound *model.Inbound, tag string) error {
 			return common.NewErrorf("inbound %s: a client config cannot be its own detour", inbound.Tag)
 		}
 		var target model.Inbound
-		err := tx.Model(model.Inbound{}).Select("id", "type", "out_json").
+		err := tx.Model(model.Inbound{}).Select("id", "type", "out_json", "enable").
 			Where("tag = ? AND node_id IS NULL AND id <> ?", detour, inbound.Id).Limit(1).Find(&target).Error
 		if err != nil {
 			return err
@@ -110,6 +173,24 @@ func checkClientDetour(tx *gorm.DB, inbound *model.Inbound, tag string) error {
 		if target.Id != 0 && readClientConfig(target.OutJson).Type == "" {
 			return common.NewErrorf("inbound %s: detour %s has no client config to ride (ShadowTLS before v3 has none)",
 				inbound.Tag, detour)
+		}
+		// A disabled target is left out of every subscription, so the rider
+		// would dial itself directly -- in the ShadowTLS setup a loopback-only
+		// port. A disabled rider may name one: it is served nowhere either.
+		if target.Id != 0 && inbound.Enable && !target.Enable {
+			return common.NewErrorf("inbound %s: its detour %s is disabled, enable that first", inbound.Tag, detour)
+		}
+	}
+	// The same from the other side: switching off what enabled riders ride.
+	// Disabled riders do not count; they are served nowhere.
+	if !inbound.Enable && tag != "" {
+		riders, err := enabledClientDetourRiders(tx, inbound.Id, tag)
+		if err != nil {
+			return err
+		}
+		if len(riders) > 0 {
+			return common.NewErrorf("inbound %s is the detour of the client config of %s: disable those first",
+				tag, strings.Join(riders, ", "))
 		}
 	}
 	// What rides it: the same reason, from the other side -- a ShadowTLS

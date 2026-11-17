@@ -605,7 +605,8 @@ func (s *ClientService) updateLinksWithFixedInbounds(tx *gorm.DB, clients []*mod
 	// Zero inbounds means removing local links only.
 	// node_id IS NULL: local links for node replicas would carry THIS panel's
 	// hostname — their real links come back from the node via reconciliation
-	// as type "external" (which the non-local pass below preserves).
+	// as type "external" (which the non-local pass below preserves). A disabled
+	// inbound has no links (inboundLinks): its stored ones go with this rebuild.
 	var inbounds []model.Inbound
 	if len(allIds) > 0 {
 		err := tx.Model(model.Inbound{}).Preload("Tls").Where("id in ? and type in ? and node_id IS NULL", allIds, util.InboundTypeWithLink).Find(&inbounds).Error
@@ -684,7 +685,7 @@ func (s *ClientService) updateLinksWithFixedInbounds(tx *gorm.DB, clients []*mod
 			if !ok {
 				continue
 			}
-			newLinks := util.LinkGenerator(client.Config, inbound, hostname, linkRemark(remarkPrefix, client.Remark))
+			newLinks := inboundLinks(client.Config, inbound, hostname, linkRemark(remarkPrefix, client.Remark))
 			for _, newLink := range newLinks {
 				newClientLinks = append(newClientLinks, map[string]string{
 					"remark": inbound.Tag,
@@ -769,6 +770,7 @@ const bindableClientsWhere = "COALESCE(`group`, '') <> ?"
 // inbounds belong to these clients", whether the inbounds were created here or
 // adopted from a node (issue #287).
 //
+// Links go through inboundLinks, so a disabled local inbound gets none (#306).
 // A node replica gets no local link: one generated here would carry THIS
 // panel's hostname. Its real link is the node's own "external" entry, which
 // refreshNodeLinks folds in on the next reconcile — the same reason the other
@@ -836,7 +838,7 @@ func (s *ClientService) AddInboundsToClients(tx *gorm.DB, clientIds []uint, inbo
 			if inbound.NodeId != nil {
 				continue
 			}
-			newLinks := util.LinkGenerator(client.Config, inbound, hostname, linkRemark(remarkPrefix, client.Remark))
+			newLinks := inboundLinks(client.Config, inbound, hostname, linkRemark(remarkPrefix, client.Remark))
 			for _, newLink := range newLinks {
 				newClientLinks = append(newClientLinks, map[string]string{
 					"remark": inbound.Tag,
@@ -947,7 +949,7 @@ func (s *ClientService) UpdateLinksByInboundChange(tx *gorm.DB, inbounds *[]mode
 			var clientLinks []map[string]string
 			newClientLinks := []map[string]string{}
 			json.Unmarshal(client.Links, &clientLinks)
-			newLinks := util.LinkGenerator(client.Config, &inbound, hostname, linkRemark(remarkPrefix, client.Remark))
+			newLinks := inboundLinks(client.Config, &inbound, hostname, linkRemark(remarkPrefix, client.Remark))
 			for _, newLink := range newLinks {
 				newClientLinks = append(newClientLinks, map[string]string{
 					"remark": inbound.Tag,
@@ -1793,6 +1795,20 @@ func (s *ClientService) RebuildLocalLinks(tx *gorm.DB, hostname string) error {
 		return err
 	}
 	return s.UpdateLinksByInboundChange(tx, &inbounds, hostname, "")
+}
+
+// inboundLinks is a client's share links for one local inbound: none for a
+// disabled one. Every stored local link is built through here, and each
+// rebuild drops the local links it no longer returns, so switching an inbound
+// off takes its links out of the subscription, the dashboard and the bot
+// alike, and switching it back on brings them back. The gate is here rather
+// than in util.LinkGenerator, where every Inbound literal -- enable being
+// false at its zero value -- would have read as switched off.
+func inboundLinks(config json.RawMessage, inbound *model.Inbound, hostname, remark string) []string {
+	if !inbound.Enable {
+		return nil
+	}
+	return util.LinkGenerator(config, inbound, hostname, remark)
 }
 
 // linkRemark is the remark stored links are prefixed with: the client's own,
