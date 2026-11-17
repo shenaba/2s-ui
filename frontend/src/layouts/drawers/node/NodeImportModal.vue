@@ -29,7 +29,7 @@
     </div>
     <template #footer>
       <Btn @click="$emit('close')">{{ $t('actions.cancel') }}</Btn>
-      <Btn variant="primary" :loading="importing" :disabled="selected.size === 0" @click="doImport">
+      <Btn variant="primary" :loading="importing" :disabled="selected.size === 0 || (assignable && initUsersIncomplete(initUsers))" @click="doImport">
         <Ico name="download" :size="15" /> {{ $t('node.import') }}
       </Btn>
     </template>
@@ -47,7 +47,7 @@ import Chip from '@/components/ui/Chip.vue'
 import Check from '@/components/ui/Check.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import Users from '@/components/forms/in/Users.vue'
-import { InitUsers, bindableClients, resolveInitUsers } from '@/types/clients'
+import { InitUsers, bindableClients, initUsersIncomplete, resolveInitUsers } from '@/types/clients'
 
 const props = defineProps<{
   visible: boolean

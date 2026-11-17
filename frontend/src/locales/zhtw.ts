@@ -33,6 +33,7 @@ export default {
     dplData: "重複數據",
     core: "Sing-Box 錯誤",
     invalidData: "無效數據",
+    pickClients: "請至少勾選一個分組或用戶端，或將用戶端設為「無」。",
   },
   ws: {
     down: "連線已中斷",

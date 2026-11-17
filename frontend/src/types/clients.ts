@@ -222,6 +222,13 @@ export function bindableClients(clients: any[]): any[] {
   return clients.filter((c: any) => c.group !== '@cluster')
 }
 
+// A group or client pick with nothing ticked resolves to nobody -- the very
+// request "none" makes -- so a form refuses it rather than go ahead as if the
+// operator had chosen none (the backend cannot tell the two apart).
+export function initUsersIncomplete(init: InitUsers): boolean {
+  return (init.model === 'group' || init.model === 'client') && init.values.length === 0
+}
+
 // Resolves that choice to the client ids the backend's initUsers field takes,
 // for a new local inbound and for inbounds adopted from a node alike.
 export function resolveInitUsers(clients: any[], init: InitUsers): number[] {

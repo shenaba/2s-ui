@@ -33,6 +33,7 @@ export default {
     dplData: "Dữ liệu trùng lặp",
     core: "Lỗi Sing-Box",
     invalidData: "Dữ liệu khỏ hợp lệ",
+    pickClients: "Hãy chọn ít nhất một nhóm hoặc khách hàng, hoặc đặt khách hàng thành không có.",
   },
   ws: {
     down: "Mất kết nối",

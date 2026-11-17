@@ -148,7 +148,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Data from '@/store/modules/data'
 import { InTypes, ProxyProtocolTypes, InboundTypesWithUsers, createInbound, Addr, followListenPort } from '@/types/inbounds'
-import { InitUsers, bindableClients, resolveInitUsers } from '@/types/clients'
+import { InitUsers, bindableClients, initUsersIncomplete, resolveInitUsers } from '@/types/clients'
 import { checkHopInterval } from '@/types/hysteria2'
 import { push } from 'notivue'
 import RandomUtil from '@/plugins/randomUtil'
@@ -468,6 +468,10 @@ const saveChanges = async () => {
   const hopError = checkHopInterval(inbound.value.out_json)
   if (hopError) {
     push.error({ message: t(hopError) })
+    return
+  }
+  if (hasUser.value && initUsersIncomplete(initUsers.value)) {
+    push.error({ message: t('error.pickClients') })
     return
   }
 
