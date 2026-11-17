@@ -111,7 +111,8 @@ import Select from '@/components/ui/Select.vue'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Data from '@/store/modules/data'
-import { InTypes, ProxyProtocolTypes, createInbound, Addr, followListenPort } from '@/types/inbounds'
+import { InTypes, ProxyProtocolTypes, InboundTypesWithUsers, createInbound, Addr, followListenPort } from '@/types/inbounds'
+import { InitUsers, resolveInitUsers } from '@/types/clients'
 import { checkHopInterval } from '@/types/hysteria2'
 import { push } from 'notivue'
 import RandomUtil from '@/plugins/randomUtil'
@@ -185,11 +186,6 @@ const localTypes = [
   InTypes.Cloudflared,
 ]
 
-// same capability sets as the legacy modal (layouts/modals/Inbound.vue)
-const inboundWithUsers = [
-  'mixed', 'socks', 'http', 'shadowsocks', 'snell', 'vmess', 'trojan', 'naive',
-  'hysteria', 'shadowtls', 'tuic', 'hysteria2', 'vless', 'anytls', 'mieru',
-]
 const HasInData = [
   InTypes.SOCKS,
   InTypes.HTTP,
@@ -233,7 +229,7 @@ const originalTag = ref('')
 // The listen port as loaded, so a save can carry the Multi Domain rows that
 // sat on it to wherever the port was moved (#216).
 const originalPort = ref<number | undefined>(undefined)
-const initUsers = ref<{ model: string; values: any[] }>({ model: 'none', values: [] })
+const initUsers = ref<InitUsers>({ model: 'none', values: [] })
 
 const isNew = computed(() => props.id == 0)
 const hasInData = computed(() => HasInData.includes(inbound.value.type))
@@ -280,7 +276,7 @@ const detourTags = computed((): string[] => {
 
 const hasUser = computed((): boolean => {
   if (props.id > 0) return false
-  if (!inboundWithUsers.includes(inbound.value.type)) return false
+  if (!InboundTypesWithUsers.includes(inbound.value.type)) return false
   if (inbound.value.type == InTypes.ShadowTLS && inbound.value.version < 3) return false
   if (inbound.value.managed) return false
   return true
@@ -369,21 +365,7 @@ const saveChanges = async () => {
 
   // save data
   loading.value = true
-  let clientIds: number[] = []
-  if (hasUser.value) {
-    switch (initUsers.value.model) {
-      case 'all':
-        clientIds = clients.value.map((c: any) => c.id)
-        break
-      case 'group':
-        clientIds = clients.value
-          .filter((c: any) => initUsers.value.values.includes(c.group))
-          .map((c: any) => c.id)
-        break
-      case 'client':
-        clientIds = initUsers.value.values
-    }
-  }
+  const clientIds = hasUser.value ? resolveInitUsers(clients.value, initUsers.value) : []
   // Remapped on the payload, not on the form: a save that fails leaves the
   // rows as shown, still keyed to originalPort for the next attempt.
   const data = { ...inbound.value, addrs: followListenPort(inbound.value.addrs, originalPort.value, inbound.value.listen_port) }

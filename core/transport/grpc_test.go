@@ -4,8 +4,6 @@ package transport
 
 import (
 	"context"
-	"errors"
-	"io"
 	"testing"
 
 	"github.com/sagernet/sing-box/option"
@@ -34,10 +32,7 @@ func TestGRPC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// NewConnectionEx deliberately closes the server side as soon as it records
-	// the resolved source. The client may therefore observe EOF while sending.
-	// That is fine only if check confirms the server handled the stream.
-	if err = stream.Send(&v2raygrpc.Hunk{Data: []byte("x")}); err != nil && !errors.Is(err, io.EOF) {
+	if err = stream.Send(&v2raygrpc.Hunk{Data: []byte("x")}); err != nil {
 		t.Fatal(err)
 	}
 	check(t, resolver, sources)

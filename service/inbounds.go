@@ -340,6 +340,25 @@ func (s *InboundService) hasUser(inboundType string) bool {
 	return false
 }
 
+// inboundTakesUsers reports whether clients can be bound to inbound at all: a
+// type with a user list, and for shadowtls only v3, the one fetchUsers fills.
+// It is the Go side of the inbound drawer's hasUser gate, for a row that never
+// went through the drawer (a replica adopted from a node).
+func inboundTakesUsers(inbound *model.Inbound) bool {
+	if !(&InboundService{}).hasUser(inbound.Type) {
+		return false
+	}
+	if inbound.Type == "shadowtls" {
+		var opt struct {
+			Version int `json:"version"`
+		}
+		if json.Unmarshal(inbound.Options, &opt) != nil || opt.Version < 3 {
+			return false
+		}
+	}
+	return true
+}
+
 // fetchUsers collects the per-client config for one inbound type. condition is
 // a WHERE fragment and args are its placeholders -- callers must not build
 // values into the fragment, since one of them comes from a request.

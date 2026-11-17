@@ -744,24 +744,68 @@ func (s *ClientService) updateLinksWithFixedInbounds(tx *gorm.DB, clients []*mod
 	return nil
 }
 
+// UpdateClientsOnInboundAdd binds the clients named in the comma-separated
+// `initUsers` request field to a freshly created inbound.
 func (s *ClientService) UpdateClientsOnInboundAdd(tx *gorm.DB, initIds string, inboundId uint, hostname string) error {
+	clientIds, err := parseClientIds(initIds)
+	if err != nil {
+		return err
+	}
+	return s.AddInboundsToClients(tx, clientIds, []uint{inboundId}, hostname)
+}
+
+// AddInboundsToClients appends inboundIds to each client's inbound list and
+// gives it the links they produce. It is the one write path for "these new
+// inbounds belong to these clients", whether the inbounds were created here or
+// adopted from a node (issue #287).
+//
+// A node replica gets no local link: one generated here would carry THIS
+// panel's hostname. Its real link is the node's own "external" entry, which
+// refreshNodeLinks folds in on the next reconcile — the same reason the other
+// link paths filter on node_id IS NULL. An id the client already holds is not
+// added twice, and a client id that matches no row is skipped, as before.
+func (s *ClientService) AddInboundsToClients(tx *gorm.DB, clientIds []uint, inboundIds []uint, hostname string) error {
+	if len(clientIds) == 0 || len(inboundIds) == 0 {
+		return nil
+	}
 	remarkPrefix := (&SettingService{}).SubRemarkPrefix(tx)
-	clientIds := strings.Split(initIds, ",")
 	var clients []model.Client
 	err := tx.Model(model.Client{}).Where("id in ?", clientIds).Find(&clients).Error
 	if err != nil {
 		return err
 	}
-	var inbound model.Inbound
-	err = tx.Model(model.Inbound{}).Preload("Tls").Where("id = ?", inboundId).Find(&inbound).Error
+	var inbounds []model.Inbound
+	err = tx.Model(model.Inbound{}).Preload("Tls").Where("id in ?", inboundIds).Find(&inbounds).Error
 	if err != nil {
 		return err
+	}
+	// Local inbounds whose links this call regenerates, by tag: a stale link
+	// under one of these remarks is replaced rather than kept beside the new.
+	localTags := map[string]bool{}
+	for i := range inbounds {
+		if inbounds[i].NodeId == nil {
+			localTags[inbounds[i].Tag] = true
+		}
 	}
 	for _, client := range clients {
 		// Add inbounds
 		var clientInbounds []uint
 		json.Unmarshal(client.Inbounds, &clientInbounds)
-		clientInbounds = append(clientInbounds, inboundId)
+		held := make(map[uint]bool, len(clientInbounds))
+		for _, id := range clientInbounds {
+			held[id] = true
+		}
+		added := false
+		for i := range inbounds {
+			if !held[inbounds[i].Id] {
+				clientInbounds = append(clientInbounds, inbounds[i].Id)
+				held[inbounds[i].Id] = true
+				added = true
+			}
+		}
+		if !added {
+			continue
+		}
 		client.Inbounds, err = json.MarshalIndent(clientInbounds, "", "  ")
 		if err != nil {
 			return err
@@ -770,16 +814,22 @@ func (s *ClientService) UpdateClientsOnInboundAdd(tx *gorm.DB, initIds string, i
 		var clientLinks []map[string]string
 		newClientLinks := []map[string]string{}
 		json.Unmarshal(client.Links, &clientLinks)
-		newLinks := util.LinkGenerator(client.Config, &inbound, hostname, linkRemark(remarkPrefix, client.Remark))
-		for _, newLink := range newLinks {
-			newClientLinks = append(newClientLinks, map[string]string{
-				"remark": inbound.Tag,
-				"type":   "local",
-				"uri":    newLink,
-			})
+		for i := range inbounds {
+			inbound := &inbounds[i]
+			if inbound.NodeId != nil {
+				continue
+			}
+			newLinks := util.LinkGenerator(client.Config, inbound, hostname, linkRemark(remarkPrefix, client.Remark))
+			for _, newLink := range newLinks {
+				newClientLinks = append(newClientLinks, map[string]string{
+					"remark": inbound.Tag,
+					"type":   "local",
+					"uri":    newLink,
+				})
+			}
 		}
 		for _, clientLink := range clientLinks {
-			if clientLink["remark"] != inbound.Tag {
+			if !localTags[clientLink["remark"]] {
 				newClientLinks = append(newClientLinks, clientLink)
 			}
 		}

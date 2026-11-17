@@ -209,6 +209,24 @@ export function coerceResetDayOfMonth(v: unknown): number {
   return n > 31 ? 31 : n
 }
 
+// The choice made in the shared clients picker (components/forms/in/Users.vue):
+// none / all / group (values = group names) / client (values = client ids).
+export interface InitUsers { model: string; values: any[] }
+
+// Resolves that choice to the client ids the backend's initUsers field takes,
+// for a new local inbound and for inbounds adopted from a node alike.
+export function resolveInitUsers(clients: any[], init: InitUsers): number[] {
+  switch (init.model) {
+    case 'all':
+      return clients.map((c: any) => c.id)
+    case 'group':
+      return clients.filter((c: any) => init.values.includes(c.group)).map((c: any) => c.id)
+    case 'client':
+      return [...init.values]
+  }
+  return []
+}
+
 export function createClient<T extends Client>(json?: Partial<T>): Client {
   defaultClient.name = RandomUtil.randomSeq(8)
   const defaultObject: Client = { ...defaultClient, ...(json || {}) }
