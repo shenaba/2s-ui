@@ -358,7 +358,7 @@ func hy(u *url.URL, i int) (*map[string]interface{}, string, error) {
 		"server_port": port,
 		"obfs":        query.Get("obfsParam"),
 		"auth_str":    query.Get("auth"),
-		"tls":         getTls(security, &query),
+		"tls":         getQuicTls(security, &query),
 	}
 	down, _ := strconv.Atoi(query.Get("downmbps"))
 	up, _ := strconv.Atoi(query.Get("upmbps"))
@@ -421,7 +421,7 @@ func hy2(u *url.URL, i int) (*map[string]interface{}, string, error) {
 		"server":      host,
 		"server_port": port,
 		"password":    u.User.Username(),
-		"tls":         getTls(security, &query),
+		"tls":         getQuicTls(security, &query),
 	}
 	down, _ := strconv.Atoi(query.Get("downmbps"))
 	up, _ := strconv.Atoi(query.Get("upmbps"))
@@ -516,7 +516,7 @@ func tuic(u *url.URL, i int) (*map[string]interface{}, string, error) {
 		"password":           password,
 		"congestion_control": query.Get("congestion_control"),
 		"udp_relay_mode":     query.Get("udp_relay_mode"),
-		"tls":                getTls(security, &query),
+		"tls":                getQuicTls(security, &query),
 	}
 	return &tuic, tag, nil
 }
@@ -827,6 +827,14 @@ func GetOutboundForClash(uri string, i int) (*map[string]interface{}, string, er
 	}
 	(*outbound)["transport"] = transport
 	return outbound, tag, nil
+}
+
+// getQuicTls is getTls for hysteria, hysteria2 and tuic links, which can carry
+// an fp that their protocol cannot honour (StripQuicTls).
+func getQuicTls(security string, q *url.Values) map[string]interface{} {
+	tls := getTls(security, q)
+	delete(tls, "utls")
+	return tls
 }
 
 func getTls(security string, q *url.Values) map[string]interface{} {
