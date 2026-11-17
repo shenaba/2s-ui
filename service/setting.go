@@ -138,7 +138,7 @@ var defaultValueMap = map[string]string{
 	"notifyEnable":       "false",
 	"notifyProxy":        "",
 	"notifyLang":         "en",
-	"notifyEvents":       "node.down,node.up,core.crash,core.up,client.depleted,client.expiring,login.success,login.banned",
+	"notifyEvents":       "node.down,node.up,core.crash,core.up,client.depleted,client.expiring,inbound.depleted,login.success,login.banned",
 	"notifyExpireDays":   "3",
 	"notifyVolumeGB":     "5",
 	"notifyCpu":          "80",
@@ -949,9 +949,6 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 			if err = purgeStatsHistory(tx); err != nil {
 				return err
 			}
-			// The per-inbound totals are seeded from those rows; drop them so
-			// they are rebuilt from whatever this transaction leaves behind.
-			InvalidateInboundTraffic()
 		}
 		err = tx.Model(model.Setting{}).Where("key = ?", key).Update("value", obj).Error
 		if err != nil {

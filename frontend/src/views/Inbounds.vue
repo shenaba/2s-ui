@@ -36,7 +36,9 @@
             <div class="inb-type" :style="{ color: protoColor(item.type) }">{{ item.type }}</div>
           </div>
           <Chip v-if="nodeNameOf(item)" color="brand">{{ nodeNameOf(item) }}</Chip>
-          <Chip v-if="!isEnabled(item)">{{ $t('ui.off') }}</Chip>
+          <!-- Switched off by its traffic cap rather than by hand (#289). -->
+          <Chip v-if="!isEnabled(item) && isDepleted(item)" color="rose">{{ $t('in.depleted') }}</Chip>
+          <Chip v-else-if="!isEnabled(item)">{{ $t('ui.off') }}</Chip>
           <template v-else-if="!nodeNameOf(item)">
             <Chip v-if="isOnline(item.tag)" color="emerald" dot>{{ $t('ui.live') }}</Chip>
             <Chip v-else>{{ $t('ui.idle') }}</Chip>
@@ -68,7 +70,8 @@
           </div>
           <div>
             <div class="m-k">{{ $t('ui.trafficCol') }}</div>
-            <div class="m-v mono">{{ trafficOf(item) }}</div>
+            <div class="m-v mono" dir="ltr">{{ trafficOf(item) }}<span v-if="hasCap(item)" class="m-cap"> / {{ capOf(item) }}</span></div>
+            <BarMini v-if="hasCap(item)" :value="capPct(item)" :color="capColor(item)" :height="4" style="margin-top: 5px;" />
           </div>
         </div>
         <div class="inb-actions">
@@ -111,6 +114,7 @@ import DeleteConfirm from '@/components/ui/DeleteConfirm.vue'
 import Segmented from '@/components/ui/Segmented.vue'
 import CardBtn from '@/components/ui/CardBtn.vue'
 import Toggle from '@/components/ui/Toggle.vue'
+import BarMini from '@/components/charts/BarMini.vue'
 import InboundDrawer from '@/layouts/drawers/inbound/InboundDrawer.vue'
 import StatsModal from '@/layouts/drawers/StatsModal.vue'
 
@@ -193,6 +197,20 @@ const toggleEnable = async (item: any) => {
   } finally {
     toggling.value = { ...toggling.value, [item.id]: false }
   }
+}
+
+// ---------------- traffic cap (#289) ----------------
+// The cap is config (it comes with the list), the usage is live, so the bar
+// moves with every push. Replicas are capped, if at all, on their node.
+const usedOf = (item: any): number => dataStore.inboundTraffic[item.tag] ?? 0
+const hasCap = (item: any): boolean => !item.node_id && item.volume > 0
+const capOf = (item: any): string => HumanReadable.sizeFormat(item.volume)
+// Same comparison as the server's (up+down > volume).
+const isDepleted = (item: any): boolean => hasCap(item) && usedOf(item) > item.volume
+const capPct = (item: any): number => Math.min(100, Math.round((usedOf(item) * 100) / item.volume))
+const capColor = (item: any): string => {
+  if (isDepleted(item)) return 'var(--rose)'
+  return capPct(item) > 90 ? 'var(--amber)' : 'var(--brand)'
 }
 
 // ---------------- drawer ----------------
@@ -334,6 +352,10 @@ const showStats = (tag: string) => {
 .m-v {
   font-size: 13px;
   font-weight: 600;
+}
+.m-cap {
+  color: var(--text-3);
+  font-weight: 500;
 }
 /* Dimmed rather than hidden: it is still configured, and its clients keep it.
    The switch stays at full strength, so it reads as the way back. */

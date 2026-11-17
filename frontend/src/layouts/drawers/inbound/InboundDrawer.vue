@@ -70,6 +70,42 @@
         <Users v-if="hasUser" :clients="clients" :data="initUsers" />
         <InTLS v-if="hasTls" :inbound="inbound" :tls-configs="tlsConfigs" />
         <Multiplex v-if="muxAvailable" direction="in" :data="inbound" />
+
+        <!-- 入站自身的开关和流量上限 (#289)。抽屉只编辑本机入站,节点副本不进来 -->
+        <hr class="form-divider" />
+        <SectionLabel style="margin-bottom: 12px;">{{ $t('ui.limits') }}</SectionLabel>
+        <div style="margin-bottom: 15px;">
+          <SwitchLabel v-model="enabled" :label="$t('enable')" />
+        </div>
+        <div v-if="!isNew" class="card usage-card">
+          <div style="display: flex; align-items: center; margin-bottom: 10px;">
+            <div style="font-size: 12px; color: var(--text-3); font-weight: 600;">{{ $t('ui.currentUsage') }}</div>
+            <Chip v-if="depleted" color="rose" style="margin-inline-start: 8px;">{{ $t('in.depleted') }}</Chip>
+            <div v-if="percent > 0" class="mono" dir="ltr" style="margin-inline-start: auto; font-size: 12px; color: var(--text-3);">{{ percent }}%</div>
+          </div>
+          <div style="display: flex; gap: 22px; align-items: center;">
+            <div>
+              <div style="font-size: 11px; color: var(--violet); font-weight: 700;">↑ {{ $t('ui.upload') }}</div>
+              <div class="mono" style="font-size: 17px; font-weight: 700;">{{ upText }}</div>
+            </div>
+            <div>
+              <div style="font-size: 11px; color: var(--cyan); font-weight: 700;">↓ {{ $t('ui.download') }}</div>
+              <div class="mono" style="font-size: 17px; font-weight: 700;">{{ downText }}</div>
+            </div>
+            <Btn sm variant="subtle" style="margin-inline-start: auto;" :disabled="resetting" @click="resetUsage">
+              <Ico name="refresh" :size="14" /> {{ $t('reset') }}
+            </Btn>
+          </div>
+          <div v-if="inbound.volume > 0" style="margin-top: 12px;">
+            <BarMini :value="percent" :color="percentColor" :height="5" />
+          </div>
+        </div>
+        <Field :label="$t('ui.dataLimit')" :hint="$t('in.trafficLimitHint')">
+          <div style="display: flex; gap: 8px;">
+            <input class="input mono" type="number" min="0" v-model.number="volumeGiB" />
+            <div class="input suffix-box">{{ $t('stats.GB') }}</div>
+          </div>
+        </Field>
       </template>
 
       <!-- ===================== Client side ===================== -->
@@ -146,6 +182,9 @@ import Multiplex from '@/components/forms/out/Multiplex.vue'
 import OutJson from '@/components/forms/in/OutJson.vue'
 import Dial from '@/components/forms/out/Dial.vue'
 import AddrVue from '@/components/forms/in/Addr.vue'
+import SwitchLabel from '@/components/ui/SwitchLabel.vue'
+import BarMini from '@/components/charts/BarMini.vue'
+import { HumanReadable } from '@/plugins/utils'
 
 const props = defineProps<{
   visible: boolean
@@ -295,6 +334,7 @@ const loadData = async (id: number) => {
   }
   originalTag.value = inbound.value.tag
   originalPort.value = inbound.value.listen_port
+  stored.value = { enable: inbound.value.enable ?? true, volume: inbound.value.volume ?? 0 }
   loading.value = false
 }
 
@@ -332,11 +372,19 @@ const changeType = () => {
     : inbound.value.type + '-' + (noListen ? RandomUtil.randomSeq(3) : inbound.value.listen_port)
   // Use previous data. `id` is kept in both branches: dropping it turns the
   // save into a create and leaves the original row behind.
+  // The switch and the cap are the inbound's, not the protocol's.
+  const keep = {
+    id: inbound.value.id,
+    tag: tag,
+    enable: inbound.value.enable,
+    volume: inbound.value.volume,
+    up: inbound.value.up,
+    down: inbound.value.down,
+  }
   const prevConfig = noListen
-    ? { id: inbound.value.id, tag: tag }
+    ? keep
     : {
-        id: inbound.value.id,
-        tag: tag,
+        ...keep,
         listen: inbound.value.listen ?? '::',
         listen_port: inbound.value.listen_port,
       }
@@ -349,6 +397,66 @@ const changeType = () => {
     delete inbound.value.out_json
   }
   side.value = 's'
+}
+
+// ---------- limits (#289) ----------
+// A row from before the columns, or a fresh form, has neither field: enabled,
+// no cap. The counters come with the loaded row and are the server's -- an
+// edit never writes them back.
+const enabled = computed({
+  get: () => inbound.value.enable ?? true,
+  set: (v: boolean) => { inbound.value.enable = v },
+})
+const volumeGiB = computed({
+  // Stored in whole bytes, so 0.0001 GB reads back as 0.0000999998...; six
+  // decimals give back what was typed. A cap too small to show in six stays
+  // raw rather than reading as 0, which would say "unlimited".
+  get: () => {
+    if (!(inbound.value.volume > 0)) return 0
+    const gb = inbound.value.volume / (1024 ** 3)
+    const shown = Math.round(gb * 1e6) / 1e6
+    return shown > 0 ? shown : gb
+  },
+  set: (v: number | string) => {
+    const n = Number(v)
+    inbound.value.volume = n > 0 ? Math.round(n * (1024 ** 3)) : 0
+  },
+})
+const used = computed((): number => (inbound.value.up ?? 0) + (inbound.value.down ?? 0))
+const upText = computed(() => HumanReadable.sizeFormat(inbound.value.up ?? 0))
+const downText = computed(() => HumanReadable.sizeFormat(inbound.value.down ?? 0))
+// Same comparison as the server's (up+down > volume).
+const depleted = computed((): boolean => inbound.value.volume > 0 && used.value > inbound.value.volume)
+const percent = computed((): number =>
+  inbound.value.volume > 0 ? Math.min(100, Math.round((used.value * 100) / inbound.value.volume)) : 0)
+const percentColor = computed((): string => {
+  if (depleted.value) return 'var(--rose)'
+  return percent.value > 90 ? 'var(--amber)' : 'var(--brand)'
+})
+// Applied at once, not with the form: the counters are the server's and a save
+// never carries them. Mirrored here rather than reloaded, which would throw away
+// whatever else is being edited -- the reset switches back on only an inbound
+// the cap had switched off, and so does this. Judged on the row as loaded, as
+// the server judges it, not on a switch or cap edited in the form and unsaved.
+const stored = ref({ enable: true, volume: 0 })
+const resetting = ref(false)
+const resetUsage = async () => {
+  if (resetting.value || isNew.value) return
+  resetting.value = true
+  try {
+    const wasSpent = !stored.value.enable && stored.value.volume > 0 && used.value > stored.value.volume
+    const success = await Data().save('inbounds', 'resetTraffic', originalTag.value)
+    if (success) {
+      inbound.value.up = 0
+      inbound.value.down = 0
+      if (wasSpent) {
+        stored.value.enable = true
+        inbound.value.enable = true
+      }
+    }
+  } finally {
+    resetting.value = false
+  }
 }
 
 const add_addr = () => {
@@ -396,3 +504,21 @@ watch(() => props.visible, (v) => {
   if (v) updateData(props.id)
 })
 </script>
+
+<style scoped>
+.usage-card {
+  padding: 16px;
+  margin-bottom: 18px;
+  background: var(--surface-3);
+  border: none;
+  box-shadow: none;
+}
+.suffix-box {
+  width: 80px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-2);
+}
+</style>

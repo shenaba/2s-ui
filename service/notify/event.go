@@ -22,8 +22,11 @@ const (
 	// One-shot events, rate limited per subject.
 	ClientDepleted Kind = "client.depleted"
 	ClientExpiring Kind = "client.expiring"
-	CPUHigh        Kind = "cpu.high"
-	MemoryHigh     Kind = "memory.high"
+	// An inbound spent its traffic cap and was disabled (#289). Batched per
+	// depletion pass like ClientDepleted, and for the same reason never repeats.
+	InboundDepleted Kind = "inbound.depleted"
+	CPUHigh         Kind = "cpu.high"
+	MemoryHigh      Kind = "memory.high"
 
 	// Presence events. Debounced at the source (service/presence.go) and
 	// batched per flush, so they pass the suppressor untouched.
@@ -41,6 +44,7 @@ var AllKinds = []Kind{
 	NodeDown, NodeUp, CoreCrash, CoreUp,
 	OutboundDown, OutboundUp,
 	ClientDepleted, ClientExpiring, ClientOnline, ClientOffline,
+	InboundDepleted,
 	CPUHigh, MemoryHigh,
 	LoginSuccess, LoginFailed, LoginBanned,
 }
@@ -108,6 +112,11 @@ type ClientData struct {
 	// The operator's message is still rendered from the fields above; this only
 	// adds recipients, it does not change what the operator is told.
 	Targets []ClientTarget
+}
+
+// InboundData accompanies InboundDepleted: the tags one pass disabled.
+type InboundData struct {
+	Tags []string
 }
 
 // ClientTarget is one client to warn on their own Telegram chat, carrying the
