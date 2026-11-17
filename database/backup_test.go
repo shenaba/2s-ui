@@ -178,6 +178,21 @@ func TestGetDbBacksUpEveryTable(t *testing.T) {
 		}
 	}
 
+	// A column with a default of true is left out of an insert when it is
+	// false, so a switched-off inbound or node must be checked by value: the
+	// row count above cannot tell it came back switched on.
+	for _, table := range []string{"inbounds", "nodes"} {
+		var enabled []bool
+		if err := backupDb.Raw("SELECT enable FROM " + table).Scan(&enabled).Error; err != nil {
+			t.Fatalf("read %s.enable from the backup: %v", table, err)
+		}
+		for _, on := range enabled {
+			if on {
+				t.Errorf("a disabled row of %s came back enabled from the backup", table)
+			}
+		}
+	}
+
 	// The exemption is deliberate, so assert it rather than leaving it implied.
 	// Asked as HasTable rather than a COUNT so a correct run does not log a
 	// "no such table" error that reads like a failure.
@@ -214,6 +229,12 @@ func seedEveryTable(t *testing.T) {
 	for _, row := range rows {
 		if err := GetDB().Create(row).Error; err != nil {
 			t.Fatalf("seed %T: %v", row, err)
+		}
+	}
+	// Switched off after the insert, which would have stored the default.
+	for _, table := range []any{&model.Inbound{}, &model.Node{}} {
+		if err := GetDB().Model(table).Where("id > 0").Update("enable", false).Error; err != nil {
+			t.Fatalf("disable %T: %v", table, err)
 		}
 	}
 }

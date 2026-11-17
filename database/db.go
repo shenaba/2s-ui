@@ -207,6 +207,10 @@ func InitDB(dbPath string) error {
 	if err != nil {
 		return err
 	}
+	err = migrateInboundTraffic()
+	if err != nil {
+		return err
+	}
 	// Not fatal: without it a client cannot use a mieru inbound, which is no
 	// reason to stop every other inbound from starting.
 	if err := backfillMieruClientConfig(); err != nil {

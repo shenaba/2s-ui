@@ -125,7 +125,18 @@ func GetDb(exclude string) ([]byte, error) {
 	if err := db.Model(&model.Inbound{}).Scan(&inbound).Error; err != nil {
 		return nil, err
 	} else if len(inbound) > 0 {
+		// Taken before the insert, which reads the default back into
+		// the rows.
+		var off []uint
+		for _, row := range inbound {
+			if !row.Enable {
+				off = append(off, row.Id)
+			}
+		}
 		if err := backupDb.CreateInBatches(inbound, backupBatchSize).Error; err != nil {
+			return nil, err
+		}
+		if err := keepDisabled(backupDb, &model.Inbound{}, off); err != nil {
 			return nil, err
 		}
 	}
@@ -182,7 +193,18 @@ func GetDb(exclude string) ([]byte, error) {
 	if err := db.Model(&model.Node{}).Scan(&nodes).Error; err != nil {
 		return nil, err
 	} else if len(nodes) > 0 {
+		// Taken before the insert, which reads the default back into
+		// the rows.
+		var off []uint
+		for _, row := range nodes {
+			if !row.Enable {
+				off = append(off, row.Id)
+			}
+		}
 		if err := backupDb.CreateInBatches(nodes, backupBatchSize).Error; err != nil {
+			return nil, err
+		}
+		if err := keepDisabled(backupDb, &model.Node{}, off); err != nil {
 			return nil, err
 		}
 	}
@@ -452,5 +474,19 @@ func SendSighup() error {
 			logger.Error("send signal SIGHUP failed:", err)
 		}
 	}()
+	return nil
+}
+
+// keepDisabled writes enable=false back onto rows an insert switched on. The
+// column defaults to true, and gorm leaves a false value that has a default out
+// of an insert -- and then reads the default back into the struct -- so every
+// switched-off inbound or node came back switched on from a backup.
+func keepDisabled(tx *gorm.DB, table any, ids []uint) error {
+	for start := 0; start < len(ids); start += backupBatchSize {
+		end := min(start+backupBatchSize, len(ids))
+		if err := tx.Model(table).Where("id IN ?", ids[start:end]).Update("enable", false).Error; err != nil {
+			return err
+		}
+	}
 	return nil
 }

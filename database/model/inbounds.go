@@ -39,6 +39,29 @@ type Inbound struct {
 	Addrs   json.RawMessage `json:"addrs" form:"addrs"`
 	OutJson json.RawMessage `json:"out_json" form:"out_json"`
 	Options json.RawMessage `json:"-" form:"-"`
+
+	// Traffic cap in bytes over Up+Down; 0 = unlimited (#289). DepleteJob
+	// switches the inbound off (Enable) once it is spent. Local inbounds only:
+	// a replica's traffic is counted on its node, which can cap it there.
+	Volume int64 `json:"volume" form:"volume" gorm:"default:0;not null"`
+	// VolumeSet reports that the decoded request named volume. An edit that
+	// does not keeps the stored cap, as for Enable -- an older apiv2 caller
+	// would otherwise lift it with an unrelated edit.
+	VolumeSet bool `json:"-" form:"-" gorm:"-"`
+
+	// Bytes counted on this inbound, maintained by the stats flush alone --
+	// no save writes them (InboundService.Save omits both columns), so an edit
+	// from a form loaded a minute ago cannot write an older count back. A
+	// counter on the row rather than a sum over the stats table, which is
+	// neither written with traffic history off nor kept past its retention.
+	Up   int64 `json:"up" form:"up" gorm:"default:0;not null"`
+	Down int64 `json:"down" form:"down" gorm:"default:0;not null"`
+}
+
+// Depleted reports whether the inbound has spent its cap. The same comparison
+// as a client's (up+down > volume), so the two read alike in the panel.
+func (i *Inbound) Depleted() bool {
+	return i.Volume > 0 && i.Up+i.Down > i.Volume
 }
 
 func (i *Inbound) UnmarshalJSON(data []byte) error {
@@ -96,6 +119,19 @@ func (i *Inbound) UnmarshalJSON(data []byte) error {
 	i.OutJson, _ = json.MarshalIndent(raw["out_json"], "", "  ")
 	delete(raw, "out_json")
 
+	// The traffic cap; up/down are the stats flush's to write and are dropped
+	// whatever they hold. All three are panel fields, which sing-box refuses.
+	i.Volume, i.VolumeSet = 0, false
+	if val, exists := raw["volume"].(float64); exists {
+		if val > 0 {
+			i.Volume = int64(val)
+		}
+		i.VolumeSet = true
+	}
+	delete(raw, "volume")
+	delete(raw, "up")
+	delete(raw, "down")
+
 	// Remaining fields
 	i.Options, err = json.MarshalIndent(raw, "", "  ")
 	return err
@@ -134,6 +170,9 @@ func (i Inbound) MarshalFull() (*map[string]interface{}, error) {
 	combined["tls_id"] = i.TlsId
 	combined["addrs"] = i.Addrs
 	combined["out_json"] = i.OutJson
+	combined["volume"] = i.Volume
+	combined["up"] = i.Up
+	combined["down"] = i.Down
 	// Panel shape only — MarshalJSON (sing-box shape) must never carry this.
 	if i.NodeId != nil {
 		combined["node_id"] = *i.NodeId

@@ -144,86 +144,24 @@ func resumeClientRates(now time.Time) {
 	}
 }
 
-// Per-inbound traffic totals, published on the live payload and written by the
-// flush below, so they race the same way onlineResources does and take the same
-// kind of guard. A plain Mutex, not an RWMutex: a read can seed, so there is no
-// read-only path to optimise for.
-//
-// Held in memory rather than aggregated per read. The stats table is the only
-// record of how much went through one inbound, and it grows to a row per active
-// (tag, bucket, direction) across the whole retention window — so answering
-// "total per inbound" from it means re-scanning tens of thousands of rows every
-// ten seconds for a figure that moves by a few kilobytes. Seeded once from that
-// table instead, then advanced by each flush's own deltas, which the flush
-// already has in hand.
-var (
-	inboundTrafficMu     sync.Mutex
-	inboundTraffic       = map[string]int64{}
-	inboundTrafficSeeded bool
-)
-
-// addInboundTraffic folds one flush's per-inbound deltas into the published
-// totals, seeding from the stats table on first use.
-//
-// The caller must run this BEFORE writing the flush's own rows, so the seed and
-// the deltas never cover the same bytes. A failed seed therefore drops this
-// flush rather than counting it twice: the rows still land in the table, and
-// the next attempt reads them back.
-func addInboundTraffic(delta map[string]int64) {
-	inboundTrafficMu.Lock()
-	defer inboundTrafficMu.Unlock()
-	if !seedInboundTrafficLocked() {
-		return
-	}
-	for tag, traffic := range delta {
-		inboundTraffic[tag] += traffic
-	}
-}
-
-func seedInboundTrafficLocked() bool {
-	if inboundTrafficSeeded {
-		return true
-	}
-	var rows []TagTotal
-	err := database.GetDB().Raw(
-		`SELECT tag, SUM(traffic) AS traffic FROM stats WHERE resource = 'inbound' GROUP BY tag`,
-	).Scan(&rows).Error
-	if err != nil {
-		logger.Warning("stats: reading inbound traffic totals failed: ", err)
-		return false
-	}
-	for _, row := range rows {
-		inboundTraffic[row.Tag] = row.Traffic
-	}
-	inboundTrafficSeeded = true
-	return true
-}
-
-// InvalidateInboundTraffic drops the totals so the next read rebuilds them from
-// the stats table. Call it wherever that table is replaced wholesale — clearing
-// it when traffic graphs are turned off, or importing a database over a running
-// panel. Dropping rather than zeroing is what makes it safe inside a
-// transaction that may still roll back: the rebuild reads whatever survived.
-func InvalidateInboundTraffic() {
-	inboundTrafficMu.Lock()
-	inboundTraffic = map[string]int64{}
-	inboundTrafficSeeded = false
-	inboundTrafficMu.Unlock()
-}
-
 type StatsService struct {
 }
 
-// GetInboundTraffic reports each inbound tag's total traffic, both directions
-// summed. Seeds on first call so a panel that has not flushed yet — or one
-// whose core is down — still answers with the history on disk.
+// GetInboundTraffic reports each local inbound's total traffic, both
+// directions summed, from the counters on its row (#289). A read of a table
+// with a row per inbound, not of the stats history, so it is cheap enough for
+// the live payload; a flush that has not committed yet is simply not in it.
 func (s *StatsService) GetInboundTraffic() map[string]int64 {
-	inboundTrafficMu.Lock()
-	defer inboundTrafficMu.Unlock()
-	seedInboundTrafficLocked()
-	totals := make(map[string]int64, len(inboundTraffic))
-	for tag, traffic := range inboundTraffic {
-		totals[tag] = traffic
+	var rows []TagTotal
+	err := database.GetDB().Model(model.Inbound{}).
+		Select("tag", "up + down AS traffic").
+		Where("node_id IS NULL").Scan(&rows).Error
+	if err != nil {
+		logger.Warning("stats: reading inbound traffic totals failed: ", err)
+	}
+	totals := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		totals[row.Tag] = row.Traffic
 	}
 	return totals
 }
@@ -320,8 +258,7 @@ func carryPendingTargets(rows []model.TargetStats) {
 // traffic, on every restart: the restart button, a route/DNS settings save, an
 // edit to a group's member, the watchdog.
 //
-// The per-inbound totals are folded here, as SaveStats folds them from each
-// drain exactly once; the database rows and the per-client counters, which
+// The database rows and the per-client and per-inbound counters, which
 // SaveStats takes from the whole batch, ride along in the buffer.
 func carryOverStats() {
 	if corePtr == nil {
@@ -333,13 +270,6 @@ func carryOverStats() {
 	}
 	drained := *box.StatsTracker().GetStats()
 	if len(drained) > 0 {
-		inboundDelta := map[string]int64{}
-		for _, stat := range drained {
-			if stat.Resource == "inbound" {
-				inboundDelta[stat.Tag] += stat.Traffic
-			}
-		}
-		addInboundTraffic(inboundDelta)
 		carryPending(drained)
 	}
 	drainedTargets := *box.StatsTracker().GetTargetStats()
@@ -449,7 +379,7 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 	// up+down collapse into a single UPDATE.
 	type traffic struct{ up, down int64 }
 	userTraffic := map[string]*traffic{}
-	inboundDelta := map[string]int64{}
+	inboundTraffic := map[string]*traffic{}
 	seenInbound := map[string]bool{}
 	seenOutbound := map[string]bool{}
 	for _, stat := range *drained {
@@ -459,7 +389,6 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 				seenInbound[stat.Tag] = true
 				fresh.Inbound = append(fresh.Inbound, stat.Tag)
 			}
-			inboundDelta[stat.Tag] += stat.Traffic
 		case "outbound":
 			if !seenOutbound[stat.Tag] {
 				seenOutbound[stat.Tag] = true
@@ -477,14 +406,23 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 	// failed to commit is applied by the retry rather than lost. A user in
 	// the carried-over rows but not in this drain still gets its bytes, it
 	// just is not listed as online.
+	//
+	// The per-inbound counters the same way, which is what DepleteJob judges
+	// an inbound's cap against (#289).
 	for _, stat := range batch {
-		if stat.Resource != "user" {
+		var into map[string]*traffic
+		switch stat.Resource {
+		case "user":
+			into = userTraffic
+		case "inbound":
+			into = inboundTraffic
+		default:
 			continue
 		}
-		t, ok := userTraffic[stat.Tag]
+		t, ok := into[stat.Tag]
 		if !ok {
 			t = &traffic{}
-			userTraffic[stat.Tag] = t
+			into[stat.Tag] = t
 		}
 		if stat.Direction {
 			t.up += stat.Traffic
@@ -497,10 +435,6 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 	// a failed traffic write must not leave readers on a stale set.
 	setOnlines(fresh)
 
-	// Before the upsert below, which is what makes the seed and these deltas
-	// disjoint — see addInboundTraffic.
-	addInboundTraffic(inboundDelta)
-
 	for name, t := range userTraffic {
 		update := map[string]interface{}{"online_at": now}
 		if t.up > 0 {
@@ -510,6 +444,27 @@ func (s *StatsService) SaveStats(enableTraffic bool, bucketSeconds int64) error 
 			update["down"] = gorm.Expr("down + ?", t.down)
 		}
 		err = tx.Model(model.Client{}).Where("name = ?", name).Updates(update).Error
+		if err != nil {
+			return err
+		}
+	}
+
+	// By tag, among the local inbounds: an endpoint's traffic is counted under
+	// its tag as an inbound's (and tags.go keeps the two apart), and a replica
+	// never runs here. A tag with no row -- an inbound deleted since the drain
+	// -- updates nothing.
+	for tag, t := range inboundTraffic {
+		update := map[string]interface{}{}
+		if t.up > 0 {
+			update["up"] = gorm.Expr("up + ?", t.up)
+		}
+		if t.down > 0 {
+			update["down"] = gorm.Expr("down + ?", t.down)
+		}
+		if len(update) == 0 {
+			continue
+		}
+		err = tx.Model(model.Inbound{}).Where("tag = ? AND node_id IS NULL", tag).Updates(update).Error
 		if err != nil {
 			return err
 		}
@@ -842,12 +797,7 @@ func (s *StatsService) PurgeTrafficHistoryIfDisabled() error {
 	if trafficAge > 0 {
 		return nil
 	}
-	if err = purgeStatsHistory(database.GetDB()); err != nil {
-		return err
-	}
-	// The per-inbound totals are seeded from the stats rows.
-	InvalidateInboundTraffic()
-	return nil
+	return purgeStatsHistory(database.GetDB())
 }
 
 // DelOldStats drops stats past the retention window, in bounded chunks.

@@ -64,6 +64,7 @@ func (s *InboundService) GetAll() (*[]map[string]interface{}, error) {
 			"type":   inbound.Type,
 			"tag":    inbound.Tag,
 			"enable": inbound.Enable,
+			"volume": inbound.Volume,
 			"tls_id": inbound.TlsId,
 		}
 		if inbound.NodeId != nil {
@@ -176,7 +177,8 @@ func (s *InboundService) save(tx *gorm.DB, act string, data json.RawMessage, ini
 		oldRunning := false
 		if act == "edit" {
 			var old model.Inbound
-			err = tx.Model(model.Inbound{}).Select("tag", "node_id", "enable").Where("id = ?", inbound.Id).Find(&old).Error
+			err = tx.Model(model.Inbound{}).Select("tag", "node_id", "enable", "volume", "up", "down").
+				Where("id = ?", inbound.Id).Find(&old).Error
 			if err != nil {
 				return err
 			}
@@ -191,6 +193,10 @@ func (s *InboundService) save(tx *gorm.DB, act string, data json.RawMessage, ini
 			// disabled inbound back on.
 			if !inbound.EnableSet {
 				inbound.Enable = old.Enable
+			}
+			err = keepInboundCap(&inbound, &old)
+			if err != nil {
+				return err
 			}
 		}
 		err = tagFreeAcross(tx, model.Inbound{}, "inbound", inbound.Tag, inbound.Id)
@@ -275,7 +281,8 @@ func (s *InboundService) save(tx *gorm.DB, act string, data json.RawMessage, ini
 			*afterCommit = removeFromCore(oldTag)
 		}
 
-		err = tx.Save(&inbound).Error
+		// The counters are the stats flush's alone (see model.Inbound).
+		err = tx.Omit("up", "down").Save(&inbound).Error
 		if err != nil {
 			return err
 		}
@@ -324,6 +331,8 @@ func (s *InboundService) save(tx *gorm.DB, act string, data json.RawMessage, ini
 		if err != nil {
 			return err
 		}
+	case "resetTraffic":
+		return s.resetTraffic(tx, data, hostname)
 	default:
 		return common.NewErrorf("unknown action: %s", act)
 	}
@@ -670,6 +679,28 @@ func (s *InboundService) RestartInbounds(tx *gorm.DB, ids []uint) error {
 		if tracker := liveConnTracker(); tracker != nil {
 			tracker.CloseConnByInbound(inbound.Tag)
 		}
+	}
+	return nil
+}
+
+// keepInboundCap settles an edit's traffic cap against the stored row (#289).
+//
+// A volume the request did not carry keeps the stored one, as Enable does: a
+// caller written before the cap would otherwise lift it with an unrelated
+// edit. The counters are carried over only so that the check below, and
+// anything reading the struct after the save, see them -- the save never
+// writes them.
+//
+// Switching a spent inbound back on is refused: DepleteJob would take it out
+// again within the minute, which reads as the switch not working. Resetting
+// its traffic, or raising the cap in the same save, is what lets it back.
+func keepInboundCap(inbound, old *model.Inbound) error {
+	if !inbound.VolumeSet {
+		inbound.Volume = old.Volume
+	}
+	inbound.Up, inbound.Down = old.Up, old.Down
+	if inbound.Enable && !old.Enable && inbound.Depleted() {
+		return common.NewErrorf("inbound %s has used up its traffic limit: reset its traffic or raise the limit first", inbound.Tag)
 	}
 	return nil
 }

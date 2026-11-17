@@ -360,7 +360,10 @@ func buildReplicaInbound(raw json.RawMessage, nodeId uint) (*model.Inbound, erro
 	if enable, ok := full["enable"].(bool); ok {
 		inb.Enable, inb.EnableSet = enable, true
 	}
-	for _, k := range []string{"id", "tls_id", "tls", "addrs", "out_json", "users", "node_id", "type", "tag", "enable"} {
+	// The node's traffic cap and counters too (#289): the node enforces its
+	// own cap, and the counters move with every byte, so a replica carrying
+	// them would compare as changed on every reconcile.
+	for _, k := range []string{"id", "tls_id", "tls", "addrs", "out_json", "users", "node_id", "type", "tag", "enable", "volume", "up", "down"} {
 		delete(full, k)
 	}
 	options, err := json.MarshalIndent(full, "", "  ")
