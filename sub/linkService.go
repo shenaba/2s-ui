@@ -58,7 +58,7 @@ func (s *LinkService) GetLinkList(linkJson *json.RawMessage, types string, clien
 				result = append(result, Link{
 					Type:   link.Type,
 					Remark: link.Remark,
-					Uri:    s.addClientInfo(link.Uri, clientInfo),
+					Uri:    s.addClientInfo(util.DropQuicLinkFingerprint(link.Uri), clientInfo),
 				})
 			}
 		}

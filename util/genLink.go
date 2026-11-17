@@ -1121,7 +1121,9 @@ func getTlsParams(params *[]LinkParam, tls map[string]interface{}, protocol stri
 			}
 		}
 	}
-	if utls, ok := tls["utls"].(map[string]interface{}); ok {
+	// No fingerprint for a QUIC protocol: a client that turns fp back into
+	// uTLS cannot connect at all (StripQuicTls).
+	if utls, ok := tls["utls"].(map[string]interface{}); ok && !IsQuicProtocol(protocol) {
 		if fingerprint, ok := utls["fingerprint"].(string); ok {
 			*params = append(*params, LinkParam{"fp", fingerprint})
 		}

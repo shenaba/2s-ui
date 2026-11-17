@@ -186,6 +186,9 @@ func (j *JsonService) getOutbounds(clientConfig json.RawMessage, inbounds []*mod
 			util.StripServerTlsFields(outTlsBase)
 			util.NormalizeTlsServerName(outTlsBase)
 		}
+		// Stored out_json may also predate dropping uTLS from QUIC protocols,
+		// which a sing-box client refuses outright on them.
+		util.StripQuicOutboundTls(outbound)
 		// Stored out_json may predate the IPv6 normalisation in FillOutJson and
 		// still hold a bracketed literal, which sing-box would resolve as a
 		// domain name (#1220). It is only rewritten when the inbound is saved.

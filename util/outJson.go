@@ -74,6 +74,7 @@ func FillOutJson(i *model.Inbound, hostname string) error {
 			delete(outJson, key)
 		}
 	}
+	StripQuicOutboundTls(outJson)
 
 	i.OutJson, err = json.MarshalIndent(outJson, "", "  ")
 	if err != nil {

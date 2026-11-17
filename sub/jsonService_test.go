@@ -1333,3 +1333,73 @@ func TestAddrCopiesFallBackToSniForWsHost(t *testing.T) {
 		t.Errorf("no-TLS outbound got a Host: %v", out["transport"])
 	}
 }
+
+// out_json written before uTLS was dropped from the QUIC protocols still holds
+// it, and is only rewritten when the inbound is saved. Served as-is it is an
+// outbound sing-box refuses ("unsupported usage for uTLS"), so the read path
+// drops it too -- and the Clash export, built from the same outbounds, must not
+// carry it on as client-fingerprint.
+func TestSubDropsStoredUtlsOnQuic(t *testing.T) {
+	setupSubDB(t)
+	db := database.GetDB()
+	utls := `"tls":{"enabled":true,"server_name":"example.com","utls":{"enabled":true,"fingerprint":"chrome"}}`
+	tuic := &model.Inbound{
+		Type: "tuic", Tag: "tuic-in",
+		Addrs:   json.RawMessage(`[]`),
+		OutJson: json.RawMessage(`{"type":"tuic","tag":"tuic-in","server":"example.com","server_port":443,"congestion_control":"bbr",` + utls + `}`),
+		Options: json.RawMessage(`{}`),
+	}
+	vless := &model.Inbound{
+		Type: "vless", Tag: "vless-in",
+		Addrs:   json.RawMessage(`[]`),
+		OutJson: json.RawMessage(`{"type":"vless","tag":"vless-in","server":"example.com","server_port":443,` + utls + `}`),
+		Options: json.RawMessage(`{}`),
+	}
+	for _, in := range []*model.Inbound{tuic, vless} {
+		if err := db.Create(in).Error; err != nil {
+			t.Fatalf("seed inbound: %v", err)
+		}
+	}
+	client := &model.Client{
+		Enable:   true,
+		Name:     "quicutls",
+		Config:   json.RawMessage(`{"tuic":{"uuid":"5bdbac27-7a82-42c5-9ef4-751f64bd15e4","password":"pw"},"vless":{"uuid":"5bdbac27-7a82-42c5-9ef4-751f64bd15e4"}}`),
+		Inbounds: json.RawMessage(fmt.Sprintf(`[%d,%d]`, tuic.Id, vless.Id)),
+		Links:    json.RawMessage(`[]`),
+	}
+	if err := db.Create(client).Error; err != nil {
+		t.Fatalf("seed client: %v", err)
+	}
+
+	raw, _, err := (&JsonService{}).GetJson("quicutls", "json")
+	if err != nil {
+		t.Fatalf("GetJson: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, ob := range outboundsOf(t, *raw) {
+		protocol, _ := ob["type"].(string)
+		if protocol != "tuic" && protocol != "vless" {
+			continue
+		}
+		seen[protocol] = true
+		tls, _ := ob["tls"].(map[string]interface{})
+		_, has := tls["utls"]
+		if want := protocol == "vless"; has != want {
+			t.Errorf("%s: utls present = %v, want %v: %v", protocol, has, want, tls)
+		}
+	}
+	if !seen["tuic"] || !seen["vless"] {
+		t.Fatalf("outbounds missing (%v):\n%s", seen, *raw)
+	}
+
+	clash, _, err := (&ClashService{}).GetClash("quicutls")
+	if err != nil {
+		t.Fatalf("GetClash: %v", err)
+	}
+	if fp, ok := clashProxy(t, *clash, "tuic-in")["client-fingerprint"]; ok {
+		t.Errorf("tuic proxy carries client-fingerprint %v:\n%s", fp, *clash)
+	}
+	if fp := clashProxy(t, *clash, "vless-in")["client-fingerprint"]; fp != "chrome" {
+		t.Errorf("vless client-fingerprint = %v, want chrome:\n%s", fp, *clash)
+	}
+}
