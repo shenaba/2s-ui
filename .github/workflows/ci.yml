@@ -51,10 +51,9 @@ jobs:
       # core/protocol/*/inbound.go are verbatim sing-box copies. They keep
       # compiling after a sing-box bump while silently running the old
       # implementation, so vet and build cannot catch staleness -- only this can.
+      # The script downloads the modules it reads itself.
       - name: Check vendored protocol copies
-        run: |
-          go mod download github.com/sagernet/sing-box
-          bash scripts/check-protocol-copies.sh
+        run: bash scripts/check-protocol-copies.sh
 
       - name: Vet
         run: go vet -tags "$BUILD_TAGS" ./...

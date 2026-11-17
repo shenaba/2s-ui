@@ -18,13 +18,23 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Every module this reads from, fetched here rather than by the caller: the
+# sing check below was added without CI downloading sing, and it passed only
+# while the Go cache was warm -- the first go.sum change (a dependabot PR) got
+# "gone from sing" for a file that was merely not downloaded. A module read
+# below must be listed here.
+go mod download github.com/sagernet/sing-box github.com/sagernet/sing
+
 VERSION=$(go list -m -f '{{.Version}}' github.com/sagernet/sing-box)
 MODDIR=$(go list -m -f '{{.Dir}}' github.com/sagernet/sing-box)
+SING_MODDIR=$(go list -m -f '{{.Dir}}' github.com/sagernet/sing)
 
-if [ ! -d "$MODDIR" ]; then
-  echo "sing-box module not in cache; run 'go mod download' first" >&2
-  exit 1
-fi
+for dir in "$MODDIR" "$SING_MODDIR"; do
+  if [ ! -d "$dir" ]; then
+    echo "module not in cache after go mod download: '$dir'" >&2
+    exit 1
+  fi
+done
 
 echo "comparing core/protocol/ against sing-box $VERSION"
 
@@ -269,7 +279,6 @@ done
 # so a sing that started reading another header (X-Real-IP, Forwarded) would
 # have it believed from anyone again. core/transport's tests send the usual
 # ones and would catch that too; this says where to look.
-SING_MODDIR=$(go list -m -f '{{.Dir}}' github.com/sagernet/sing)
 sing_addr="$SING_MODDIR/protocol/http/addr.go"
 if [ ! -f "$sing_addr" ]; then
   echo "  sing protocol/http/addr.go: FAIL - gone from sing"
