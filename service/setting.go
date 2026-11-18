@@ -911,10 +911,8 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 			if err = json.Unmarshal([]byte(obj), &template); err != nil {
 				return err
 			}
-			if value, ok := template["outbound_groups"]; ok {
-				if _, err = ParseSubOutboundGroups(value); err != nil {
-					return err
-				}
+			if _, err = ParseSubOutboundExtensions(template); err != nil {
+				return err
 			}
 		}
 		// Secure file existence check

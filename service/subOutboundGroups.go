@@ -1,12 +1,9 @@
 package service
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 
 	"github.com/sagernet/sing-box/option"
 )
@@ -20,15 +17,12 @@ type subOutboundGroup struct {
 	config     map[string]any
 }
 
-// SubOutboundGroups 是 JSON 订阅模板里已完成静态校验的自定义分组。
-type SubOutboundGroups []subOutboundGroup
-
-func ParseSubOutboundGroups(value any) (SubOutboundGroups, error) {
+func parseSubOutboundGroups(value any, customTags map[string]bool) ([]subOutboundGroup, error) {
 	entries, ok := value.([]any)
 	if !ok {
 		return nil, fmt.Errorf("outbound_groups 必须是数组")
 	}
-	groups := make(SubOutboundGroups, 0, len(entries))
+	groups := make([]subOutboundGroup, 0, len(entries))
 	dependencies := make(map[string][]string, len(entries))
 	for _, entry := range entries {
 		config, ok := entry.(map[string]any)
@@ -36,22 +30,13 @@ func ParseSubOutboundGroups(value any) (SubOutboundGroups, error) {
 			return nil, fmt.Errorf("outbound_groups 的每一项必须是对象")
 		}
 		tag, _ := config["tag"].(string)
-		switch tag {
-		case "", subscriptionNodes, "proxy", "auto", "direct":
+		if reservedSubOutboundTag(tag) {
 			return nil, fmt.Errorf("无效或保留的订阅分组标签 %q", tag)
 		}
-		if strings.TrimSpace(tag) == "" {
-			return nil, fmt.Errorf("订阅分组标签不能为空白")
-		}
-		if _, exists := dependencies[tag]; exists {
+		if _, exists := dependencies[tag]; exists || customTags[tag] {
 			return nil, fmt.Errorf("重复的订阅分组标签 %q", tag)
 		}
-		raw, err := json.Marshal(config)
-		if err != nil {
-			return nil, err
-		}
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		decoder.DisallowUnknownFields()
+		var err error
 		group := subOutboundGroup{tag: tag, config: config}
 		switch config["type"] {
 		case "selector":
@@ -60,7 +45,7 @@ func ParseSubOutboundGroups(value any) (SubOutboundGroups, error) {
 				Tag  string `json:"tag"`
 				option.SelectorOutboundOptions
 			}
-			err = decoder.Decode(&settings)
+			err = decodeSubOutboundOptions(config, &settings)
 			group.members = settings.Outbounds
 			group.defaultTag = settings.Default
 		case "urltest":
@@ -69,7 +54,7 @@ func ParseSubOutboundGroups(value any) (SubOutboundGroups, error) {
 				Tag  string `json:"tag"`
 				option.URLTestOutboundOptions
 			}
-			err = decoder.Decode(&settings)
+			err = decodeSubOutboundOptions(config, &settings)
 			group.members = settings.Outbounds
 		default:
 			return nil, fmt.Errorf("订阅分组 %q 的类型必须是 selector 或 urltest", tag)
@@ -115,20 +100,31 @@ func ParseSubOutboundGroups(value any) (SubOutboundGroups, error) {
 	return groups, nil
 }
 
-// AppendTo 用当前订阅的可选节点标签展开分组，并校验最终出站引用。
-func (groups SubOutboundGroups) AppendTo(outbounds []map[string]any, nodeTags []string) ([]map[string]any, error) {
-	known := make(map[string]bool, len(outbounds)+len(groups))
+// AppendTo 合并额外出站，再用当前订阅的可选节点标签展开分组。
+func (extensions SubOutboundExtensions) AppendTo(outbounds []map[string]any, nodeTags []string) ([]map[string]any, error) {
+	if len(extensions.custom) == 0 && len(extensions.groups) == 0 {
+		return outbounds, nil
+	}
+	known := make(map[string]bool, len(outbounds)+len(extensions.custom)+len(extensions.groups))
 	for _, outbound := range outbounds {
 		tag, _ := outbound["tag"].(string)
 		known[tag] = true
 	}
-	for _, group := range groups {
+	for _, outbound := range extensions.custom {
+		tag, _ := outbound["tag"].(string)
+		if known[tag] {
+			return nil, fmt.Errorf("自定义订阅出站标签 %q 与现有出站冲突", tag)
+		}
+		known[tag] = true
+	}
+	outbounds = append(outbounds, extensions.custom...)
+	for _, group := range extensions.groups {
 		if known[group.tag] {
 			return nil, fmt.Errorf("订阅分组标签 %q 与现有出站冲突", group.tag)
 		}
 		known[group.tag] = true
 	}
-	for _, group := range groups {
+	for _, group := range extensions.groups {
 		var members []string
 		for _, member := range group.members {
 			if member == subscriptionNodes {

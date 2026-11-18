@@ -98,6 +98,21 @@ English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) 
 
 `$nodes` 展开为当前订阅者可选的节点。选择组的 `default` 写为 `$nodes` 时选择第一个节点。没有节点时，分组保留其他成员，空组会降级为包含 `direct` 的选择组。`proxy`、`auto` 和 `direct` 是保留标签。
 
+可用顶层 `custom_outbounds` 添加具名直连和阻断出站。`direct` 可设置 `connect_timeout`。把这些出站的 `tag` 放进选择组的 `outbounds`，用户就能在客户端切换直连或阻断。
+
+```json
+{
+  "custom_outbounds": [
+    { "type": "direct", "tag": "🎯 直接连接", "connect_timeout": "10s" },
+    { "type": "block", "tag": "⛔️ 禁止连接" }
+  ],
+  "outbound_groups": [
+    { "type": "selector", "tag": "视频", "outbounds": ["🎯 直接连接", "⛔️ 禁止连接", "$nodes"], "default": "⛔️ 禁止连接" }
+  ],
+  "rules": [{ "action": "route", "domain_suffix": ["youtube.com"], "outbound": "视频" }]
+}
+```
+
 ## 默认安装信息
 
 | | 默认值 |

@@ -694,17 +694,15 @@ func (j *JsonService) addOthers(jsonConfig *map[string]interface{}, outbounds []
 	if err != nil {
 		return err
 	}
-	if value, ok := othersJson["outbound_groups"]; ok {
-		groups, err := service.ParseSubOutboundGroups(value)
-		if err != nil {
-			return err
-		}
-		outbounds, err = groups.AppendTo(outbounds, nodeTags)
-		if err != nil {
-			return err
-		}
-		(*jsonConfig)["outbounds"] = outbounds
+	extensions, err := service.ParseSubOutboundExtensions(othersJson)
+	if err != nil {
+		return err
 	}
+	outbounds, err = extensions.AppendTo(outbounds, nodeTags)
+	if err != nil {
+		return err
+	}
+	(*jsonConfig)["outbounds"] = outbounds
 	if _, ok := othersJson["log"]; ok {
 		(*jsonConfig)["log"] = othersJson["log"]
 	}
