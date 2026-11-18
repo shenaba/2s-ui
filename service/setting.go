@@ -906,6 +906,17 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 				return err
 			}
 		}
+		if key == "subJsonExt" && obj != "" {
+			var template map[string]any
+			if err = json.Unmarshal([]byte(obj), &template); err != nil {
+				return err
+			}
+			if value, ok := template["outbound_groups"]; ok {
+				if _, err = ParseSubOutboundGroups(value); err != nil {
+					return err
+				}
+			}
+		}
 		// Secure file existence check
 		if obj != "" &&
 			(((key == "webCertFile" || key == "webKeyFile") && !webAcme && !webNginx) ||
