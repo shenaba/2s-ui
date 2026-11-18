@@ -706,6 +706,13 @@ func (j *JsonService) addOthers(jsonConfig *map[string]interface{}, outbounds []
 	if _, ok := othersJson["experimental"]; ok {
 		(*jsonConfig)["experimental"] = othersJson["experimental"]
 	}
+	clientOptions, err := service.ParseSubClientOptions(othersJson)
+	if err != nil {
+		return err
+	}
+	if clientOptions.Services != nil {
+		(*jsonConfig)["services"] = clientOptions.Services
+	}
 	if _, ok := othersJson["rule_set"]; ok {
 		route["rule_set"] = othersJson["rule_set"]
 	}
@@ -718,8 +725,8 @@ func (j *JsonService) addOthers(jsonConfig *map[string]interface{}, outbounds []
 	if settingRules, ok := othersJson["rules"].([]interface{}); ok {
 		route["rules"] = settingRules
 	}
-	if defaultDomainResolver, ok := othersJson["default_domain_resolver"].(string); ok && defaultDomainResolver != "" {
-		route["default_domain_resolver"] = defaultDomainResolver
+	if clientOptions.DefaultDomainResolver != nil {
+		route["default_domain_resolver"] = clientOptions.DefaultDomainResolver
 	} else if fallback := fallbackDomainResolver(othersJson); fallback != "" {
 		// With more than one DNS server and no resolver named for dial fields,
 		// sing-box has to guess which one resolves outbound server domains and
