@@ -56,7 +56,7 @@ ENV TZ=Asia/Tehran
 ENV S_UI_IN_DOCKER=1
 WORKDIR /app
 RUN set -ex && apk upgrade --no-cache --scripts=no apk-tools && \
-    apk add --no-cache --upgrade bash ca-certificates nftables
+    apk add --no-cache --upgrade bash ca-certificates nftables openssl socat curl
 COPY --from=backend-builder /app/sui /app/libcronet.so /app/
 COPY --chmod=755 entrypoint.sh /app/
 # The port is read from the database, not written here: the operator can
