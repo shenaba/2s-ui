@@ -6,7 +6,7 @@ services:
     hostname: "s-ui"
     volumes:
       - "./db:/app/db"
-      - "./cert:/app/cert"
+      - "./cert:/root/cert"
     tty: true
     restart: unless-stopped
     ports:
