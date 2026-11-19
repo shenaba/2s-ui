@@ -156,6 +156,7 @@ docker run -itd \
     -p 2095:2095 -p 2096:2096 -p 443:443 \
     -v $PWD/db/:/app/db/ \
     -v $PWD/cert/:/root/cert/ \
+    -v $PWD/acme.sh/:/root/.acme.sh/ \
     --name s-ui --restart=unless-stopped \
     ghcr.io/shenaba/2s-ui:latest
 ```
@@ -291,8 +292,10 @@ và bị ẩn trên Windows.
   <summary>Quá trình cấp phát diễn ra thế nào, và lưu ý về cổng 80 với Docker</summary>
 
 Việc cấp phát chạy qua **acme.sh** — ở lần dùng đầu tiên, bảng điều khiển sẽ tự cài
-acme.sh cho bạn (cùng với `socat`, cần cho xác thực standalone) và bật gia hạn tự động
-bằng chính cron job của acme.sh, nên bạn không phải tự lập lịch gì cả.
+acme.sh cho bạn (cùng với `socat`, cần cho xác thực standalone) và tự động gia hạn:
+bảng điều khiển kiểm tra mỗi giờ và chạy `acme.sh --cron` khi có chứng chỉ đến hạn, nên
+việc gia hạn vẫn chạy cả ở nơi không có tiến trình cron (image Docker không có) — bạn
+không phải tự lập lịch gì cả.
 
 Phương thức xác thực mặc định là **auto** — dùng standalone khi cổng 80 còn trống, ngược
 lại mượn nginx đang chạy và tự tạo một khối `server_name` tối thiểu dưới
@@ -302,7 +305,9 @@ muốn tự quyết. Khi gia hạn, chứng chỉ được nạp nóng; không c
 > Để publish cổng 80 với Docker: bỏ ghi chú dòng `80:80` trong `docker-compose.yml`,
 > hoặc thêm `-p 80:80` vào `docker run`. Chứng chỉ được lưu trong `/root/cert/<tên-miền>/`
 > với tên tệp `fullchain.pem` / `privkey.pem` và vẫn tồn tại sau khi khởi động lại (volume
-> trong lệnh Docker ở trên chính là để map đường dẫn này ra ngoài). Nếu tên miền/cổng được
+> trong lệnh Docker ở trên chính là để map đường dẫn này ra ngoài). Hãy giữ cả volume
+> `/root/.acme.sh`: nó chứa tài khoản acme.sh và thông tin gia hạn, thiếu nó thì container
+> được tạo lại sẽ không gia hạn được chứng chỉ. Nếu tên miền/cổng được
 > cấu hình sai, 2S-UI sẽ chuyển về HTTP.
 
 </details>

@@ -145,6 +145,7 @@ docker run -itd \
     -p 2095:2095 -p 2096:2096 -p 443:443 \
     -v $PWD/db/:/app/db/ \
     -v $PWD/cert/:/root/cert/ \
+    -v $PWD/acme.sh/:/root/.acme.sh/ \
     --name s-ui --restart=unless-stopped \
     ghcr.io/shenaba/2s-ui:latest
 ```
@@ -268,7 +269,8 @@ ACME 仅支持 Linux，在 Windows 上会隐藏。
   <summary>签发的具体过程，以及 Docker 的 80 端口注意事项</summary>
 
 签发底层走 **acme.sh** —— 首次使用时面板会自动帮你装好 acme.sh（以及 standalone 校验
-需要的 `socat`），并启用 acme.sh 自带的 cron 做自动续期，你不需要自己配任何定时任务。
+需要的 `socat`），并自动续期：面板每小时检查一次，有证书到期就运行 `acme.sh --cron`，
+所以没有 cron 守护进程的环境（Docker 镜像里就没有）也能续期，你不需要自己配任何定时任务。
 
 校验方式默认为 **auto** —— 80 端口空闲时用 standalone，否则借用正在运行的 nginx，
 必要时会在 `/etc/nginx/conf.d` 下自动补一个最小的 `server_name` 配置块。你也可以
@@ -277,7 +279,8 @@ ACME 仅支持 Linux，在 Windows 上会隐藏。
 > Docker 部署映射 80 端口：docker compose 方式请取消 `docker-compose.yml` 中 `80:80`
 > 那一行的注释；docker run 方式请加上 `-p 80:80`。证书保存在 `/root/cert/<域名>/` 下，
 > 文件名固定为 `fullchain.pem` / `privkey.pem`，重启后保留（上面 Docker 命令里的挂载
-> 正是把这个路径映射出来）。若域名/端口配置有误，会自动回退 HTTP。
+> 正是把这个路径映射出来）。`/root/.acme.sh` 的挂载也要保留：acme.sh 的账户和续期记录都在
+> 里面，没有它，重建容器后证书就无法续期。若域名/端口配置有误，会自动回退 HTTP。
 
 </details>
 

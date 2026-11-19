@@ -1392,6 +1392,8 @@ func ensureSocat() {
 		{"yum", "-y", "install", "socat"},
 		{"dnf", "-y", "install", "socat"},
 		{"pacman", "-Sy", "--noconfirm", "socat"},
+		// Alpine:Docker 运行镜像就是 alpine,也是 OpenRC 安装的常见发行版
+		{"apk", "add", "--no-cache", "socat"},
 	}
 	for _, m := range managers {
 		if _, ok := resolveBin(m[0]); ok {
@@ -1788,4 +1790,107 @@ func (a *AcmeService) RemoveCert(domain string) error {
 	}
 	logger.Info("已删除证书:", domain)
 	return nil
+}
+
+// ===== 续期兜底 =====
+
+const (
+	// acmeRenewTO 是一次 acme.sh --cron 的总超时:它会挨个续期所有到期证书,
+	// 每张最多一次完整签发(acmeIssueTO),给多张证书留足余量。
+	acmeRenewTO = 15 * time.Minute
+	// acmeRenewRetry 是两次续期尝试的最短间隔。到期证书续期失败(80 端口被占、DNS 漂移)
+	// 时不会改写 Le_NextRenewTime,下一轮检查仍判定到期;不限频就会每小时打一次
+	// Let's Encrypt。与 acme.sh 自带 crontab 的每日一次对齐。
+	acmeRenewRetry = 24 * time.Hour
+)
+
+// acmeLastRenew 是本进程上次运行 acme.sh --cron 的时间,只在持有 acmeIssuing 时读写。
+// 不落库:重启后清零只意味着可能提前一次重试,而那次本来就在限速额度内。
+var acmeLastRenew time.Time
+
+// acmeRenewDue 判断这一轮要不要跑 acme.sh --cron:距上次尝试已满 acmeRenewRetry,
+// 且至少有一张证书的 Le_NextRenewTime 已到。nextRenew 里的 0 表示 conf 没记录续期时间
+// (手工导入、字段缺失),acme.sh 自己也不会去续它,跳过。
+// 时钟回拨到上次尝试之前时不按间隔拦截,否则可能被一个「未来」的时间戳卡住很久。
+func acmeRenewDue(nextRenew []int64, now, lastAttempt time.Time) bool {
+	if !lastAttempt.IsZero() && !now.Before(lastAttempt) && now.Sub(lastAttempt) < acmeRenewRetry {
+		return false
+	}
+	for _, n := range nextRenew {
+		if n > 0 && n <= now.Unix() {
+			return true
+		}
+	}
+	return false
+}
+
+// acmeNextRenewTimes 读出 acme.sh 家目录下每个证书目录 conf 里的 Le_NextRenewTime。
+// 故意不复用 ListCerts:那里按域名去重,只留较新的一份,而 acme.sh --cron 会续期
+// 每一个目录,判定是否到期也得看全部。
+func acmeNextRenewTimes(dataDir string) []int64 {
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return nil
+	}
+	var out []int64
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		domain := strings.TrimSuffix(e.Name(), "_ecc")
+		raw, err := os.ReadFile(filepath.Join(dataDir, e.Name(), domain+".conf"))
+		if err != nil {
+			continue
+		}
+		if n, err := strconv.ParseInt(parseAcmeConf(string(raw))["Le_NextRenewTime"], 10, 64); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// RenewDue 在有证书到期时运行 acme.sh --cron,由面板的定时任务每小时调用一次。
+//
+// 为什么面板要自己做:IssueWeb 签发后只靠 acme.sh 安装时写进 crontab 的那一条续期,
+// 而 Docker 镜像里没有 crond(entrypoint 直接 exec ./sui),那条 crontab 永远不会被执行,
+// 证书 90 天后过期;宿主机上 crontab 被清掉、acme.sh 装时没有 cron 也是同样结局。
+//
+// 和宿主机上 acme.sh 自带的 crontab 并存是安全的:--cron 对未到期的证书什么也不做,
+// 谁先续上,另一方读到的 Le_NextRenewTime 就已后移、变成空转。只有两者恰好在同一分钟
+// 撞上一张到期证书时才会并行续期:standalone 的第二个抢不到 80 端口直接失败,nginx
+// 验证则多签一张、两次安装后结果相同,都不会留下坏状态。
+//
+// 先在本地判断有没有到期证书,没有就不启动 acme.sh——--cron 开着自动升级时每次都会
+// 去 GitHub 检查新版本,每小时空跑一次没有必要。
+// 与手动签发共用 acmeIssuing:正在签发时本轮直接跳过,下一小时再看。
+func (a *AcmeService) RenewDue() {
+	if runtime.GOOS == "windows" {
+		return
+	}
+	bin, home := resolveAcmeSh()
+	if bin == "" {
+		return
+	}
+	if !acmeIssuing.TryLock() {
+		logger.Debug("证书申请进行中,本轮续期检查跳过")
+		return
+	}
+	defer acmeIssuing.Unlock()
+
+	// acme.sh 的家目录是可执行文件所在目录,home 是给子进程的 HOME(见 ListCerts)
+	dataDir := filepath.Dir(bin)
+	now := time.Now()
+	if !acmeRenewDue(acmeNextRenewTimes(dataDir), now, acmeLastRenew) {
+		return
+	}
+	acmeLastRenew = now
+	logger.Info("有证书到期,运行 acme.sh --cron 续期")
+	// 与 acme.sh 自己写进 crontab 的命令一致:显式 --home,不依赖 HOME 推断
+	out, err := runCmd(acmeRenewTO, home, bin, "--cron", "--home", dataDir)
+	if err != nil {
+		logger.Warning("acme.sh 续期失败,", acmeRenewRetry, " 后重试:", err)
+		return
+	}
+	logger.Info("acme.sh 续期检查完成")
+	logger.Debug("acme.sh --cron 输出:\n", out)
 }

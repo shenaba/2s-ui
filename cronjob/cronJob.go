@@ -99,6 +99,9 @@ func (c *CronJob) Start(loc *time.Location, statsBucketSeconds int64) error {
 			addJob(spec, NewNotifyReportJob(), "notify report")
 		}
 	}
+	// Renew acme.sh certificates that are due (no-op without acme.sh or on
+	// Windows). The image has no crond, so acme.sh's own crontab never fires.
+	addJob("@every 1h", NewAcmeRenewJob(), "acme renew")
 	// database WAL checkpoint
 	addJob("@every 10m", NewWALCheckpointJob(), "WAL checkpoint")
 
