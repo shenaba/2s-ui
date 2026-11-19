@@ -850,6 +850,15 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 	for key, value := range settings {
 		settings[key] = strings.TrimSpace(value)
 	}
+	if value := settings["subJsonExt"]; value != "" {
+		var template map[string]any
+		if err := json.Unmarshal([]byte(value), &template); err != nil {
+			return err
+		}
+		if _, err := ParseSubClientOptions(template); err != nil {
+			return err
+		}
+	}
 	newZone, hasZone := settings["timeLocation"]
 	var oldZone string
 	if hasZone {
