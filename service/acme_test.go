@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Every nginx-facing decision in EnsureVhost / SyncVhosts / ensureNginxServerBlock is
@@ -602,5 +603,68 @@ func TestBuildVhostConfOwnerTagIsDrift(t *testing.T) {
 	if got := strings.Replace(tagged, "# Only the panel instance with this id cleans this file up.\n"+
 		vhostOwnerMarker+"0123456789abcdef\n", "", 1); got != legacy {
 		t.Errorf("the tag must be the only difference from the untagged output:\n%s", tagged)
+	}
+}
+
+// The renewal job runs inside the panel because the Docker image has no crond: acme.sh's
+// own crontab entry never fires there.
+func TestAcmeRenewDue(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	past, future := now.Unix()-1, now.Unix()+3600
+	tests := []struct {
+		name      string
+		nextRenew []int64
+		last      time.Time
+		want      bool
+	}{
+		{"no certificates", nil, time.Time{}, false},
+		{"nothing due yet", []int64{future}, time.Time{}, false},
+		{"due exactly now", []int64{now.Unix()}, time.Time{}, true},
+		{"one of several due", []int64{future, past}, time.Time{}, true},
+		// 0 = the conf records no renewal time; acme.sh would not renew it either, so it
+		// must not make the job start acme.sh every hour.
+		{"no renewal time recorded", []int64{0}, time.Time{}, false},
+		// A failed renewal leaves Le_NextRenewTime in the past, so without the retry gap
+		// every hourly tick would hit Let's Encrypt again.
+		{"failed an hour ago", []int64{past}, now.Add(-time.Hour), false},
+		{"retry gap elapsed", []int64{past}, now.Add(-acmeRenewRetry), true},
+		// A clock set back past the last attempt must not hold renewal off until it
+		// catches up again.
+		{"clock moved back", []int64{past}, now.Add(48 * time.Hour), true},
+	}
+	for _, tt := range tests {
+		if got := acmeRenewDue(tt.nextRenew, now, tt.last); got != tt.want {
+			t.Errorf("%s: acmeRenewDue() = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestAcmeNextRenewTimes(t *testing.T) {
+	dir := t.TempDir()
+	write := func(sub, name, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, sub, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Both the RSA and the _ecc directory of one domain count: acme.sh --cron renews
+	// every directory, unlike ListCerts which keeps only the newer of the two.
+	write("a.com", "a.com.conf", "Le_Domain='a.com'\nLe_NextRenewTime='100'\n")
+	write("a.com_ecc", "a.com.conf", "Le_Domain='a.com'\nLe_NextRenewTime='200'\n")
+	// Internal directories and confs without a renewal time are skipped.
+	write("ca", "ca.conf", "CA_EMAIL='x'\n")
+	write("b.com_ecc", "b.com.conf", "Le_Domain='b.com'\n")
+	write(".", "account.conf", "ACCOUNT_EMAIL='x'\n")
+
+	got := acmeNextRenewTimes(dir)
+	sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
+	if want := []int64{100, 200}; !reflect.DeepEqual(got, want) {
+		t.Errorf("acmeNextRenewTimes() = %v, want %v", got, want)
+	}
+	if got := acmeNextRenewTimes(filepath.Join(dir, "missing")); got != nil {
+		t.Errorf("missing dir: got %v, want nil", got)
 	}
 }
