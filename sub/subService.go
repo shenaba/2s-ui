@@ -18,8 +18,12 @@ type SubService struct {
 }
 
 func (s *SubService) GetSubs(subId string) (*string, []string, error) {
-	var err error
+	return s.getSubs(subId, nil)
+}
 
+// getSubs is the plain link subscription, its links passed through transform
+// first when one is given (happLinks, for Happ).
+func (s *SubService) getSubs(subId string, transform func([]string) []string) (*string, []string, error) {
 	client, err := s.getClientBySubId(subId)
 	if err != nil {
 		return nil, nil, err
@@ -32,6 +36,9 @@ func (s *SubService) GetSubs(subId string) (*string, []string, error) {
 	}
 
 	linksArray := s.LinkService.GetLinks(&client.Links, "all", clientInfo)
+	if transform != nil {
+		linksArray = transform(linksArray)
+	}
 	result := strings.Join(linksArray, "\n")
 
 	headers := s.getClientHeaders(client)

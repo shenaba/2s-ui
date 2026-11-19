@@ -30,7 +30,7 @@
   </Field>
   <div class="grid2">
     <Field :label="$t('ui.listenPort')">
-      <input class="input mono" type="number" min="1" v-model.number="data.listen_port" />
+      <input class="input mono" type="number" min="0" v-model="listenPort" placeholder="0" />
     </Field>
     <Field v-if="data.udp_timeout != undefined" :label="'UDP Timeout (' + $t('date.m') + ')'">
       <input class="input mono" type="number" min="0" v-model.number="udpTimeout" />
@@ -121,6 +121,16 @@ const optionWorker = computed({
 const optionMtu = computed({
   get: (): boolean => props.data.mtu != undefined,
   set: (v: boolean) => { props.data.mtu = v ? 1408 : undefined },
+})
+// Empty means 0, a random port. v-model.number leaves a cleared field as the
+// string "", which sing-box refuses as a port and so fails the whole save.
+// Anything else typed is kept as typed: a port out of range still reaches the
+// save and is refused there, rather than quietly becoming a random one.
+const listenPort = computed({
+  get: (): number | string => props.data.listen_port > 0 ? props.data.listen_port : '',
+  set: (v: number | string) => {
+    props.data.listen_port = v === '' || v == null ? 0 : Number(v)
+  },
 })
 const ifName = computed({
   get: () => props.data.name ?? '',

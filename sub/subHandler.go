@@ -70,37 +70,51 @@ func (s *SubHandler) subs(c *gin.Context) {
 	subId := c.Param("subid")
 	format, isFormat := c.GetQuery("format")
 
-	if isFormat {
-		switch format {
-		// The dashboard and the JSON behind it are two more formats of this
-		// endpoint, next to json and clash. Keeping them behind an explicit
-		// ?format is what leaves the bare subscription URL byte-identical for
-		// every client: deciding by User-Agent instead would eventually hand a
-		// proxy client an HTML page instead of its config, and the user would
-		// see that as a broken subscription rather than a cosmetic glitch.
-		case "page":
-			s.serveDashboard(c, subId)
-			return
-		case "info":
-			s.serveClientInfo(c, subId)
-			return
-		case "json":
-			result, headers, err = s.JsonService.GetJson(subId, format)
-		case "clash":
-			result, headers, err = s.ClashService.GetClash(subId)
-		}
-		if err != nil || result == nil {
-			logger.Error(err)
-			c.String(400, "Error!")
-			return
-		}
-	} else {
+	// With no ?format, a well-known client gets the format it reads -- Clash
+	// and mihomo their YAML, sing-box its JSON, Happ its links -- and anything
+	// else the plain links, as before (formatForUserAgent). The answer then
+	// depends on the User-Agent, which a cache has to be told: Vary for the
+	// caches that honour it, and private for the ones that do not -- a CDN
+	// rule caching the sub path (Cloudflare ignores Vary outside images)
+	// would otherwise hand the first Clash client's YAML to everyone.
+	byAgent := false
+	if !isFormat {
+		c.Writer.Header().Add("Vary", "User-Agent")
+		c.Writer.Header().Set("Cache-Control", "private")
+		format = formatForUserAgent(c.Request.UserAgent())
+		byAgent = format != ""
+	}
+	switch {
+	// The dashboard and the JSON behind it stay behind an explicit ?format:
+	// no User-Agent picks them (formatForUserAgent).
+	case isFormat && format == "page":
+		s.serveDashboard(c, subId)
+		return
+	case isFormat && format == "info":
+		s.serveClientInfo(c, subId)
+		return
+	case format == "json":
+		result, headers, err = s.JsonService.GetJson(subId, format)
+	case format == "clash":
+		result, headers, err = s.ClashService.GetClash(subId)
+	case format == "happ":
+		result, headers, err = s.SubService.getSubs(subId, happLinks)
+	case !isFormat:
 		result, headers, err = s.SubService.GetSubs(subId)
-		if err != nil || result == nil {
-			logger.Error(err)
-			c.String(400, "Error!")
-			return
-		}
+	}
+	// A format the agent picked falls back to the plain links when it cannot
+	// be built: those are what this URL served before it looked at agents,
+	// and a mihomo proxy-provider reads them. One broken inbound row fails
+	// the JSON and Clash builds but not the stored links. A format named in
+	// the query is answered as asked, error included.
+	if byAgent && (err != nil || result == nil) {
+		logger.Warning("sub: ", format, " for ", subId, " failed, serving the plain links: ", err)
+		result, headers, err = s.SubService.GetSubs(subId)
+	}
+	if err != nil || result == nil {
+		logger.Error(err)
+		c.String(400, "Error!")
+		return
 	}
 
 	s.addHeaders(c, headers)

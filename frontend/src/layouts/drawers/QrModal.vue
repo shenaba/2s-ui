@@ -57,17 +57,26 @@ const load = async () => {
   loading.value = false
 }
 
-const clientSub = computed(() => Data().subURI + (client.value.name ?? ''))
+// The name is a path segment and may hold anything but nothing at all, so it
+// is encoded: a '#', '?' or space in it used to cut the URL short, and every
+// QR below -- the plain one, and Happ's, which takes the URL unencoded after
+// happ://add/ -- fetched another path. The server decodes it back.
+const clientSub = computed(() => Data().subURI + encodeURIComponent(client.value.name ?? ''))
 const singbox = computed(() => {
   const url = clientSub.value + '?format=json'
   return 'sing-box://import-remote-profile?url=' + encodeURIComponent(url) + '#' + (client.value.name ?? '')
 })
+// Happ takes the subscription URL as it is, unencoded, after happ://add/.
+// ?format=happ is what Happ's own User-Agent gets on the bare URL; naming it
+// keeps the import right from a scanner that sends some other one.
+const happ = computed(() => 'happ://add/' + clientSub.value + '?format=happ')
 const subQrs = computed(() => [
   { label: t('setting.sub'), value: clientSub.value, copy: true },
   { label: t('setting.pageSub'), value: clientSub.value + '?format=page', copy: true },
   { label: t('setting.jsonSub'), value: clientSub.value + '?format=json', copy: true },
   { label: t('setting.clashSub'), value: clientSub.value + '?format=clash', copy: true },
   { label: 'SING-BOX', value: singbox.value, copy: false },
+  { label: 'HAPP', value: happ.value, copy: false },
 ])
 const clientLinks = computed(() => client.value.links ?? [])
 
