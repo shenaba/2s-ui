@@ -146,6 +146,11 @@ func TestJsonSubscriptionParsesAsSingBoxConfig(t *testing.T) {
 // subscriber performs: parse the document, then build the box from it.
 func buildSingBox(t *testing.T, raw string) {
 	t.Helper()
+	newSubscriptionBox(t, raw).Close()
+}
+
+func newSubscriptionBox(t *testing.T, raw string) *core.Box {
+	t.Helper()
 	ctx := core.Context(context.Background(), core.InboundRegistry(), core.OutboundRegistry(),
 		core.EndpointRegistry(), core.DNSTransportRegistry(), core.ServiceRegistry(),
 		core.CertificateProviderRegistry())
@@ -159,5 +164,5 @@ func buildSingBox(t *testing.T, raw string) {
 	if err != nil {
 		t.Fatalf("sing-box parses the subscription but cannot start it: %v\n%s", err, raw)
 	}
-	instance.Close()
+	return instance
 }

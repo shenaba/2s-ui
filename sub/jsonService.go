@@ -88,7 +88,7 @@ func (j *JsonService) GetJson(subId string, format string) (*string, []string, e
 	// their operator's routing had silently gone missing. Failing the fetch
 	// says so instead, and the operator finds out from the first client that
 	// cannot refresh rather than never.
-	if err = j.addOthers(&jsonConfig, *outbounds); err != nil {
+	if err = j.addOthers(&jsonConfig, *outbounds, members); err != nil {
 		return nil, nil, err
 	}
 
@@ -656,7 +656,7 @@ func (j *JsonService) addDefaultOutbounds(outbounds *[]map[string]interface{}, o
 	*outbounds = append(outbound, *outbounds...)
 }
 
-func (j *JsonService) addOthers(jsonConfig *map[string]interface{}, outbounds []map[string]interface{}) error {
+func (j *JsonService) addOthers(jsonConfig *map[string]interface{}, outbounds []map[string]interface{}, nodeTags []string) error {
 	// Default routing rules, used only when the template doesn't define its own.
 	// When the template provides `rules`, they are used verbatim so the user has
 	// full control over ordering (e.g. rules before sniff) and which rules exist.
@@ -694,6 +694,15 @@ func (j *JsonService) addOthers(jsonConfig *map[string]interface{}, outbounds []
 	if err != nil {
 		return err
 	}
+	extensions, err := service.ParseSubOutboundExtensions(othersJson)
+	if err != nil {
+		return err
+	}
+	outbounds, err = extensions.AppendTo(outbounds, nodeTags)
+	if err != nil {
+		return err
+	}
+	(*jsonConfig)["outbounds"] = outbounds
 	if _, ok := othersJson["log"]; ok {
 		(*jsonConfig)["log"] = othersJson["log"]
 	}
