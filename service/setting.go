@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"net/netip"
 	"os"
 	"runtime"
@@ -13,6 +14,7 @@ import (
 	"github.com/shenaba/2s-ui/config"
 	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/database/model"
+	ae "github.com/shenaba/2s-ui/internal/androidexclusions"
 	"github.com/shenaba/2s-ui/logger"
 	"github.com/shenaba/2s-ui/service/notify"
 	"github.com/shenaba/2s-ui/util"
@@ -62,6 +64,7 @@ var defaultConfig = `{
 // version, globalResetLast and globalResetArmed are bookkeeping the panel
 // advances itself.
 var protectedSettings = map[string]bool{
+	androidCacheKey: true, androidMetaKey: true, androidPreparedKey: true, androidRestartKey: true,
 	"secret":           true,
 	"config":           true,
 	"version":          true,
@@ -77,6 +80,7 @@ var protectedSettings = map[string]bool{
 }
 
 var defaultValueMap = map[string]string{
+	androidOptionsKey:    androidDefaultOptions,
 	"webListen":          "",
 	"webDomain":          "",
 	"webPort":            "2095",
@@ -195,6 +199,10 @@ func (s *SettingService) GetAllSetting() (*map[string]string, error) {
 
 	for key, defaultValue := range defaultValueMap {
 		if _, exists := allSetting[key]; !exists {
+			if key == androidOptionsKey {
+				allSetting[key] = defaultValue
+				continue
+			}
 			err = s.saveSetting(key, defaultValue)
 			if err != nil {
 				return nil, err
@@ -874,6 +882,12 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 	webNginx := settings["webNginx"] == "true"
 	subNginx := settings["subNginx"] == "true"
 	for key, obj := range settings {
+		if key == androidOptionsKey {
+			if err = saveAndroidOptions(tx, obj); err != nil {
+				return err
+			}
+			continue
+		}
 		// A write-only credential arrives empty on every save that did not
 		// retype it -- GetAllSetting never sent the stored value out, so the
 		// form has nothing to send back. Writing that through would clear the
@@ -953,6 +967,17 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 		err = tx.Model(model.Setting{}).Where("key = ?", key).Update("value", obj).Error
 		if err != nil {
 			return err
+		}
+	}
+	if _, optsChanged := settings[androidOptionsKey]; optsChanged || settings["subJsonExt"] != "" {
+		m, o, c, e := androidLoad(tx, "subJsonExt", "config")
+		if m == nil {
+			return e
+		}
+		if e == nil {
+			if _, _, e = ae.Apply(m["subJsonExt"], m["config"], o, c); errors.Is(e, ae.ErrLimit) {
+				return e
+			}
 		}
 	}
 	if hasZone && newZone != oldZone {

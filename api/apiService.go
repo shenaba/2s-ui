@@ -627,7 +627,19 @@ func (a *ApiService) savedRows(r *service.SaveResult) (map[string]interface{}, e
 	return resp, nil
 }
 
+func (a *ApiService) AndroidExclusionStatus(c *gin.Context) {
+	status, err := service.GetAndroidExclusionStatus()
+	jsonObj(c, status, err)
+}
+func (a *ApiService) RefreshAndroidExclusions(c *gin.Context) {
+	service.RequestAndroidExclusionRefresh(true)
+	jsonObj(c, map[string]bool{"queued": true}, nil)
+}
+
 func (a *ApiService) RestartApp(c *gin.Context) {
+	if err := service.MarkAndroidExclusionsRestart(); err != nil {
+		logger.Warning("Android exclusion restart refresh could not be recorded")
+	}
 	// 单位是 time.Duration(纳秒)。这里曾传裸 3,即 3 纳秒 ≈ 立即重启,响应能否在
 	// gin server 被拆掉前刷出去纯属竞态:前端 restartApp 靠 msg.success 才跳转,
 	// 于是"点了没反应还弹红字"。500ms 足够刷完响应,又不引入前端要配合的长窗口。
@@ -694,7 +706,7 @@ func (a *ApiService) ImportDb(c *gin.Context) {
 		return
 	}
 	defer file.Close()
-	err = database.ImportDB(file)
+	err = service.ImportWithAndroidExclusions(func() error { return database.ImportDB(file) })
 	if err == nil {
 		// The core reads the trusted PROXY protocol fronts from memory, not
 		// the database; the imported file names its own.

@@ -74,6 +74,10 @@ func (a *APP) Init() error {
 }
 
 func (a *APP) Start() error {
+	service.InvalidateAndroidExclusions()
+	if err := service.MigrateAndroidExclusions(); err != nil {
+		logger.Warning("Android exclusions migration failed")
+	}
 	// Take back the core Stop retired: on a SIGHUP this runs on the same core
 	// right after Stop, and Init does not run again. First, so neither an
 	// early return below nor maintenance mode can leave it retired: a retired
@@ -145,6 +149,7 @@ func (a *APP) Start() error {
 	}
 
 	a.syncNginxProxy()
+	service.RequestAndroidExclusionRefresh(false)
 
 	return nil
 }

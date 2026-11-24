@@ -8,41 +8,12 @@ import (
 
 	"github.com/shenaba/2s-ui/database"
 	"github.com/shenaba/2s-ui/database/model"
+	ae "github.com/shenaba/2s-ui/internal/androidexclusions"
 	"github.com/shenaba/2s-ui/service"
 	"github.com/shenaba/2s-ui/util"
 )
 
-const defaultJson = `
-{
-  "inbounds": [
-    {
-      "type": "tun",
-      "address": [
-				"172.19.0.1/30",
-				"fdfe:dcba:9876::1/126"
-			],
-      "mtu": 9000,
-      "auto_route": true,
-      "strict_route": false,
-      "endpoint_independent_nat": false,
-      "stack": "system",
-      "platform": {
-        "http_proxy": {
-          "enabled": true,
-          "server": "127.0.0.1",
-          "server_port": 2080
-        }
-      }
-    },
-    {
-      "type": "mixed",
-      "listen": "127.0.0.1",
-      "listen_port": 2080,
-      "users": []
-    }
-  ]
-}
-`
+const defaultJson = ae.DefaultTemplate
 
 type JsonService struct {
 	service.SettingService
@@ -681,7 +652,7 @@ func (j *JsonService) addOthers(jsonConfig *map[string]interface{}, outbounds []
 		"rules":                 defaultRules,
 	}
 
-	othersStr, err := j.SettingService.GetSubJsonExt()
+	othersStr, err := j.SettingService.EffectiveSubJsonExt()
 	if err != nil {
 		return err
 	}

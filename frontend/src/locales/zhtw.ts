@@ -1,6 +1,34 @@
 import ui from './ui/zhtw'
 
 export default {
+  androidExclusions: {
+    "toggle": "Android 排除",
+    "title": "Android 應用程式排除",
+    "manual": "手動 — 應用程式 ID（逗號分隔）",
+    "sources": "自動 — 透過 HTTPS 連結取得清單",
+    "add": "新增來源",
+    "remove": "刪除來源",
+    "interval": "檢查間隔（天）",
+    "refresh": "更新清單",
+    "apps": "{n} 個應用程式",
+    "checked": "檢查時間",
+    "cached": "無法存取；使用快取",
+    "fetchFailed": "下載失敗；無快取",
+    "total": "總計：{n}",
+    "manualCount": "手動：{n}",
+    "removed": "已移除：{n}",
+    "saveFirst": "更新前請儲存變更。",
+    "warnings": {
+      "options": "排除設定無效；不套用排除。",
+      "no_tun": "未啟用 TUN；不套用排除。",
+      "include_package": "TUN 使用 include_package；不套用排除。",
+      "template": "範本無效；不套用排除。",
+      "limit": "清單超限；不套用排除。",
+      "rules": "規則驗證失敗；不套用排除。",
+      "cache": "無法讀取快取。",
+      "refresh": "更新失敗；已保留上次儲存的清單。"
+    }
+  },
   ui,
   success: "成功",
   failed: "失敗",

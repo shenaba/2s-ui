@@ -1,6 +1,34 @@
 import ui from './ui/en'
 
 export default {
+  androidExclusions: {
+    "toggle": "Android exclusions",
+    "title": "Android application exclusions",
+    "manual": "Manual — application IDs (comma-separated)",
+    "sources": "Automatic — lists via HTTPS links",
+    "add": "Add source",
+    "remove": "Remove source",
+    "interval": "Check interval (days)",
+    "refresh": "Refresh lists",
+    "apps": "{n} applications",
+    "checked": "Checked",
+    "cached": "Unavailable; using cache",
+    "fetchFailed": "Download failed; no cache",
+    "total": "Total: {n}",
+    "manualCount": "Manual: {n}",
+    "removed": "Removed: {n}",
+    "saveFirst": "Save changes before refreshing.",
+    "warnings": {
+      "options": "Invalid exclusion settings; exclusions are not applied.",
+      "no_tun": "No TUN inbound; exclusions are not applied.",
+      "include_package": "TUN uses include_package; exclusions are not applied to it.",
+      "template": "Invalid template; exclusions are not applied.",
+      "limit": "List limit exceeded; exclusions are not applied.",
+      "rules": "Rule validation failed; exclusions are not applied.",
+      "cache": "Cache could not be read.",
+      "refresh": "Refresh failed; saved snapshot retained."
+    }
+  },
   ui,
   success: "success",
   failed: "failed",

@@ -102,6 +102,7 @@ func (c *CronJob) Start(loc *time.Location, statsBucketSeconds int64) error {
 	// database WAL checkpoint
 	addJob("@every 10m", NewWALCheckpointJob(), "WAL checkpoint")
 
+	addJob("@every 1h", cron.FuncJob(func() { service.RequestAndroidExclusionRefresh(false) }), "Android exclusion refresh")
 	c.cron.Start()
 	return nil
 }

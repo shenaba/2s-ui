@@ -1,6 +1,34 @@
 import ui from './ui/zhcn'
 
 export default {
+  androidExclusions: {
+    "toggle": "Android 排除",
+    "title": "Android 应用排除",
+    "manual": "手动 — 应用 ID（逗号分隔）",
+    "sources": "自动 — 通过 HTTPS 链接获取列表",
+    "add": "添加来源",
+    "remove": "删除来源",
+    "interval": "检查间隔（天）",
+    "refresh": "更新列表",
+    "apps": "{n} 个应用",
+    "checked": "检查时间",
+    "cached": "不可用；使用缓存",
+    "fetchFailed": "下载失败；无缓存",
+    "total": "总计：{n}",
+    "manualCount": "手动：{n}",
+    "removed": "已移除：{n}",
+    "saveFirst": "更新前请保存更改。",
+    "warnings": {
+      "options": "排除设置无效；不应用排除。",
+      "no_tun": "未启用 TUN；不应用排除。",
+      "include_package": "TUN 使用 include_package；不应用排除。",
+      "template": "模板无效；不应用排除。",
+      "limit": "列表超限；不应用排除。",
+      "rules": "规则验证失败；不应用排除。",
+      "cache": "无法读取缓存。",
+      "refresh": "更新失败；已保留上次保存的列表。"
+    }
+  },
   ui,
   success: "成功",
   failed: "失败",

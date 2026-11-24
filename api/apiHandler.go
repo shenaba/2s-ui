@@ -57,6 +57,8 @@ func (a *APIHandler) postHandler(c *gin.Context) {
 		a.ApiService.AdoptInbounds(c, loginUser)
 	case "reconcileNode":
 		a.ApiService.ReconcileNode(c)
+	case "androidExclusionsRefresh":
+		a.ApiService.RefreshAndroidExclusions(c)
 	case "restartApp":
 		a.ApiService.RestartApp(c)
 	case "restartSb":
@@ -120,6 +122,8 @@ func (a *APIHandler) getHandler(c *gin.Context) {
 		return
 	case "users":
 		a.ApiService.GetUsers(c)
+	case "androidExclusionsStatus":
+		a.ApiService.AndroidExclusionStatus(c)
 	case "settings":
 		a.ApiService.GetSettings(c)
 	case "stats":

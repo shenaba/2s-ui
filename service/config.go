@@ -549,12 +549,19 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 
 	// See HoldCore. Released before the restart below, which needs the write
 	// side, and before StartCore, which only tries it.
+	androidWrite := obj == "settings" || obj == "config"
+	if androidWrite {
+		androidDataMu.Lock()
+	}
 	startMu.RLock()
 	db := database.GetDB()
 	tx := db.Begin()
 	defer func() {
 		if err != nil {
 			tx.Rollback()
+			if androidWrite {
+				androidDataMu.Unlock()
+			}
 			startMu.RUnlock()
 			return
 		}
@@ -563,6 +570,15 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 			// applies either.
 			logger.Error("save ", obj, ": commit failed: ", cerr)
 			afterCommit = nil
+		} else if obj == "settings" || obj == "config" {
+			InvalidateAndroidExclusions()
+			if obj == "settings" {
+				androidSourceGen++
+				requestAndroidAfterSettingsSave()
+			}
+		}
+		if androidWrite {
+			androidDataMu.Unlock()
 		}
 		// Still under the read side: the core cannot be restarted between
 		// the commit and this.

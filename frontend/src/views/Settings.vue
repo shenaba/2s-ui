@@ -138,29 +138,20 @@
 
     <!-- ===================== JSON sub ===================== -->
     <SettingsGroup v-else-if="tab === 'jsonSub'">
-      <div style="font-size: 12.5px; color: var(--text-3); padding: 12px 0 14px;">{{ $t('ui.jsonExtDesc') }}</div>
-
+      <div class="json-compact-section json-compact-rules" :title="$t('ui.jsonExtDesc')">
+        <div class="android-heading">{{ $t('pages.rules') }}</div>
       <div class="field-grid">
         <ChipSelect v-model="ruleToDirect" :options="geoList" :label="$t('setting.toDirect')" :placeholder="$t('ui.selectHint')" />
         <ChipSelect v-model="ruleToBlock" :options="geoList" :label="$t('setting.toBlock')" :placeholder="$t('ui.selectHint')" />
       </div>
-
-      <template v-if="enableLog">
-        <div class="sub-label">{{ $t('basic.log.title') }}</div>
-        <div class="field-grid">
-          <Field :label="$t('basic.log.level')" :mb="0">
-            <Select v-model="subJsonExt.log.level">
-              <option v-for="l in levels" :key="l" :value="l">{{ l }}</option>
-            </Select>
-          </Field>
-          <div style="display: flex; align-items: flex-end; padding-bottom: 6px;">
-            <SwitchLabel v-model="subJsonExt.log.timestamp" :label="$t('setting.timestamp')" />
-          </div>
-        </div>
-      </template>
-
-      <template v-if="enableDns">
-        <div class="sub-label">{{ $t('ui.dnsOpt') }}</div>
+      </div>
+      <details v-if="enableDns" class="json-compact-section">
+        <summary class="json-compact-head">
+          <span>{{ $t('ui.dnsOpt') }}</span>
+          <span class="json-compact-value">{{ $t('dns.final') }}: {{ subJsonExt.dns.final || '—' }}</span>
+          <Ico name="chevronDown" :size="14" class="json-compact-chevron" />
+        </summary>
+        <div class="json-compact-content">
         <div class="field-grid">
           <Field :label="$t('dns.final')" :mb="0">
             <Select v-model="subJsonExt.dns.final">
@@ -201,10 +192,15 @@
         <div style="margin-top: 14px;">
           <ChipSelect v-model="dnsToDirect" :options="geositeList" :label="$t('setting.toDirectDns')" :placeholder="$t('ui.selectHint')" />
         </div>
-      </template>
-
-      <template v-if="enableInb">
-        <div class="sub-label">{{ $t('objects.inbound') }}</div>
+        </div>
+      </details>
+      <details v-if="enableInb" class="json-compact-section">
+        <summary class="json-compact-head">
+          <span>TUN</span>
+          <span class="json-compact-value mono">{{ tunAddress || '—' }}</span>
+          <Ico name="chevronDown" :size="14" class="json-compact-chevron" />
+        </summary>
+        <div class="json-compact-content">
         <div class="field-grid">
           <Field :label="$t('in.addr') + ' ' + $t('commaSeparated')" :mb="0">
             <input class="input mono" v-model="tunAddress" />
@@ -212,26 +208,93 @@
           <Field :label="$t('ui.mtu')" :mb="0">
             <input class="input mono" type="number" min="0" v-model.number="subJsonExt.inbounds[0].mtu" />
           </Field>
-          <Field :label="$t('setting.excludePkg') + ' ' + $t('commaSeparated')" :mb="0">
+          <Field v-if="!enableAndroid" :label="$t('setting.excludePkg') + ' ' + $t('commaSeparated')" :mb="0">
             <input class="input mono" v-model="tunExcludePkg" />
           </Field>
           <div style="display: flex; align-items: flex-end; padding-bottom: 6px;">
             <SwitchLabel v-model="platformProxy" :label="$t('ui.platformProxy')" />
           </div>
         </div>
-      </template>
+        </div>
+      </details>
+      <details v-if="enableLog" class="json-compact-section">
+        <summary class="json-compact-head">
+          <span>{{ $t('basic.log.title') }}</span>
+          <span class="json-compact-value">{{ subJsonExt.log.level || '—' }}</span>
+          <Ico name="chevronDown" :size="14" class="json-compact-chevron" />
+        </summary>
+        <div class="json-compact-content">
+        <div class="field-grid">
+          <Field :label="$t('basic.log.level')" :mb="0">
+            <Select v-model="subJsonExt.log.level">
+              <option v-for="l in levels" :key="l" :value="l">{{ l }}</option>
+            </Select>
+          </Field>
+          <div style="display: flex; align-items: flex-end; padding-bottom: 6px;">
+            <SwitchLabel v-model="subJsonExt.log.timestamp" :label="$t('setting.timestamp')" />
+          </div>
+        </div>
+        </div>
+      </details>
+      <div v-if="enableAndroid" class="android-exclusions">
+        <div class="android-heading">{{ $t('androidExclusions.title') }}</div>
+        <Field :label="$t('androidExclusions.manual')" :mb="0">
+          <div class="input android-manual-shell" dir="ltr" :class="{ 'android-manual-disabled': !androidTun }" @click.self="appendAndroidManual">
+            <textarea ref="androidManualElement" class="input mono android-manual-input" rows="1" wrap="off" dir="ltr"
+                      :value="androidManualInput" :disabled="!androidTun" placeholder="com.example.app, ru.example.bank"
+                      spellcheck="false" autocorrect="off" autocapitalize="off" autocomplete="off"
+                      @input="editAndroidManual" @focus="focusAndroidManual" @blur="androidManualFocus = false" @keydown.enter.prevent />
+          </div>
+        </Field>
+        <div v-if="!androidTun" class="android-detail android-warning">{{ $t(androidTuns.length ? 'androidExclusions.warnings.include_package' : 'androidExclusions.warnings.no_tun') }}</div>
+        <div class="android-divider" />
+        <div class="android-caption">{{ $t('androidExclusions.sources') }}</div>
+        <div v-for="(url, index) in androidOptions.sources" :key="index" class="android-source">
+          <div class="android-source-row">
+            <input class="input mono" :value="url" placeholder="https://example.com/exclude.txt" dir="ltr"
+                   @input="setAndroidSource(index, ($event.target as HTMLInputElement).value)" />
+            <Btn sm icon variant="subtle" :aria-label="$t('androidExclusions.remove')" :title="$t('androidExclusions.remove')" @click="removeAndroidSource(index)">
+              <Ico name="trash" :size="15" />
+            </Btn>
+          </div>
+          <div class="android-detail" v-if="androidStatus.sources[url.trim()]">
+            {{ $t('androidExclusions.apps', { n: androidStatus.sources[url.trim()].count }) }} ·
+            {{ $t('androidExclusions.checked') }}: {{ androidDate(androidStatus.sources[url.trim()].checked) }}
+            <span v-if="androidStatus.sources[url.trim()].failed" class="android-warning"> · {{ $t(androidStatus.sources[url.trim()].count ? 'androidExclusions.cached' : 'androidExclusions.fetchFailed') }}</span>
+          </div>
+        </div>
+        <div class="android-add">
+          <Btn sm variant="ghost" class="android-add-btn" :disabled="androidOptions.sources.length >= 20" @click="addAndroidSource">
+            <Ico name="plus" :size="15" /> {{ $t('androidExclusions.add') }}
+          </Btn>
+        </div>
+        <div class="android-bottom">
+          <div class="android-interval">
+            <Field :label="$t('androidExclusions.interval')" :mb="0">
+              <input class="input mono" type="number" min="0" max="365" step="1" v-model.number="androidInterval" />
+            </Field>
+          </div>
+          <Btn sm class="android-refresh-btn" :aria-busy="androidStatus.busy || androidRequesting" :disabled="androidStatus.busy || androidRequesting || stateChange || loading || !androidOptions.sources.length" @click="refreshAndroidLists">
+            <Ico name="refresh" :size="15" class="android-refresh-icon" :class="{ 'android-refresh-spinning': androidStatus.busy || androidRequesting }" /> {{ $t('androidExclusions.refresh') }}
+          </Btn>
+          <span class="android-detail android-totals">{{ $t('androidExclusions.total', { n: androidStatus.total }) }}<template v-if="androidManualCount > 0"> · {{ $t('androidExclusions.manualCount', { n: androidManualCount }) }}</template> · {{ $t('androidExclusions.removed', { n: androidStatus.removed }) }}</span>
+        </div>
+        <div v-if="stateChange" class="android-detail">{{ $t('androidExclusions.saveFirst') }}</div>
+        <div v-if="androidStatus.warning && (androidTun || !['no_tun', 'include_package'].includes(androidStatus.warning))" class="android-detail android-warning">{{ $t('androidExclusions.warnings.' + androidStatus.warning) }}</div>
+      </div>
 
       <div class="builder-foot">
         <div style="flex: 1;" />
         <Btn sm @click="jsonEditor = true"><Ico name="edit" :size="14" /> {{ $t('editor') }}</Btn>
         <Pop :min-width="220" direction="up">
           <template #trigger="{ toggle }">
-            <Btn variant="subtle" sm @click="toggle">{{ $t('setting.jsonSubOptions') }} <Ico name="chevronDown" :size="14" /></Btn>
+            <Btn variant="ghost" sm @click="toggle">{{ $t('setting.jsonSubOptions') }} <Ico name="chevronDown" :size="14" /></Btn>
           </template>
           <label class="pop-item" @click.prevent="enableLog = !enableLog"><Toggle :model-value="enableLog" style="pointer-events: none;" /> {{ $t('basic.log.title') }}</label>
           <label class="pop-item" @click.prevent="enableDns = !enableDns"><Toggle :model-value="enableDns" style="pointer-events: none;" /> {{ $t('ui.dnsOpt') }}</label>
           <label class="pop-item" @click.prevent="enableInb = !enableInb"><Toggle :model-value="enableInb" style="pointer-events: none;" /> {{ $t('objects.inbound') }}</label>
           <label class="pop-item" @click.prevent="enableExp = !enableExp"><Toggle :model-value="enableExp" style="pointer-events: none;" /> {{ $t('ui.experimental') }}</label>
+          <label class="pop-item" @click.prevent="enableAndroid = !enableAndroid"><Toggle :model-value="enableAndroid" style="pointer-events: none;" /> {{ $t('androidExclusions.toggle') }}</label>
         </Pop>
       </div>
     </SettingsGroup>
@@ -401,7 +464,7 @@
 
 <script lang="ts" setup>
 import Select from '@/components/ui/Select.vue'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import yaml from 'yaml'
 import { push } from 'notivue'
 import { i18n } from '@/locales'
@@ -477,6 +540,7 @@ const settings = ref({
   subRemarkPrefix: "true",
   subURI: "",
   subJsonExt: "",
+  androidExcludeOptions: '{"enabled":false,"manual":"","sources":[],"interval":0}',
   subClashExt: "",
   subClashNoDefGrp: "false",
   subClashSprtAll: "false",
@@ -1392,6 +1456,159 @@ const enableInb = computed({
   set: (v: boolean) => { v ? subJsonExt.value.inbounds = defaultInb.slice() : delete subJsonExt.value.inbounds }
 })
 
+type AndroidOptions = { enabled: boolean; manual: string; sources: string[]; interval: number }
+type AndroidSourceStatus = { count: number; checked: number; attempted: number; failed: boolean }
+type AndroidStatus = { sources: Record<string, AndroidSourceStatus>; total: number; removed: number; warning?: string; busy: boolean }
+const androidOptions = computed<AndroidOptions>(() => {
+  const defaults: AndroidOptions = { enabled: false, manual: '', sources: [], interval: 0 }
+  try { return { ...defaults, ...JSON.parse(settings.value.androidExcludeOptions || '{}') } }
+  catch { return defaults }
+})
+const setAndroidOptions = (patch: Partial<AndroidOptions>) => {
+  settings.value.androidExcludeOptions = JSON.stringify({ ...androidOptions.value, ...patch })
+}
+const enableAndroid = computed({
+  get: () => androidOptions.value.enabled,
+  set: (enabled: boolean) => setAndroidOptions({ enabled })
+})
+// Use the existing JSON template as the sole input for new manual exclusions.
+// The stage2 manual option is read only for backwards compatibility until
+// the operator edits the combined field. For the stock implicit TUN, keep
+// manual exclusions in Options without creating a custom inbound.
+const androidPackageIDs = (value: unknown): string[] => {
+  const list = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : []
+  return list.filter((item): item is string => typeof item === 'string').map(item => item.trim()).filter(Boolean)
+}
+const androidTuns = computed(() => {
+  const items = subJsonExt.value?.inbounds === undefined ? [{ type: "tun" }] : subJsonExt.value.inbounds
+  return Array.isArray(items) ? items.filter((item: any) => item?.type === 'tun') : []
+})
+const androidTun = computed(() => androidTuns.value.find((item: any) => !androidPackageIDs(item.include_package).length))
+const androidManual = computed({
+  get: () => [...new Set([...androidPackageIDs(androidTun.value?.exclude_package), ...androidPackageIDs(androidOptions.value.manual)])].join(','),
+  set: (manual: string) => {
+    const tun = androidTun.value
+    if (!tun) return
+    if (subJsonExt.value?.inbounds === undefined) {
+      setAndroidOptions({ manual: [...new Set(androidPackageIDs(manual))].join(",") })
+      return
+    }
+    const legacy = androidPackageIDs(androidOptions.value.manual)
+    // The old manual option applied to all eligible TUNs. Preserve that
+    // contribution for other TUNs before clearing the legacy setting.
+    if (legacy.length) {
+      for (const other of subJsonExt.value.inbounds) {
+        if (other !== tun && other?.type === 'tun' && !androidPackageIDs(other.include_package).length) {
+          other.exclude_package = [...new Set([...androidPackageIDs(other.exclude_package), ...legacy])]
+        }
+      }
+    }
+    const ids = [...new Set(androidPackageIDs(manual))]
+    if (subJsonExt.value.inbounds[0] === tun) tunExcludePkg.value = ids.join(',')
+    else tun.exclude_package = ids
+    if (androidOptions.value.manual) setAndroidOptions({ manual: '' })
+  }
+})
+const androidManualFocus = ref(false)
+const androidManualDraft = ref('')
+const androidManualInput = computed({
+  get: () => androidManualFocus.value ? androidManualDraft.value : androidManual.value,
+  set: (value: string) => { androidManualDraft.value = value; androidManual.value = value }
+})
+watch(androidManualFocus, (focused) => { if (focused) androidManualDraft.value = androidManual.value }, { flush: 'sync' })
+// Count only distinct valid IDs in the manual field; the server still owns
+// the final exclusion/conflict counts. No extra persisted settings or API.
+const androidManualCount = computed(() => new Set(androidPackageIDs(androidManual.value)
+  .map(id => id.replace(/^["']+|["']+$/g, '').trim())
+  .filter(id => id.length <= 255 && /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(id))).size)
+
+const androidManualElement = ref<HTMLTextAreaElement | null>(null)
+const showAndroidManualTail = (el: HTMLTextAreaElement) => {
+  const end = el.value.length
+  el.setSelectionRange(end, end)
+  el.scrollLeft = el.scrollWidth
+}
+// A textarea with wrapping disabled keeps its horizontal scroll even when
+// unfocused, unlike single-line inputs in some browsers (including Safari).
+// Never steal focus or move the caret while the user edits the list.
+watch([androidManualElement, androidManualInput, androidManualFocus], () => {
+  const el = androidManualElement.value
+  if (el && !androidManualFocus.value) {
+    showAndroidManualTail(el)
+    requestAnimationFrame(() => {
+      if (androidManualElement.value === el && !androidManualFocus.value) showAndroidManualTail(el)
+    })
+  }
+}, { flush: 'post' })
+const focusAndroidManual = () => {
+  androidManualFocus.value = true
+  const el = androidManualElement.value
+  if (el) requestAnimationFrame(() => {
+    if (androidManualElement.value === el && document.activeElement === el) showAndroidManualTail(el)
+  })
+}
+// The blank end area belongs to the editor, but never to its stored value.
+const appendAndroidManual = () => {
+  const el = androidManualElement.value
+  if (!el || el.disabled) return
+  el.focus()
+  showAndroidManualTail(el)
+}
+const editAndroidManual = (event: Event) => {
+  const el = event.target as HTMLTextAreaElement
+  // Preserve the native comma-separated field's one-line format on paste.
+  const raw = el.value
+  const clean = raw.replace(/[\r\n]+/g, ',')
+  if (raw !== clean) {
+    const start = raw.slice(0, el.selectionStart).replace(/[\r\n]+/g, ',').length
+    const end = raw.slice(0, el.selectionEnd).replace(/[\r\n]+/g, ',').length
+    el.value = clean
+    el.setSelectionRange(start, end)
+  }
+  androidManualInput.value = clean
+}
+const androidInterval = computed({
+  get: () => androidOptions.value.interval,
+  set: (interval: number | string) => setAndroidOptions({ interval: interval === '' ? 0 : Number(interval) })
+})
+const addAndroidSource = () => setAndroidOptions({ sources: [...androidOptions.value.sources, ''] })
+const removeAndroidSource = (index: number) => setAndroidOptions({ sources: androidOptions.value.sources.filter((_, i) => i !== index) })
+const setAndroidSource = (index: number, url: string) => {
+  const sources = [...androidOptions.value.sources]; sources[index] = url; setAndroidOptions({ sources })
+}
+const androidStatus = ref<AndroidStatus>({ sources: {}, total: 0, removed: 0, busy: false })
+const androidRequesting = ref(false)
+const androidDate = (seconds: number) => seconds ? new Date(seconds * 1000).toLocaleString() : '—'
+let androidPoll: ReturnType<typeof setInterval> | undefined
+let androidStatusPending = false
+const loadAndroidStatus = async () => {
+  if (androidStatusPending) return
+  androidStatusPending = true
+  try {
+    // Background status reads use the existing Axios instance, without
+    // generating repeated error toasts when the panel is being restarted.
+    const { data } = await api.get('api/androidExclusionsStatus')
+    if (data?.success && data.obj) androidStatus.value = data.obj
+  } catch { /* keep last visible status */ }
+  finally { androidStatusPending = false }
+}
+const refreshAndroidLists = async () => {
+  androidRequesting.value = true
+  try {
+    const msg = await HttpUtils.post('api/androidExclusionsRefresh', {})
+    if (msg.success) await loadAndroidStatus()
+  } finally { androidRequesting.value = false }
+}
+const stopAndroidPoll = () => { if (androidPoll !== undefined) { clearInterval(androidPoll); androidPoll = undefined } }
+watch([tab, enableAndroid], ([current, enabled]) => {
+  stopAndroidPoll()
+  if (current === 'jsonSub' && enabled) {
+    void loadAndroidStatus()
+    androidPoll = setInterval(() => { void loadAndroidStatus() }, 3000)
+  }
+}, { immediate: true })
+onUnmounted(stopAndroidPoll)
+
 const enableExp = computed({
   get: (): boolean => subJsonExt.value?.experimental != undefined,
   set: (v: boolean) => { v ? subJsonExt.value.experimental = defaultExp : delete subJsonExt.value.experimental }
@@ -1453,7 +1670,7 @@ const tunAddress = computed({
 })
 
 const tunExcludePkg = computed({
-  get: (): string => (inbounds.value?.[0]?.exclude_package ?? []).join(','),
+  get: (): string => androidPackageIDs(inbounds.value?.[0]?.exclude_package).join(','),
   set: (v: string) => {
     if (!inbounds.value?.[0]) return
     inbounds.value[0].exclude_package = v.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0)
@@ -1734,6 +1951,42 @@ const saveClashEditor = (data: string) => {
 </script>
 
 <style scoped>
+.json-compact-section { margin-top: 8px; border: 1px solid var(--line); border-radius: 12px; }
+.json-compact-rules { padding: 12px 14px; margin-top: 4px; }
+.json-compact-head { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 10px 14px; cursor: pointer; list-style: none; font-size: 13px; font-weight: 600; color: var(--text); }
+.json-compact-head::-webkit-details-marker { display: none; }
+.json-compact-head:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; border-radius: 12px; }
+.json-compact-value { margin-inline-start: auto; color: var(--text-3); font-size: 12px; font-weight: 400; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.json-compact-chevron { flex: none; color: var(--text-2); }
+.json-compact-section[open] .json-compact-chevron { transform: rotate(180deg); }
+.json-compact-content { padding: 0 14px 14px; }
+.android-exclusions { margin-top: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; }
+.android-add-btn { background: transparent; border-color: transparent; color: var(--text-2); }
+.android-add-btn:hover:not(:disabled) { background: var(--surface-3); }
+
+.android-heading { font-size: 13px; font-weight: 600; color: var(--text-2); margin-bottom: 10px; }
+.android-divider { margin: 12px 0; border-top: 1px solid var(--line); }
+.android-caption { font-size: 12px; color: var(--text-2); margin-bottom: 7px; }
+.android-source { margin-bottom: 10px; }
+.android-source-row { display: flex; align-items: center; gap: 8px; }
+.android-source-row .input { flex: 1; min-width: 0; }
+.android-detail { color: var(--text-3); font-size: 11.5px; margin-top: 5px; }
+.android-warning { color: var(--amber); }
+.android-add { display: flex; justify-content: center; margin: 10px 0 14px; }
+.android-bottom { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; }
+.android-interval { width: 145px; max-width: 100%; }
+.android-totals { padding-bottom: 9px; min-width: 0; overflow-wrap: anywhere; }
+.android-bottom .android-refresh-btn { flex: 0 0 auto; max-width: 100%; }
+.android-refresh-icon { flex: none; }
+.android-refresh-spinning { animation: android-refresh-rotate .8s linear infinite; }
+@keyframes android-refresh-rotate { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .android-refresh-spinning { animation: none; } }
+.android-manual-shell.input { display: flex; align-items: stretch; width: 100%; height: 40px; min-height: 40px; box-sizing: border-box; padding: 0 min(76px, 20%) 0 0; cursor: text; }
+.android-manual-shell:focus-within { border-color: var(--brand); }
+.android-manual-shell.android-manual-disabled { opacity: .6; cursor: not-allowed; }
+.android-manual-shell textarea.android-manual-input { display: block; flex: 1 1 0; min-width: 0; width: 100%; height: 100%; min-height: 0; box-sizing: border-box; padding: 9px 2px 9px 12px; border: 0; border-radius: 0; background: transparent; box-shadow: none; outline: none; resize: none; white-space: pre; overflow: hidden; line-height: 20px; text-align: left; }
+.android-manual-shell textarea.android-manual-input:focus { border: 0; box-shadow: none; outline: none; }
+
 .head-row {
   display: flex; align-items: center; gap: 8px;
   border-bottom: 1px solid var(--line);

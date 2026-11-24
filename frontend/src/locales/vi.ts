@@ -1,6 +1,34 @@
 import ui from './ui/vi'
 
 export default {
+  androidExclusions: {
+    "toggle": "Loại trừ Android",
+    "title": "Loại trừ ứng dụng Android",
+    "manual": "Thủ công — ID ứng dụng (cách nhau bằng dấu phẩy)",
+    "sources": "Tự động — danh sách qua liên kết HTTPS",
+    "add": "Thêm nguồn",
+    "remove": "Xóa nguồn",
+    "interval": "Chu kỳ kiểm tra (ngày)",
+    "refresh": "Cập nhật danh sách",
+    "apps": "{n} ứng dụng",
+    "checked": "Đã kiểm tra",
+    "cached": "Không khả dụng; dùng bộ nhớ đệm",
+    "fetchFailed": "Tải thất bại; không có bộ nhớ đệm",
+    "total": "Tổng: {n}",
+    "manualCount": "Thủ công: {n}",
+    "removed": "Đã loại bỏ: {n}",
+    "saveFirst": "Lưu thay đổi trước khi cập nhật.",
+    "warnings": {
+      "options": "Cài đặt loại trừ không hợp lệ; không áp dụng loại trừ.",
+      "no_tun": "Không có TUN; không áp dụng loại trừ.",
+      "include_package": "TUN dùng include_package; không áp dụng loại trừ.",
+      "template": "Mẫu không hợp lệ; không áp dụng loại trừ.",
+      "limit": "Vượt giới hạn; không áp dụng loại trừ.",
+      "rules": "Kiểm tra quy tắc thất bại; không áp dụng loại trừ.",
+      "cache": "Không đọc được bộ nhớ đệm.",
+      "refresh": "Cập nhật thất bại; giữ nguyên danh sách đã lưu."
+    }
+  },
   ui,
   success: "Thành công",
   failed: "Thất bại",
