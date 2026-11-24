@@ -101,7 +101,15 @@ func (c *CronJob) Start(loc *time.Location, statsBucketSeconds int64) error {
 	}
 	// Renew acme.sh certificates that are due (no-op without acme.sh or on
 	// Windows). The image has no crond, so acme.sh's own crontab never fires.
-	addJob("@every 1h", NewAcmeRenewJob(), "acme renew")
+	// Hourly on a fixed wall-clock minute, not @every 1h: see acmeRenewSpec.
+	// Seeded by the install id, so installs do not share a minute. Unreadable
+	// or not yet storable, it would be a different random value every start:
+	// fall back to the hostname, which at least stays put.
+	installId, err := settingService.GetInstallId()
+	if err != nil {
+		logger.Warning("install id unavailable, acme renew minute falls back to the hostname: ", err)
+	}
+	addJob(acmeRenewSpec(installId), NewAcmeRenewJob(), "acme renew")
 	// database WAL checkpoint
 	addJob("@every 10m", NewWALCheckpointJob(), "WAL checkpoint")
 

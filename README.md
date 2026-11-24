@@ -152,7 +152,7 @@ Plain `docker run`:
 
 ```shell
 mkdir 2s-ui && cd 2s-ui
-docker run -itd \
+docker run -itd --init \
     -p 2095:2095 -p 2096:2096 -p 443:443 \
     -v $PWD/db/:/app/db/ \
     -v $PWD/cert/:/root/cert/ \

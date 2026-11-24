@@ -417,6 +417,7 @@ export default {
     notifyKindOutboundUp: "خروجی بازیابی شد",
     notifyKindClientDepleted: "اتمام سهمیه کاربر",
     notifyKindInboundDepleted: "اتمام ترافیک ورودی",
+    notifyKindCertFailed: "تمدید گواهی ناموفق بود",
     notifyKindClientExpiring: "نزدیک شدن به پایان سهمیه",
     notifyKindClientOnline: "کاربر آنلاین شد",
     notifyKindClientOffline: "کاربر آفلاین شد",

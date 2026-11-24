@@ -16,10 +16,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/shenaba/2s-ui/config"
 	"github.com/shenaba/2s-ui/logger"
+	"github.com/shenaba/2s-ui/service/notify"
 	"github.com/shenaba/2s-ui/util/common"
 )
 
@@ -42,12 +44,26 @@ const (
 	methodNginx      = "nginx"
 )
 
-// acmeIssuing 保证同一时刻只有一个证书申请在跑,避免前端重复点击导致并发申请、
-// 撞 Let's Encrypt 限速。
+// acmeIssuing 保证同一时刻只有一个改动 acme.sh 状态的操作在跑:手动签发、后台续期
+// (RenewDue)、删除证书(RemoveCert)。避免前端重复点击并发申请撞 Let's Encrypt 限速,
+// 也避免续期写回一个刚被删掉的证书目录。
 var acmeIssuing sync.Mutex
 
+// acmeRenewing 在后台续期持有 acmeIssuing 期间为 true,只用来让抢锁失败的一方
+// 报出真实原因:续期最长可占锁 acmeRenewTO,而用户自己并没有发起任何申请。
+var acmeRenewing atomic.Bool
+
+// acmeBusyErr 是抢不到 acmeIssuing 时回给前端的错误。
+func acmeBusyErr() error {
+	if acmeRenewing.Load() {
+		return common.NewErrorf("后台正在自动续期证书(最长 %v),请稍后再试", acmeRenewTO)
+	}
+	return common.NewError("已有证书申请正在进行,请等当前申请完成后再试")
+}
+
 // AcmeService 是无状态工具,不嵌入 SettingService(避免与 ApiService 已嵌入的
-// SettingService 产生方法集二义性)。所有入参由调用方传入,不直接读写数据库。
+// SettingService 产生方法集二义性)。所有入参由调用方传入,不直接读写数据库
+// (唯一的例外是 RenewDue 失败时发通知,要读通知设置,见 publishCertRenewFailed)。
 type AcmeService struct{}
 
 type NginxStatus struct {
@@ -102,15 +118,38 @@ func resolveBin(name string) (string, bool) {
 	return name, false // 原样返回,让 exec 报标准的 not found 错误
 }
 
+// cmdWaitDelay 是命令被杀掉(或自己退出)之后,再等它的输出管道关闭的最长时间。
+// 子进程活得比命令本身长、还握着管道时,CombinedOutput 否则会跟着它无限期等下去,
+// 超时也就限不住调用方。
+const cmdWaitDelay = 10 * time.Second
+
 // runCmd 执行外部命令(HOME 固定为 home),合并 stdout/stderr,超时或非零退出码
 // 都包成 error,并把输出原文附在错误里回传前端,便于排查(80 端口被占、域名未解析等)。
 func runCmd(timeout time.Duration, home, name string, args ...string) (string, error) {
+	return execCmd(timeout, home, false, name, args...)
+}
+
+// runAcmeCmd 是运行 acme.sh(及其安装脚本)专用的 runCmd:超时时杀掉它启动的整个
+// 进程组(见 killGroupOnCancel),而不只是 acme.sh 这个 shell——socat、curl 都是它的
+// 子进程,只杀 shell 的话 socat 会一直占着 80 端口,调用方也会一直持着 acmeIssuing。
+// 只给 acme.sh 用,不推广到 runCmd:独立进程组是后台进程组,面板有控制终端时
+// (compose 的 tty: true)碰终端的命令会被 SIGTTIN/SIGTTOU 停住;acme.sh 不碰终端,
+// apt 的 debconf 之类就说不准了。
+func runAcmeCmd(timeout time.Duration, home, name string, args ...string) (string, error) {
+	return execCmd(timeout, home, true, name, args...)
+}
+
+func execCmd(timeout time.Duration, home string, killGroup bool, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	bin, _ := resolveBin(name)
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Env = withHome(home)
+	if killGroup {
+		killGroupOnCancel(cmd)
+	}
+	cmd.WaitDelay = cmdWaitDelay
 	out, err := cmd.CombinedOutput()
 	output := strings.TrimSpace(string(out))
 
@@ -1370,7 +1409,7 @@ func ensureAcmeSh() (bin, home string, err error) {
 	installScript := "export HOME=/root; " +
 		"if command -v curl >/dev/null 2>&1; then curl https://get.acme.sh | sh; " +
 		"else wget -O - https://get.acme.sh | sh; fi"
-	out, e := runCmd(acmeInstallTO, "/root", "sh", "-c", installScript)
+	out, e := runAcmeCmd(acmeInstallTO, "/root", "sh", "-c", installScript)
 	if e != nil {
 		return "", "", common.NewErrorf("自动安装 acme.sh 失败,请在服务器手动安装(s-ui 脚本 SSL 菜单)。详情:\n%s", out)
 	}
@@ -1422,7 +1461,7 @@ func (a *AcmeService) IssueWeb(domain, email, method string, force, behindProxy 
 	}
 	// 同一时刻只允许一个申请,避免重复点击并发申请撞 Let's Encrypt 限速
 	if !acmeIssuing.TryLock() {
-		return nil, common.NewError("已有证书申请正在进行,请等当前申请完成后再试")
+		return nil, acmeBusyErr()
 	}
 	defer acmeIssuing.Unlock()
 
@@ -1437,7 +1476,7 @@ func (a *AcmeService) IssueWeb(domain, email, method string, force, behindProxy 
 	}
 
 	// 默认 CA 设为 Let's Encrypt(与脚本一致)
-	if out, err := runCmd(cmdDetectTO, home, bin, "--set-default-ca", "--server", "letsencrypt"); err != nil {
+	if out, err := runAcmeCmd(cmdDetectTO, home, bin, "--set-default-ca", "--server", "letsencrypt"); err != nil {
 		return nil, common.NewErrorf("设置默认 CA 失败:\n%s", out)
 	}
 
@@ -1471,7 +1510,7 @@ func (a *AcmeService) IssueWeb(domain, email, method string, force, behindProxy 
 	if force {
 		issueArgs = append(issueArgs, "--force")
 	}
-	if out, err := runCmd(acmeIssueTO, home, bin, issueArgs...); err != nil {
+	if out, err := runAcmeCmd(acmeIssueTO, home, bin, issueArgs...); err != nil {
 		hint := "证书申请失败"
 		if !force {
 			hint = "证书申请失败(若域名已有未到期证书,请改用「强制续期」)"
@@ -1500,13 +1539,15 @@ func (a *AcmeService) IssueWeb(domain, email, method string, force, behindProxy 
 	if reloadCmd != "" {
 		installArgs = append(installArgs, "--reloadcmd", reloadCmd)
 	}
-	if out, err := runCmd(acmeIssueTO, home, bin, installArgs...); err != nil {
+	if out, err := runAcmeCmd(acmeIssueTO, home, bin, installArgs...); err != nil {
 		return nil, common.NewErrorf("安装证书失败:\n%s", out)
 	}
 
-	// 启用 acme.sh 自带 cron 自动续期(失败不影响本次证书)
-	if _, err := runCmd(acmeInstallTO, home, bin, "--upgrade", "--auto-upgrade"); err != nil {
-		logger.Warning("启用 acme.sh 自动续期失败(不影响本次证书):", err)
+	// 打开 acme.sh 的自动升级(失败不影响本次证书)。这一步与续期无关:续期靠
+	// RenewDue(以及宿主机上 acme.sh 安装时写进 crontab 的那条),自动升级只是让此后
+	// 每次 --cron 先把 acme.sh 自己升到最新——代价是每次 --cron 都会访问 GitHub。
+	if _, err := runAcmeCmd(acmeInstallTO, home, bin, "--upgrade", "--auto-upgrade"); err != nil {
+		logger.Warning("开启 acme.sh 自动升级失败(不影响本次证书):", err)
 	}
 
 	return &IssueResult{CertFile: certFile, KeyFile: keyFile, Method: resolved, ReloadCmd: reloadCmd}, nil
@@ -1661,10 +1702,6 @@ func (a *AcmeService) ListCerts() ([]CertInfo, error) {
 	// 注意别用 resolveAcmeSh 返回的第二个值:那是给子进程当 HOME 用的上级目录(/root),
 	// 证书目录在 acme.sh 自己的家目录里(/root/.acme.sh),也就是可执行文件所在目录。
 	dataDir := filepath.Dir(bin)
-	entries, err := os.ReadDir(dataDir)
-	if err != nil {
-		return []CertInfo{}, nil
-	}
 
 	// 同一个域名可能有两个目录(<域名> 与 <域名>_ecc:先手工签过 RSA、再由面板签
 	// ec-256 就会这样),必须按域名去重。两条同名记录会让前端 v-for 撞 key,而
@@ -1675,47 +1712,31 @@ func (a *AcmeService) ListCerts() ([]CertInfo, error) {
 		ecc  bool
 	}
 	byDomain := map[string]candidate{}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		// 证书目录名是 <域名> 或 <域名>_ecc;ca/deploy/dnsapi/notify 这些内部目录
-		// 里没有同名的 .conf,下面读文件时自然被滤掉,不用维护一份黑名单。
-		domain := strings.TrimSuffix(e.Name(), "_ecc")
-		raw, err := os.ReadFile(filepath.Join(dataDir, e.Name(), domain+".conf"))
-		if err != nil {
-			continue
-		}
-		kv := parseAcmeConf(string(raw))
-		if kv["Le_Domain"] != "" {
-			domain = kv["Le_Domain"]
-		}
-
+	for _, c := range readAcmeConfs(dataDir) {
+		kv := c.KV
 		info := CertInfo{
 			// 对外统一小写:DNS 不分大小写,而下游(这里的去重、前端 findCert、删除
 			// 守卫)全是精确比对,大小写混着会让同一个域名分裂成两条真相。
 			// 文件路径仍用目录里的原样写法,大小写敏感的文件系统上不能改。
-			Domain:  strings.ToLower(domain),
-			CA:      caName(kv["Le_API"]),
-			KeyType: kv["Le_Keylength"],
-			Managed: true,
+			Domain:    strings.ToLower(c.Domain),
+			CA:        caName(kv["Le_API"]),
+			KeyType:   kv["Le_Keylength"],
+			NextRenew: c.nextRenew(),
+			Managed:   true,
 		}
 		// 优先用 acme.sh 记录的安装路径:那才是面板/nginx/sing-box 实际在读的文件。
 		// 没装过就退回 acme.sh 自己的副本,至少能显示到期时间。
 		info.CertFile = kv["Le_RealFullChainPath"]
 		info.KeyFile = kv["Le_RealKeyPath"]
 		if info.CertFile == "" {
-			info.CertFile = filepath.Join(dataDir, e.Name(), "fullchain.cer")
+			info.CertFile = filepath.Join(dataDir, c.Dir, "fullchain.cer")
 		}
 		if info.KeyFile == "" {
-			info.KeyFile = filepath.Join(dataDir, e.Name(), domain+".key")
-		}
-		if n, err := strconv.ParseInt(kv["Le_NextRenewTime"], 10, 64); err == nil {
-			info.NextRenew = n
+			info.KeyFile = filepath.Join(dataDir, c.Dir, c.Domain+".key")
 		}
 		info.NotAfter = certNotAfter(info.CertFile)
 
-		cur := candidate{info: info, ecc: strings.HasSuffix(e.Name(), "_ecc")}
+		cur := candidate{info: info, ecc: c.ecc()}
 		if prev, ok := byDomain[info.Domain]; ok {
 			// 不比旧的新就不换;打平时留 _ecc——面板自己签发的默认就是 ec-256
 			if cur.info.NotAfter < prev.info.NotAfter ||
@@ -1762,8 +1783,14 @@ func (a *AcmeService) RemoveCert(domain string) error {
 	if bin == "" {
 		return common.NewError("未安装 acme.sh,无法删除证书")
 	}
+	// 与签发、后台续期互斥:acme.sh --cron 续到这个域名时会重建它的目录并重新安装
+	// 证书,删到一半撞上续期,删掉的证书会带着续期一起回来。
+	if !acmeIssuing.TryLock() {
+		return acmeBusyErr()
+	}
+	defer acmeIssuing.Unlock()
 	// --remove 只是让 acme.sh 停止续期并移除它的记录,不会碰安装出去的文件
-	if out, err := runCmd(cmdDetectTO, home, bin, "--remove", "-d", domain); err != nil {
+	if out, err := runAcmeCmd(cmdDetectTO, home, bin, "--remove", "-d", domain); err != nil {
 		return common.NewErrorf("acme.sh 移除记录失败:\n%s", out)
 	}
 	// acme.sh 会把证书目录留在原地(它自己的文档也这么说),这里一并清掉,
@@ -1802,51 +1829,145 @@ const (
 	// 时不会改写 Le_NextRenewTime,下一轮检查仍判定到期;不限频就会每小时打一次
 	// Let's Encrypt。与 acme.sh 自带 crontab 的每日一次对齐。
 	acmeRenewRetry = 24 * time.Hour
+	// acmeRenewStampFile 记录上次运行 acme.sh --cron 的时间(unix 秒),放在 acme.sh
+	// 家目录里:Docker 下它就在挂出来的卷上,和证书记录一起留存。acme.sh 自己不认识
+	// 这个文件,它的升级只覆盖自己的脚本;ListCerts 只看子目录,也不会把它当证书。
+	acmeRenewStampFile = ".2sui-renew-attempt"
+	// acmeRenewErrLines 是续期失败通知里附带的 acme.sh 输出行数:失败原因在末尾,
+	// 整段输出动辄上百行,全塞进 Telegram 只会把原因淹掉。
+	acmeRenewErrLines = 12
 )
 
 // acmeLastRenew 是本进程上次运行 acme.sh --cron 的时间,只在持有 acmeIssuing 时读写。
-// 不落库:重启后清零只意味着可能提前一次重试,而那次本来就在限速额度内。
+// 主记录是磁盘上的 acmeRenewStampFile:面板重启、Docker 自更新 re-exec 都会让这个
+// 变量归零,而上一次的 acme.sh 可能还在跑(exec 之后连超时都没人管了),只看内存的话
+// 新进程会立刻并行再跑一次。内存这份只兜住时间戳写不进去的情况。
 var acmeLastRenew time.Time
 
-// acmeRenewDue 判断这一轮要不要跑 acme.sh --cron:距上次尝试已满 acmeRenewRetry,
-// 且至少有一张证书的 Le_NextRenewTime 已到。nextRenew 里的 0 表示 conf 没记录续期时间
-// (手工导入、字段缺失),acme.sh 自己也不会去续它,跳过。
-// 时钟回拨到上次尝试之前时不按间隔拦截,否则可能被一个「未来」的时间戳卡住很久。
-func acmeRenewDue(nextRenew []int64, now, lastAttempt time.Time) bool {
-	if !lastAttempt.IsZero() && !now.Before(lastAttempt) && now.Sub(lastAttempt) < acmeRenewRetry {
-		return false
-	}
-	for _, n := range nextRenew {
-		if n > 0 && n <= now.Unix() {
-			return true
-		}
-	}
-	return false
+// acmeConf 是 acme.sh 家目录下的一个证书目录及其 conf。
+type acmeConf struct {
+	Dir    string            // 目录名:<域名> 或 <域名>_ecc
+	Domain string            // Le_Domain;conf 里没写时用目录名去掉 _ecc
+	KV     map[string]string // parseAcmeConf 的结果
 }
 
-// acmeNextRenewTimes 读出 acme.sh 家目录下每个证书目录 conf 里的 Le_NextRenewTime。
-// 故意不复用 ListCerts:那里按域名去重,只留较新的一份,而 acme.sh --cron 会续期
-// 每一个目录,判定是否到期也得看全部。
-func acmeNextRenewTimes(dataDir string) []int64 {
+func (c acmeConf) ecc() bool { return strings.HasSuffix(c.Dir, "_ecc") }
+
+// nextRenew 是 conf 记录的 Le_NextRenewTime,0 表示没有记录。
+func (c acmeConf) nextRenew() int64 {
+	n, err := strconv.ParseInt(c.KV["Le_NextRenewTime"], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// readAcmeConfs 读出 acme.sh 家目录下每个证书目录的 conf,ListCerts 与 RenewDue 共用。
+// 证书目录名是 <域名> 或 <域名>_ecc;ca/deploy/dnsapi/notify 这些内部目录里没有同名的
+// .conf,读文件时自然被滤掉,不用维护一份黑名单。目录读不了时返回 nil。
+// 这里不去重:同一域名的 RSA 与 _ecc 目录各算一条(acme.sh --cron 也各续各的),
+// 按域名只留一份是 ListCerts 自己的事。
+func readAcmeConfs(dataDir string) []acmeConf {
 	entries, err := os.ReadDir(dataDir)
 	if err != nil {
 		return nil
 	}
-	var out []int64
+	var out []acmeConf
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		domain := strings.TrimSuffix(e.Name(), "_ecc")
-		raw, err := os.ReadFile(filepath.Join(dataDir, e.Name(), domain+".conf"))
+		file := strings.TrimSuffix(e.Name(), "_ecc")
+		raw, err := os.ReadFile(filepath.Join(dataDir, e.Name(), file+".conf"))
 		if err != nil {
 			continue
 		}
-		if n, err := strconv.ParseInt(parseAcmeConf(string(raw))["Le_NextRenewTime"], 10, 64); err == nil {
-			out = append(out, n)
+		kv := parseAcmeConf(string(raw))
+		domain := file
+		if kv["Le_Domain"] != "" {
+			domain = kv["Le_Domain"]
 		}
+		out = append(out, acmeConf{Dir: e.Name(), Domain: domain, KV: kv})
 	}
 	return out
+}
+
+// acmeDueDomains 返回 Le_NextRenewTime 已到的证书域名(小写、去重、排序)。
+// 没有记录续期时间的(手工导入、字段缺失)跳过:acme.sh 自己也不会去续它。
+func acmeDueDomains(confs []acmeConf, now time.Time) []string {
+	seen := map[string]bool{}
+	var due []string
+	for _, c := range confs {
+		n := c.nextRenew()
+		if n <= 0 || n > now.Unix() {
+			continue
+		}
+		d := strings.ToLower(c.Domain)
+		if !seen[d] {
+			seen[d] = true
+			due = append(due, d)
+		}
+	}
+	sort.Strings(due)
+	return due
+}
+
+// acmeRetryElapsed 判断距上次尝试是否已满 acmeRenewRetry。
+// 时钟回拨到上次尝试之前时放行,否则可能被一个「未来」的时间戳卡住很久。
+func acmeRetryElapsed(now, last time.Time) bool {
+	return last.IsZero() || now.Before(last) || now.Sub(last) >= acmeRenewRetry
+}
+
+// readRenewStamp 读上次续期尝试的时间;没有或读不懂时返回零值(视同从没试过)。
+func readRenewStamp(dataDir string) time.Time {
+	raw, err := os.ReadFile(filepath.Join(dataDir, acmeRenewStampFile))
+	if err != nil {
+		return time.Time{}
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+	if err != nil || n <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(n, 0)
+}
+
+func writeRenewStamp(dataDir string, t time.Time) error {
+	return os.WriteFile(filepath.Join(dataDir, acmeRenewStampFile),
+		[]byte(strconv.FormatInt(t.Unix(), 10)+"\n"), 0600)
+}
+
+// acmeFailedDomains 是一次失败的 --cron 之后真正没续上的证书:运行后 Le_NextRenewTime
+// 仍已到期的那些。--cron 一次续全部到期证书,只要有一张失败就整体非零退出,而续成功的
+// 那张已把续期时间后移——把运行前的到期清单原样报出去,会让运维去查一张好好的证书。
+// 一张都不剩时(证书都续上了,失败在别处,比如 reloadcmd)退回运行前的清单:
+// 分不清是哪张,宁可多列也不能报一个空的失败。
+func acmeFailedDomains(dueBefore []string, after []acmeConf, now time.Time) []string {
+	if still := acmeDueDomains(after, now); len(still) > 0 {
+		return still
+	}
+	return dueBefore
+}
+
+// acmeRenewFailDetail 是续期失败通知里的说明:acme.sh 自己输出的末尾几行,原因在那里。
+// 不用 runCmd 的 err.Error():它开头是面板的中文「命令执行失败: <整条命令>」、结尾是 Go 的
+// 「exit status N」,塞进按 notifyLang 本地化的通知里既混语言又挤占行数。
+// 超时不写在这里:那是面板自己的判断,由通知按语言另行措辞(CertData.Timeout)。
+// acme.sh 什么都没输出、又不是超时时,才退回 err——总得说点什么。
+func acmeRenewFailDetail(out string, err error, timedOut bool) string {
+	detail := lastLines(out, acmeRenewErrLines)
+	if detail == "" && !timedOut && err != nil {
+		detail = lastLines(err.Error(), acmeRenewErrLines)
+	}
+	return detail
+}
+
+// lastLines 返回 s 的最后 n 行(去掉首尾空白)。
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // RenewDue 在有证书到期时运行 acme.sh --cron,由面板的定时任务每小时调用一次。
@@ -1862,7 +1983,10 @@ func acmeNextRenewTimes(dataDir string) []int64 {
 //
 // 先在本地判断有没有到期证书,没有就不启动 acme.sh——--cron 开着自动升级时每次都会
 // 去 GitHub 检查新版本,每小时空跑一次没有必要。
-// 与手动签发共用 acmeIssuing:正在签发时本轮直接跳过,下一小时再看。
+// 与手动签发、删除证书共用 acmeIssuing:它们进行中时本轮直接跳过,下一小时再看;
+// 本轮续期期间它们则报 acmeBusyErr。
+// 失败时除了写日志还发 CertRenewFailed 通知:只有日志的话,证书会在没人看见的情况下
+// 过期,面板/订阅随之回退成 HTTP。
 func (a *AcmeService) RenewDue() {
 	if runtime.GOOS == "windows" {
 		return
@@ -1872,7 +1996,7 @@ func (a *AcmeService) RenewDue() {
 		return
 	}
 	if !acmeIssuing.TryLock() {
-		logger.Debug("证书申请进行中,本轮续期检查跳过")
+		logger.Debug("证书申请或删除进行中,本轮续期检查跳过")
 		return
 	}
 	defer acmeIssuing.Unlock()
@@ -1880,17 +2004,55 @@ func (a *AcmeService) RenewDue() {
 	// acme.sh 的家目录是可执行文件所在目录,home 是给子进程的 HOME(见 ListCerts)
 	dataDir := filepath.Dir(bin)
 	now := time.Now()
-	if !acmeRenewDue(acmeNextRenewTimes(dataDir), now, acmeLastRenew) {
+	due := acmeDueDomains(readAcmeConfs(dataDir), now)
+	if len(due) == 0 {
 		return
 	}
+	last := readRenewStamp(dataDir)
+	if acmeLastRenew.After(last) {
+		last = acmeLastRenew
+	}
+	if !acmeRetryElapsed(now, last) {
+		return
+	}
+	// 先记时间再运行:这次若因 re-exec 被丢下,新进程看到时间戳就不会马上并行再跑一次。
 	acmeLastRenew = now
-	logger.Info("有证书到期,运行 acme.sh --cron 续期")
+	if err := writeRenewStamp(dataDir, now); err != nil {
+		logger.Warning("记录续期时间失败(本进程内仍按 ", acmeRenewRetry, " 限频):", err)
+	}
+	acmeRenewing.Store(true)
+	defer acmeRenewing.Store(false)
+
+	logger.Info("证书到期,运行 acme.sh --cron 续期:", strings.Join(due, ", "))
 	// 与 acme.sh 自己写进 crontab 的命令一致:显式 --home,不依赖 HOME 推断
-	out, err := runCmd(acmeRenewTO, home, bin, "--cron", "--home", dataDir)
+	start := time.Now()
+	out, err := runAcmeCmd(acmeRenewTO, home, bin, "--cron", "--home", dataDir)
 	if err != nil {
 		logger.Warning("acme.sh 续期失败,", acmeRenewRetry, " 后重试:", err)
+		// runAcmeCmd 超时会杀掉整个进程组,所以「跑满了 acmeRenewTO」就是被叫停的那种
+		// 失败;timeout 是通知里报的时长,0 表示 acme.sh 是自己退出的
+		var timeout time.Duration
+		if time.Since(start) >= acmeRenewTO {
+			timeout = acmeRenewTO
+		}
+		publishCertRenewFailed(acmeFailedDomains(due, readAcmeConfs(dataDir), time.Now()),
+			acmeRenewFailDetail(out, err, timeout > 0), timeout)
 		return
 	}
 	logger.Info("acme.sh 续期检查完成")
 	logger.Debug("acme.sh --cron 输出:\n", out)
+}
+
+// publishCertRenewFailed 发续期失败通知。不用另外限频:RenewDue 每 acmeRenewRetry
+// 至多运行一次 acme.sh,失败通知也就至多一天一条。
+func publishCertRenewFailed(domains []string, errText string, timeout time.Duration) {
+	var settingService SettingService
+	if !settingService.NotifyWants(notify.CertRenewFailed) {
+		return
+	}
+	notify.Publish(notify.Event{
+		Kind:    notify.CertRenewFailed,
+		Subject: "acme",
+		Data:    &notify.CertData{Domains: domains, Err: errText, Timeout: timeout},
+	})
 }

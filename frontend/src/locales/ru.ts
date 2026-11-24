@@ -418,6 +418,7 @@ export default {
     notifyKindOutboundUp: "Исходящее восстановлено",
     notifyKindClientDepleted: "У клиента закончился лимит",
     notifyKindInboundDepleted: "У входящего закончился трафик",
+    notifyKindCertFailed: "Не удалось продлить сертификат",
     notifyKindClientExpiring: "Лимит клиента заканчивается",
     notifyKindClientOnline: "Клиент в сети",
     notifyKindClientOffline: "Клиент не в сети",

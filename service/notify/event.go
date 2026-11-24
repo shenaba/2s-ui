@@ -27,6 +27,9 @@ const (
 	InboundDepleted Kind = "inbound.depleted"
 	CPUHigh         Kind = "cpu.high"
 	MemoryHigh      Kind = "memory.high"
+	// acme.sh --cron failed to renew a due certificate. Rate limited at the
+	// source: AcmeService.RenewDue runs acme.sh at most once a day.
+	CertRenewFailed Kind = "cert.failed"
 
 	// Presence events. Debounced at the source (service/presence.go) and
 	// batched per flush, so they pass the suppressor untouched.
@@ -46,6 +49,7 @@ var AllKinds = []Kind{
 	ClientDepleted, ClientExpiring, ClientOnline, ClientOffline,
 	InboundDepleted,
 	CPUHigh, MemoryHigh,
+	CertRenewFailed,
 	LoginSuccess, LoginFailed, LoginBanned,
 }
 
@@ -117,6 +121,17 @@ type ClientData struct {
 // InboundData accompanies InboundDepleted: the tags one pass disabled.
 type InboundData struct {
 	Tags []string
+}
+
+// CertData accompanies CertRenewFailed: the certificates that were due when the
+// renewal ran (acme.sh --cron renews them all in one go and does not say which
+// one failed), and the tail of its output, where the reason is.
+type CertData struct {
+	Domains []string
+	Err     string
+	// Timeout is how long acme.sh was allowed when it had to be stopped, 0 when
+	// it exited on its own. Its output does not say it was cut off.
+	Timeout time.Duration
 }
 
 // ClientTarget is one client to warn on their own Telegram chat, carrying the

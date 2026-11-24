@@ -162,6 +162,14 @@ func migrateDb(out io.Writer) (err error) {
 		}
 	}
 
+	// Switch the certificate renewal alert on where notifyEvents is already
+	// stored: the default only reaches installs that never saved it
+	if versionBefore(dbVersion, "2.1.1") {
+		if err = to2_1_1(tx); err != nil {
+			return fmt.Errorf("migration to 2.1.1 failed: %w", err)
+		}
+	}
+
 	// Set version
 	if err = tx.Exec("UPDATE settings SET value = ? WHERE key = ?", currentVersion, "version").Error; err != nil {
 		return fmt.Errorf("update version failed: %w", err)

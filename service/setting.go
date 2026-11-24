@@ -60,9 +60,11 @@ var defaultConfig = `{
 // secret keys the session cookie store, config is the sing-box base config that
 // the "config" object owns (and which restarts the core when it changes), and
 // version, globalResetLast and globalResetArmed are bookkeeping the panel
-// advances itself.
+// advances itself. installId is a per-install random value the panel derives
+// schedules from (GetInstallId); rewriting it would only move them.
 var protectedSettings = map[string]bool{
 	"secret":           true,
+	"installId":        true,
 	"config":           true,
 	"version":          true,
 	"globalResetLast":  true,
@@ -81,6 +83,7 @@ var defaultValueMap = map[string]string{
 	"webDomain":          "",
 	"webPort":            "2095",
 	"secret":             common.Random(32),
+	"installId":          common.Random(16),
 	"webCertFile":        "",
 	"webKeyFile":         "",
 	"webCertMode":        "",
@@ -138,7 +141,7 @@ var defaultValueMap = map[string]string{
 	"notifyEnable":       "false",
 	"notifyProxy":        "",
 	"notifyLang":         "en",
-	"notifyEvents":       "node.down,node.up,core.crash,core.up,client.depleted,client.expiring,inbound.depleted,login.success,login.banned",
+	"notifyEvents":       "node.down,node.up,core.crash,core.up,client.depleted,client.expiring,inbound.depleted,cert.failed,login.success,login.banned",
 	"notifyExpireDays":   "3",
 	"notifyVolumeGB":     "5",
 	"notifyCpu":          "80",
@@ -509,6 +512,27 @@ func (s *SettingService) GetSecret() ([]byte, error) {
 		}
 	}
 	return []byte(secret), err
+}
+
+// GetInstallId returns a random value that identifies this install, stored on
+// first use. It is not a secret: it exists so that per-install schedules (the
+// acme renewal minute, see cronjob.acmeRenewSpec) spread across installs and
+// stay put across restarts, without deriving them from the session key.
+//
+// The default is random per process, so until it is stored it is neither
+// stable nor this install's: a save that fails is reported rather than handed
+// back as if it were, and the caller falls back to something else.
+func (s *SettingService) GetInstallId() (string, error) {
+	id, err := s.getString("installId")
+	if err != nil {
+		return "", err
+	}
+	if id == defaultValueMap["installId"] {
+		if err := s.saveSetting("installId", id); err != nil {
+			return "", err
+		}
+	}
+	return id, nil
 }
 
 func (s *SettingService) GetSessionMaxAge() (int, error) {
