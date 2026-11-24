@@ -81,6 +81,23 @@ English · Farsi · Vietnamese · Chinese (Simplified) · Chinese (Traditional) 
 
 [API Documentation Wiki](https://github.com/shenaba/2s-ui/wiki/API-Documentation)
 
+## sing-box 订阅分组
+
+在「设置 → JSON 订阅 → 编辑器」中，可以添加顶层 `outbound_groups`，供 `?format=json` 订阅使用。分组支持 sing-box 的 `selector` 和 `urltest`，组名可以用在 `rules` 的 `outbound` 和 `final` 中。
+
+```json
+{
+  "outbound_groups": [
+    { "type": "urltest", "tag": "自动选择", "outbounds": ["$nodes"] },
+    { "type": "selector", "tag": "视频", "outbounds": ["自动选择", "direct", "$nodes"], "default": "$nodes" }
+  ],
+  "rules": [{ "action": "route", "domain_suffix": ["youtube.com"], "outbound": "视频" }],
+  "final": "proxy"
+}
+```
+
+`$nodes` 展开为当前订阅者可选的节点。选择组的 `default` 写为 `$nodes` 时选择第一个节点。没有节点时，分组保留其他成员，空组会降级为包含 `direct` 的选择组。`proxy`、`auto` 和 `direct` 是保留标签。
+
 ## 默认安装信息
 
 | | 默认值 |
