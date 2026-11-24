@@ -45,7 +45,7 @@
 - 通用協定：Mixed, SOCKS, HTTP/HTTPS, Direct, Tun, Redirect, TProxy
 - V2Ray 系列：VLESS, VMess, Trojan, Shadowsocks（支援 `plugin` / `plugin_opts`）
 - 其他協定：ShadowTLS, Hysteria, Hysteria2, Naive¹, TUIC, AnyTLS, Snell²
-- 僅入站：Cloudflared
+- 僅入站：Cloudflared, Mieru³
 - 僅出站：Tor, SSH, Bridge, Selector, URLTest
 - Endpoints：WireGuard、WARP、Tailscale、OpenConnect、OpenVPN——可單獨測延遲，也可一鍵測全部
 - 支援 XTLS 協定，出站表單支援 Hysteria 連接埠跳躍
@@ -56,6 +56,9 @@ amd64、arm64、armv7 與 386 上帶這個協定。在 armv6、armv5、s390x 上
 
 <sup>2</sup> sing-box 的 Snell 入站只支援 v5 和 v6，出站只支援 v4 和 v6，所以只有 v6 監聽會產生
 用戶端設定；v5 監聽面向手動設定的用戶端（Surge）。
+
+<sup>3</sup> Mieru 不是 sing-box 內建的協定，所以 sing-box JSON 訂閱裡不包含它（官方 sing-box
+用戶端不認）；用戶端可透過 Clash 訂閱或 `mierus://` 分享連結使用。
 
 </details>
 

@@ -54,7 +54,7 @@
 - Chung: Mixed, SOCKS, HTTP/HTTPS, Direct, Tun, Redirect, TProxy
 - Dựa trên V2Ray: VLESS, VMess, Trojan, Shadowsocks (kèm `plugin` / `plugin_opts`)
 - Các giao thức khác: ShadowTLS, Hysteria, Hysteria2, Naive¹, TUIC, AnyTLS, Snell²
-- Chỉ inbound: Cloudflared
+- Chỉ inbound: Cloudflared, Mieru³
 - Chỉ outbound: Tor, SSH, Bridge, Selector, URLTest
 - Endpoints: WireGuard, WARP, Tailscale, OpenConnect, OpenVPN — có kiểm tra độ trễ cho từng endpoint hoặc cho tất cả cùng lúc
 - Hỗ trợ XTLS, và form outbound có Hysteria port hopping
@@ -65,6 +65,10 @@ outbound Naive sẽ báo rằng binary được build mà không có nó.
 
 <sup>2</sup> Inbound Snell của sing-box nói v5 và v6 còn outbound nói v4 và v6, nên chỉ listener v6
 mới được sinh cấu hình client; listener v5 dành cho client cấu hình bằng tay (Surge).
+
+<sup>3</sup> Mieru không phải giao thức của sing-box, nên nó không có trong subscription JSON
+của sing-box (client sing-box gốc sẽ từ chối); client nhận nó qua subscription Clash hoặc
+liên kết chia sẻ `mierus://`.
 
 </details>
 

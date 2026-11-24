@@ -53,7 +53,7 @@
 - General: Mixed, SOCKS, HTTP/HTTPS, Direct, Tun, Redirect, TProxy
 - V2Ray based: VLESS, VMess, Trojan, Shadowsocks (incl. `plugin` / `plugin_opts`)
 - Other protocols: ShadowTLS, Hysteria, Hysteria2, Naive¹, TUIC, AnyTLS, Snell²
-- Inbound only: Cloudflared
+- Inbound only: Cloudflared, Mieru³
 - Outbound only: Tor, SSH, Bridge, Selector, URLTest
 - Endpoints: WireGuard, WARP, Tailscale, OpenConnect, OpenVPN — with a latency test per endpoint or for all at once
 - XTLS is supported, and Hysteria port hopping is available on the outbound form
@@ -65,6 +65,10 @@ outbound reports that the binary was built without it.
 <sup>2</sup> sing-box's Snell inbound speaks v5 and v6 while its outbound speaks v4 and v6, so
 only a v6 listener gets a generated client config; a v5 listener is for clients configured by
 hand (Surge).
+
+<sup>3</sup> Mieru is not a sing-box protocol, so it is left out of the sing-box JSON
+subscription (stock sing-box clients reject it); clients get it from the Clash subscription
+or a `mierus://` share link.
 
 </details>
 

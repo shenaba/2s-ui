@@ -55,7 +55,7 @@
 - Общие: Mixed, SOCKS, HTTP/HTTPS, Direct, Tun, Redirect, TProxy
 - На основе V2Ray: VLESS, VMess, Trojan, Shadowsocks (в т. ч. `plugin` / `plugin_opts`)
 - Другие протоколы: ShadowTLS, Hysteria, Hysteria2, Naive¹, TUIC, AnyTLS, Snell²
-- Только входящие: Cloudflared
+- Только входящие: Cloudflared, Mieru³
 - Только исходящие: Tor, SSH, Bridge, Selector, URLTest
 - Endpoints: WireGuard, WARP, Tailscale, OpenConnect, OpenVPN — с проверкой задержки для отдельного endpoint или для всех сразу
 - Поддерживается XTLS, а в форме исходящего доступен Hysteria port hopping
@@ -67,6 +67,10 @@ Linux включают его только на amd64, arm64, armv7 и 386. На
 <sup>2</sup> Входящий Snell в sing-box говорит на v5 и v6, а исходящий — на v4 и v6, поэтому
 клиентская конфигурация генерируется только для слушателя v6; слушатель v5 рассчитан на
 клиентов, настраиваемых вручную (Surge).
+
+<sup>3</sup> Mieru не входит в протоколы sing-box, поэтому в JSON-подписку sing-box он не
+попадает (стандартные клиенты sing-box его отвергают); клиенты получают его через подписку
+Clash или ссылку `mierus://`.
 
 </details>
 

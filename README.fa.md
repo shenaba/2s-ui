@@ -50,7 +50,7 @@
 - عمومی: Mixed, SOCKS, HTTP/HTTPS, Direct, Tun, Redirect, TProxy
 - مبتنی بر V2Ray: VLESS, VMess, Trojan, Shadowsocks (به‌همراه `plugin` / `plugin_opts`)
 - سایر پروتکل‌ها: ShadowTLS, Hysteria, Hysteria2, Naive¹, TUIC, AnyTLS, Snell²
-- فقط inbound: Cloudflared
+- فقط inbound: Cloudflared, Mieru³
 - فقط outbound: Tor, SSH, Bridge, Selector, URLTest
 - Endpointها: WireGuard، WARP، Tailscale، OpenConnect، OpenVPN — با تست تأخیر برای هر endpoint یا همه با هم
 - از XTLS پشتیبانی می‌شود و در فرم outbound قابلیت Hysteria port hopping وجود دارد
@@ -62,6 +62,10 @@ outbound از نوع Naive اعلام می‌کند که باینری بدون �
 <sup>2</sup> inbound پروتکل Snell در sing-box با v5 و v6 کار می‌کند و outbound آن با v4 و v6، بنابراین
 فقط برای شنونده v6 پیکربندی کلاینت تولید می‌شود؛ شنونده v5 برای کلاینت‌هایی است که دستی
 پیکربندی می‌شوند (Surge).
+
+<sup>3</sup> Mieru جزو پروتکل‌های sing-box نیست، بنابراین در اشتراک JSON مربوط به sing-box
+قرار نمی‌گیرد (کلاینت‌های استاندارد sing-box آن را رد می‌کنند)؛ کلاینت‌ها آن را از طریق اشتراک
+Clash یا لینک اشتراک‌گذاری `mierus://` دریافت می‌کنند.
 
 </details>
 
