@@ -152,10 +152,11 @@ Plain `docker run`:
 
 ```shell
 mkdir 2s-ui && cd 2s-ui
-docker run -itd \
+docker run -itd --init \
     -p 2095:2095 -p 2096:2096 -p 443:443 \
     -v $PWD/db/:/app/db/ \
     -v $PWD/cert/:/root/cert/ \
+    -v $PWD/acme.sh/:/root/.acme.sh/ \
     --name s-ui --restart=unless-stopped \
     ghcr.io/shenaba/2s-ui:latest
 ```
@@ -291,9 +292,10 @@ internet (HTTP-01 challenge). ACME is Linux-only and is hidden on Windows.
   <summary>How issuance works, and the Docker port-80 caveat</summary>
 
 Issuance runs through **acme.sh**, which 2S-UI installs for you on first use
-(along with `socat`, needed for standalone validation) and registers for
-automatic renewal via acme.sh's own cron entry — there is nothing for you to
-schedule.
+(along with `socat`, needed for standalone validation) and renews
+automatically: the panel checks every hour and runs `acme.sh --cron` once a
+certificate is due, so renewal works even where no cron daemon runs (the Docker
+image has none) — there is nothing for you to schedule.
 
 The validation method defaults to **auto** — standalone when port 80 is free,
 otherwise it borrows the running nginx, provisioning a minimal `server_name`
@@ -304,7 +306,9 @@ certificate; no restart needed.
 > To publish port 80 with Docker: uncomment the `80:80` line in
 > `docker-compose.yml`, or add `-p 80:80` to `docker run`. Certificates are
 > stored under `/root/cert/<domain>/` as `fullchain.pem` / `privkey.pem` and
-> survive restarts (the Docker volume above maps that path out). If the
+> survive restarts (the Docker volume above maps that path out). Keep the
+> `/root/.acme.sh` volume as well: it holds the acme.sh account and the renewal
+> records, and without it a recreated container cannot renew. If the
 > domain/port is misconfigured, 2S-UI falls back to HTTP.
 
 </details>

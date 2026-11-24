@@ -417,6 +417,7 @@ export default {
     notifyKindOutboundUp: "Outbound đã hoạt động lại",
     notifyKindClientDepleted: "Client đã hết hạn mức",
     notifyKindInboundDepleted: "Inbound đã hết lưu lượng",
+    notifyKindCertFailed: "Gia hạn chứng chỉ thất bại",
     notifyKindClientExpiring: "Client sắp hết hạn mức",
     notifyKindClientOnline: "Client trực tuyến",
     notifyKindClientOffline: "Client ngoại tuyến",

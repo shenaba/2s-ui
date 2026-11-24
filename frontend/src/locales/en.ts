@@ -423,6 +423,7 @@ export default {
     notifyKindOutboundUp: "Outbound recovered",
     notifyKindClientDepleted: "Client ran out",
     notifyKindInboundDepleted: "Inbound ran out",
+    notifyKindCertFailed: "Certificate renewal failed",
     notifyKindClientExpiring: "Client running low",
     notifyKindClientOnline: "Client online",
     notifyKindClientOffline: "Client offline",

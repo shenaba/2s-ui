@@ -141,10 +141,11 @@ curl -fsSL https://get.docker.com | sh
 
 ```shell
 mkdir 2s-ui && cd 2s-ui
-docker run -itd \
+docker run -itd --init \
     -p 2095:2095 -p 2096:2096 -p 443:443 \
     -v $PWD/db/:/app/db/ \
     -v $PWD/cert/:/root/cert/ \
+    -v $PWD/acme.sh/:/root/.acme.sh/ \
     --name s-ui --restart=unless-stopped \
     ghcr.io/shenaba/2s-ui:latest
 ```
@@ -268,7 +269,8 @@ TLS 相關的設定都集中在面板設定的 **網域與憑證** 分頁。面�
   <summary>簽發的實際過程，以及 Docker 的 80 連接埠注意事項</summary>
 
 簽發底層走 **acme.sh** —— 首次使用時面板會自動幫你安裝 acme.sh（以及 standalone 驗證
-需要的 `socat`），並啟用 acme.sh 自帶的 cron 做自動續期，你不需要自己設定任何排程工作。
+需要的 `socat`），並自動續期：面板每小時檢查一次，有憑證到期就執行 `acme.sh --cron`，
+所以沒有 cron 常駐程式的環境（Docker 映像裡就沒有）也能續期，你不需要自己設定任何排程工作。
 
 驗證方式預設為 **auto** —— 80 連接埠閒置時用 standalone，否則借用正在執行的 nginx，
 必要時會在 `/etc/nginx/conf.d` 下自動補一個最小的 `server_name` 設定區塊。你也可以
@@ -277,7 +279,8 @@ TLS 相關的設定都集中在面板設定的 **網域與憑證** 分頁。面�
 > Docker 部署對應 80 連接埠：docker compose 方式請取消 `docker-compose.yml` 中 `80:80`
 > 該行的註解；docker run 方式請加上 `-p 80:80`。憑證儲存在 `/root/cert/<網域>/` 下，
 > 檔名固定為 `fullchain.pem` / `privkey.pem`，重新啟動後保留（上面 Docker 指令裡的掛載
-> 正是把這個路徑對應出來）。若網域/連接埠設定有誤，會自動回復 HTTP。
+> 正是把這個路徑對應出來）。`/root/.acme.sh` 的掛載也要保留：acme.sh 的帳戶和續期紀錄都在
+> 裡面，沒有它，重建容器後憑證就無法續期。若網域/連接埠設定有誤，會自動回復 HTTP。
 
 </details>
 

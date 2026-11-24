@@ -1,6 +1,7 @@
 package cronjob
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -104,5 +105,34 @@ func TestCronReportsABadSpec(t *testing.T) {
 	}
 	if got := len(c.Entries()); got != 0 {
 		t.Errorf("%d entries registered from a bad spec, want 0", got)
+	}
+}
+
+// The renewal check runs on a fixed wall-clock minute so a panel restart does not reset
+// it; the spec has to parse with the panel's own parser and stay put across calls.
+func TestAcmeRenewSpec(t *testing.T) {
+	spec := acmeRenewSpec("seed-a")
+	if spec != acmeRenewSpec("seed-a") {
+		t.Fatalf("acmeRenewSpec() is not stable: %q vs %q", spec, acmeRenewSpec("seed-a"))
+	}
+	for _, seed := range []string{"seed-a", ""} { // "" falls back to the hostname
+		sched, err := service.CronParser.Parse(acmeRenewSpec(seed))
+		if err != nil {
+			t.Fatalf("acmeRenewSpec(%q) = %q does not parse: %v", seed, acmeRenewSpec(seed), err)
+		}
+		from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		first := sched.Next(from)
+		if second := sched.Next(first); second.Sub(first) != time.Hour {
+			t.Errorf("%q: runs %v apart, want hourly", acmeRenewSpec(seed), second.Sub(first))
+		}
+	}
+	// Different installs must spread out rather than share one minute: across many
+	// seeds, far more than one minute has to come up.
+	minutes := map[string]bool{}
+	for i := 0; i < 200; i++ {
+		minutes[acmeRenewSpec(fmt.Sprintf("install-%d", i))] = true
+	}
+	if len(minutes) < 30 {
+		t.Errorf("200 seeds landed on only %d distinct minutes", len(minutes))
 	}
 }

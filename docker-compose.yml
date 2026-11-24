@@ -7,7 +7,14 @@ services:
     volumes:
       - "./db:/app/db"
       - "./cert:/root/cert"
+      # acme.sh account and renewal records; without it a recreated
+      # container can no longer renew its certificates.
+      - "./acme.sh:/root/.acme.sh"
     tty: true
+    # Run Docker's init as PID 1 so it reaps orphaned processes: sui would be
+    # PID 1 otherwise and never waits on children it did not start (the socat
+    # and curl acme.sh leaves behind when a timed-out run is killed).
+    init: true
     restart: unless-stopped
     ports:
       - "2095:2095"

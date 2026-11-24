@@ -1,12 +1,15 @@
 package service
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Every nginx-facing decision in EnsureVhost / SyncVhosts / ensureNginxServerBlock is
@@ -602,5 +605,184 @@ func TestBuildVhostConfOwnerTagIsDrift(t *testing.T) {
 	if got := strings.Replace(tagged, "# Only the panel instance with this id cleans this file up.\n"+
 		vhostOwnerMarker+"0123456789abcdef\n", "", 1); got != legacy {
 		t.Errorf("the tag must be the only difference from the untagged output:\n%s", tagged)
+	}
+}
+
+// The renewal job runs inside the panel because the Docker image has no crond: acme.sh's
+// own crontab entry never fires there.
+func TestAcmeDueDomains(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	at := func(dir, domain string, next int64) acmeConf {
+		kv := map[string]string{}
+		if next != 0 {
+			kv["Le_NextRenewTime"] = strconv.FormatInt(next, 10)
+		}
+		return acmeConf{Dir: dir, Domain: domain, KV: kv}
+	}
+	past, future := now.Unix()-1, now.Unix()+3600
+	tests := []struct {
+		name  string
+		confs []acmeConf
+		want  []string
+	}{
+		{"no certificates", nil, nil},
+		{"nothing due yet", []acmeConf{at("a.com", "a.com", future)}, nil},
+		{"due exactly now", []acmeConf{at("a.com", "a.com", now.Unix())}, []string{"a.com"}},
+		{"one of several due", []acmeConf{at("a.com", "a.com", future), at("b.com", "b.com", past)}, []string{"b.com"}},
+		// No renewal time recorded: acme.sh would not renew it either, so it must not
+		// make the job start acme.sh every hour.
+		{"no renewal time recorded", []acmeConf{at("a.com", "a.com", 0)}, nil},
+		// The RSA and _ecc directories of one domain are one name in the notification.
+		{"both key types due", []acmeConf{at("A.com", "A.com", past), at("a.com_ecc", "a.com", past)}, []string{"a.com"}},
+	}
+	for _, tt := range tests {
+		if got := acmeDueDomains(tt.confs, now); !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("%s: acmeDueDomains() = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestAcmeRetryElapsed(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	tests := []struct {
+		name string
+		last time.Time
+		want bool
+	}{
+		{"never tried", time.Time{}, true},
+		// A failed renewal leaves Le_NextRenewTime in the past, so without the retry gap
+		// every hourly tick would hit Let's Encrypt again.
+		{"failed an hour ago", now.Add(-time.Hour), false},
+		{"retry gap elapsed", now.Add(-acmeRenewRetry), true},
+		// A clock set back past the last attempt must not hold renewal off until it
+		// catches up again.
+		{"clock moved back", now.Add(48 * time.Hour), true},
+	}
+	for _, tt := range tests {
+		if got := acmeRetryElapsed(now, tt.last); got != tt.want {
+			t.Errorf("%s: acmeRetryElapsed() = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+// The last attempt has to outlive the process: a restart or the Docker self-update's
+// re-exec leaves the previous acme.sh running, and a fresh in-memory zero would let the
+// new process start a second one beside it.
+func TestAcmeRenewStamp(t *testing.T) {
+	dir := t.TempDir()
+	if got := readRenewStamp(dir); !got.IsZero() {
+		t.Fatalf("no stamp: got %v, want zero", got)
+	}
+	at := time.Unix(1_800_000_000, 0)
+	if err := writeRenewStamp(dir, at); err != nil {
+		t.Fatal(err)
+	}
+	if got := readRenewStamp(dir); !got.Equal(at) {
+		t.Errorf("readRenewStamp() = %v, want %v", got, at)
+	}
+	// The stamp sits in the acme.sh home next to the certificate directories, and must
+	// not be taken for one.
+	if confs := readAcmeConfs(dir); len(confs) != 0 {
+		t.Errorf("stamp read as a certificate: %+v", confs)
+	}
+	if err := os.WriteFile(filepath.Join(dir, acmeRenewStampFile), []byte("garbage"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := readRenewStamp(dir); !got.IsZero() {
+		t.Errorf("unreadable stamp: got %v, want zero", got)
+	}
+}
+
+func TestReadAcmeConfs(t *testing.T) {
+	dir := t.TempDir()
+	write := func(sub, name, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, sub, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Both the RSA and the _ecc directory of one domain are read: acme.sh --cron renews
+	// every directory, and deduplicating is ListCerts' business.
+	write("a.com", "a.com.conf", "Le_Domain='a.com'\nLe_NextRenewTime='100'\n")
+	write("a.com_ecc", "a.com.conf", "Le_Domain='a.com'\nLe_NextRenewTime='200'\n")
+	// A conf without Le_Domain falls back to the directory name minus _ecc.
+	write("b.com_ecc", "b.com.conf", "Le_Keylength='ec-256'\n")
+	// Internal directories have no conf of their own name and are skipped.
+	write("ca", "something.conf", "CA_EMAIL='x'\n")
+	write(".", "account.conf", "ACCOUNT_EMAIL='x'\n")
+
+	type row struct {
+		Dir, Domain string
+		Next        int64
+		Ecc         bool
+	}
+	var got []row
+	for _, c := range readAcmeConfs(dir) {
+		got = append(got, row{c.Dir, c.Domain, c.nextRenew(), c.ecc()})
+	}
+	sort.Slice(got, func(i, j int) bool { return got[i].Dir < got[j].Dir })
+	want := []row{
+		{"a.com", "a.com", 100, false},
+		{"a.com_ecc", "a.com", 200, true},
+		{"b.com_ecc", "b.com", 0, true},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("readAcmeConfs() = %+v, want %+v", got, want)
+	}
+	if got := readAcmeConfs(filepath.Join(dir, "missing")); got != nil {
+		t.Errorf("missing dir: got %v, want nil", got)
+	}
+}
+
+func TestLastLines(t *testing.T) {
+	if got := lastLines("a\nb\nc\nd\n", 2); got != "c\nd" {
+		t.Errorf("lastLines() = %q", got)
+	}
+	if got := lastLines("only", 5); got != "only" {
+		t.Errorf("lastLines() = %q", got)
+	}
+}
+
+// One --cron renews every due certificate and exits non-zero if any of them failed;
+// the notification must name the ones still due afterwards, not the whole list.
+func TestAcmeFailedDomains(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	conf := func(domain string, next int64) acmeConf {
+		return acmeConf{Dir: domain, Domain: domain, KV: map[string]string{"Le_NextRenewTime": strconv.FormatInt(next, 10)}}
+	}
+	before := []string{"a.com", "b.com"}
+	// b.com renewed (its renewal time moved on), a.com did not.
+	after := []acmeConf{conf("a.com", now.Unix()-10), conf("b.com", now.Unix()+60*86400)}
+	if got := acmeFailedDomains(before, after, now); !reflect.DeepEqual(got, []string{"a.com"}) {
+		t.Errorf("acmeFailedDomains() = %v, want [a.com]", got)
+	}
+	// Everything renewed yet the run failed (a reloadcmd, say): which one is unknown,
+	// so the whole list is reported rather than an empty one.
+	renewed := []acmeConf{conf("a.com", now.Unix()+60*86400), conf("b.com", now.Unix()+60*86400)}
+	if got := acmeFailedDomains(before, renewed, now); !reflect.DeepEqual(got, before) {
+		t.Errorf("acmeFailedDomains() = %v, want %v", got, before)
+	}
+}
+
+func TestAcmeRenewFailDetail(t *testing.T) {
+	runErr := errors.New("命令执行失败: acme.sh --cron\nVerify error\nexit status 1")
+	// acme.sh's own output, without runCmd's panel-language prefix or Go's exit status.
+	if got := acmeRenewFailDetail("Renew: a.com\nVerify error: timeout\n", runErr, false); got != "Renew: a.com\nVerify error: timeout" {
+		t.Errorf("detail = %q", got)
+	}
+	// A timeout is worded by the notification itself; the detail stays acme.sh's.
+	if got := acmeRenewFailDetail("Renew: a.com", runErr, true); got != "Renew: a.com" {
+		t.Errorf("timeout detail = %q", got)
+	}
+	// Stopped before printing anything: runCmd's Chinese "命令超时" must not stand in.
+	if got := acmeRenewFailDetail("", runErr, true); got != "" {
+		t.Errorf("silent timeout detail = %q, want empty", got)
+	}
+	// Nothing printed and not a timeout (acme.sh never started): fall back to the error.
+	if got := acmeRenewFailDetail("", runErr, false); !strings.Contains(got, "exit status 1") {
+		t.Errorf("fallback detail = %q", got)
 	}
 }

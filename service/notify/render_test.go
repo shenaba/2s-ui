@@ -3,6 +3,7 @@ package notify
 import (
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -226,6 +227,9 @@ func TestEveryMessageKeyIsTranslated(t *testing.T) {
 		{Kind: ClientExpiring},
 		{Kind: CPUHigh, Data: &MetricData{Percent: 91.5, Threshold: 80}},
 		{Kind: MemoryHigh, Data: &MetricData{Percent: 91.5, Threshold: 80}},
+		{Kind: CertRenewFailed, Data: &CertData{Domains: []string{"a.com"}, Err: "timeout"}},
+		{Kind: CertRenewFailed, Data: &CertData{Domains: []string{"a.com"}, Timeout: 15 * time.Minute}},
+		{Kind: CertRenewFailed},
 		{Kind: LoginSuccess, Data: &LoginData{Username: "admin", IP: "1.2.3.4"}},
 		{Kind: LoginFailed, Data: &LoginData{Username: "admin", IP: "1.2.3.4", Failures: 1}},
 		{Kind: LoginFailed, Data: &LoginData{Username: "admin", IP: "1.2.3.4", Failures: 7}},
@@ -275,5 +279,21 @@ func TestRenderPrefersPreComposedText(t *testing.T) {
 	// not a required one.
 	if got := Render(Event{Kind: CoreUp}, "en"); got == "" || got == body {
 		t.Errorf("an event with no Text did not render its kind: %q", got)
+	}
+}
+
+// A timeout is worded by the panel in the operator's language, and a run that
+// printed nothing before it was stopped leaves no dangling line behind.
+func TestCertFailedTimeout(t *testing.T) {
+	got := Render(Event{Kind: CertRenewFailed, Data: &CertData{Domains: []string{"a.com"}, Timeout: 15 * time.Minute}}, "zhHans")
+	if !strings.Contains(got, "15m0s") || !strings.Contains(got, "a.com") {
+		t.Errorf("timeout message = %q", got)
+	}
+	if strings.HasSuffix(got, "\n") {
+		t.Errorf("timeout message with no output ends in a newline: %q", got)
+	}
+	with := Render(Event{Kind: CertRenewFailed, Data: &CertData{Domains: []string{"a.com"}, Err: "Verify error", Timeout: time.Minute}}, "en")
+	if !strings.HasSuffix(with, "\nVerify error") {
+		t.Errorf("timeout message dropped acme.sh's output: %q", with)
 	}
 }

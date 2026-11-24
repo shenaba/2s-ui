@@ -417,6 +417,7 @@ export default {
     notifyKindOutboundUp: "出站已恢复",
     notifyKindClientDepleted: "客户端已用尽",
     notifyKindInboundDepleted: "入站流量已用尽",
+    notifyKindCertFailed: "证书续期失败",
     notifyKindClientExpiring: "客户端即将用尽",
     notifyKindClientOnline: "客户端上线",
     notifyKindClientOffline: "客户端离线",

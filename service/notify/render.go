@@ -42,7 +42,9 @@ func Render(e Event, lang string) string {
 		return e.Text
 	}
 	key, params := describe(e)
-	return translate(lang, key, params)
+	// A trailing line whose placeholder came out empty (cert.failed.timeout with
+	// no acme.sh output, say) would otherwise leave a dangling newline.
+	return strings.TrimRight(translate(lang, key, params), "\n")
 }
 
 // ClientLabel is how the operator's messages name a client: the name, which is
@@ -158,6 +160,22 @@ func describe(e Event) (string, map[string]string) {
 			p["names"] = strings.Join(d.Tags, ", ")
 		}
 		return "inbound.depleted", p
+
+	case CertRenewFailed:
+		// A timeout is the panel's own finding, not something acme.sh printed, so
+		// it is worded here in the operator's language rather than appended to Err.
+		if d, ok := e.Data.(*CertData); ok && d.Timeout > 0 {
+			p["names"] = strings.Join(d.Domains, ", ")
+			p["timeout"] = d.Timeout.String()
+			p["error"] = d.Err
+			return "cert.failed.timeout", p
+		}
+		if d, ok := e.Data.(*CertData); ok && (len(d.Domains) > 0 || d.Err != "") {
+			p["names"] = strings.Join(d.Domains, ", ")
+			p["error"] = d.Err
+			return "cert.failed.err", p
+		}
+		return "cert.failed", p
 
 	case ClientOnline, ClientOffline:
 		key := "client.online"
