@@ -104,3 +104,29 @@ func TestRenamingAnEndpointASelectorUsesIsRefused(t *testing.T) {
 		t.Fatal("a refused rename must leave the endpoint in place")
 	}
 }
+
+// A route rule may name an endpoint (the router looks outbounds up through the
+// endpoints), and since sing-box 1.14.6 a box whose rule names a missing one
+// does not build. So removing or renaming one a rule names is refused like
+// route.final; an edit that keeps the tag is not.
+func TestAnEndpointARuleNamesCannotBeRemovedOrRenamed(t *testing.T) {
+	c := NewCore()
+	if err := c.Start([]byte(`{"log":{"disabled":true},"outbounds":[{"type":"direct","tag":"a"}],"endpoints":[` + testWireguard + `],"route":{"rules":[{"domain":["example.com"],"outbound":"wg"}]}}`)); err != nil {
+		t.Fatalf("start core: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Stop() })
+
+	if err := c.RemoveEndpoint("wg"); err == nil || !strings.Contains(err.Error(), "named by route rule #1") {
+		t.Fatalf("removing an endpoint a route rule names must be refused, got %v", err)
+	}
+	renamed := strings.Replace(testWireguard, `"tag":"wg"`, `"tag":"wg2"`, 1)
+	if err := c.RenameEndpoint("wg", []byte(renamed)); err == nil || !strings.Contains(err.Error(), "named by route rule #1") {
+		t.Fatalf("renaming an endpoint a route rule names must be refused, got %v", err)
+	}
+	if _, found := c.GetInstance().Endpoint().Get("wg"); !found {
+		t.Fatal("a refused removal or rename must leave the endpoint in place")
+	}
+	if err := c.AddEndpoint([]byte(testWireguard)); err != nil {
+		t.Fatalf("an edit that keeps the tag must still go through: %v", err)
+	}
+}

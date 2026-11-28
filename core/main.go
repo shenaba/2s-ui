@@ -119,6 +119,14 @@ func (c *Core) Start(sbConfig []byte) error {
 	if err != nil {
 		return common.NewErrorf("unmarshal sing-box config: %v", err)
 	}
+	// NewBox refuses the same, but only after building every inbound and
+	// endpoint, and a built wireguard endpoint cannot be freed: the watchdog
+	// retrying such a config would leak one per attempt (ruleTargets.go).
+	// The messages name "route rule #n" or "dns rule #n" themselves, so no
+	// prefix: one naming a router pointed DNS failures at the route settings.
+	if err = checkBuiltRuleActions(opt); err != nil {
+		return err
+	}
 
 	// Built into a local and published at the end: assigning c.instance first
 	// exposed a box that had not started yet, and the write itself raced every

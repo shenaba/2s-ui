@@ -32,7 +32,7 @@ permissions:
 
 env:
   NODE_VERSION: "25"
-  CRONET_GO_VERSION: "98d539ce67568fb911654e66a14cf4247ed833ec"
+  CRONET_GO_VERSION: "ccefd17767e7b91299e0d54a6b1bb0468cf9173f"
   CRONET_GO_REPO: https://github.com/sagernet/cronet-go.git
   BOOTLIN_BASE_URL: https://toolchains.bootlin.com/downloads/releases/toolchains
 

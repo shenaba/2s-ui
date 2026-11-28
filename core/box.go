@@ -208,7 +208,11 @@ func NewBox(options Options) (*Box, error) {
 	endpointManager := newEndpointManager(logFactory.NewLogger("endpoint"), endpointRegistry)
 	inboundManager := newInboundManager(logFactory.NewLogger("inbound"), inboundRegistry, endpointManager)
 	outboundManager := newOutboundManager(logFactory.NewLogger("outbound"), outboundRegistry, endpointManager, routeOptions.Final)
-	endpointManager.refuseReferenced(outboundManager.dependents, routeOptions.Final)
+	// What the route rules name cannot leave this box: the next one would
+	// refuse to build (ruleTargets.go). The rules only change with a restart.
+	ruleOutbounds, _ := ruleTargets(routeOptions.Rules)
+	outboundManager.ruleNamed = ruleOutbounds
+	endpointManager.refuseReferenced(outboundManager.dependents, routeOptions.Final, ruleOutbounds)
 	dnsTransportManager := dns.NewTransportManager(dnsTransportRegistry, outboundManager, dnsOptions.Final)
 	serviceManager := newServiceManager(logFactory.NewLogger("service"), serviceRegistry)
 	certificateProviderManager := boxCertificate.NewManager(certificateProviderRegistry)
@@ -279,6 +283,26 @@ func NewBox(options Options) (*Box, error) {
 		if err != nil {
 			return nil, E.Cause(err, "initialize DNS server[", i, "]")
 		}
+	}
+	// Deliberately earlier than 1.14.6, which runs these two after NTP: they
+	// need only the DNS servers above and the router, and either can fail
+	// (a rule-set or evaluate tag a DNS rule names, a missing server). Every
+	// failure here has to come before the endpoints below are built, since a
+	// built wireguard endpoint cannot be freed and the watchdog retries a
+	// failing config every few seconds. Neither looks an outbound up:
+	// dnsRouter.Initialize builds the rules without starting them, and
+	// preferred_by resolves its outbounds in the rule's Start.
+	err = dnsTransportManager.Initialize(func() (adapter.DNSTransport, error) {
+		return dnsTransportRegistry.CreateDNSTransport(
+			ctx,
+			logFactory.NewLogger("dns/local"),
+			"local",
+			C.DNSTypeLocal,
+			&option.LocalDNSServerOptions{},
+		)
+	})
+	if err != nil {
+		return nil, err
 	}
 	err = dnsRouter.Initialize(dnsOptions.Rules)
 	if err != nil {
@@ -391,24 +415,6 @@ func NewBox(options Options) (*Box, error) {
 			return nil, E.Cause(err, "initialize certificate provider[", i, "]")
 		}
 	}
-	outboundManager.Initialize(func() (adapter.Outbound, error) {
-		return direct.NewOutbound(
-			ctx,
-			router,
-			logFactory.NewLogger("outbound/direct"),
-			"direct",
-			option.DirectOutboundOptions{},
-		)
-	})
-	dnsTransportManager.Initialize(func() (adapter.DNSTransport, error) {
-		return dnsTransportRegistry.CreateDNSTransport(
-			ctx,
-			logFactory.NewLogger("dns/local"),
-			"local",
-			C.DNSTypeLocal,
-			&option.LocalDNSServerOptions{},
-		)
-	})
 	httpClientManager.Initialize(func() (*httpclient.ManagedTransport, error) {
 		deprecated.Report(ctx, deprecated.OptionImplicitDefaultHTTPClient)
 		var httpClientOptions option.HTTPClientOptions
@@ -465,6 +471,22 @@ func NewBox(options Options) (*Box, error) {
 			WriteToSystem: ntpOptions.WriteToSystem,
 		})
 		timeService.TimeService = ntpService
+	}
+	err = outboundManager.Initialize(func() (adapter.Outbound, error) {
+		return direct.NewOutbound(
+			ctx,
+			router,
+			logFactory.NewLogger("outbound/direct"),
+			"direct",
+			option.DirectOutboundOptions{},
+		)
+	})
+	if err != nil {
+		return nil, err
+	}
+	err = router.ValidateRuleActions()
+	if err != nil {
+		return nil, E.Cause(err, "initialize router")
 	}
 	statsTracker := NewStatsTracker()
 	connTracker := NewConnTracker()

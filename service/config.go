@@ -16,6 +16,8 @@ import (
 	"github.com/shenaba/2s-ui/service/notify"
 	"github.com/shenaba/2s-ui/util"
 	"github.com/shenaba/2s-ui/util/common"
+
+	"gorm.io/gorm"
 )
 
 var (
@@ -164,20 +166,113 @@ func (s *ConfigService) validateBaseConfig(data json.RawMessage) error {
 	if err := json.Unmarshal(data, &root); err != nil || root == nil {
 		return common.NewErrorf("invalid config: the base config must be a JSON object")
 	}
-	var base SingBoxConfig
-	if err := json.Unmarshal(data, &base); err != nil {
-		return common.NewErrorf("invalid config: %v", err)
-	}
-	// Replaced from the tables on every start.
-	base.Inbounds, base.Outbounds, base.Services, base.Endpoints = nil, nil, nil, nil
-	rawConfig, err := json.Marshal(base)
+	rawConfig, err := baseForCore(data)
 	if err != nil {
-		return err
+		return common.NewErrorf("invalid config: %v", err)
 	}
 	if err = corePtr.ValidateConfig(rawConfig); err != nil {
 		return common.NewErrorf("invalid config: %v", err)
 	}
 	return nil
+}
+
+// checkBaseRuleActions is the one check of a base config that needs the
+// tables: since sing-box 1.14.6 a rule naming an outbound or DNS server the
+// core lacks fails the whole restart, where it used to fail only what it
+// matched. Save runs it inside its transaction, unlike validateBaseConfig: the
+// database takes the write lock at BEGIN (_txlock=immediate), so reading the
+// tags there is what keeps a concurrent delete of an outbound -- which reads
+// the stored rules inside its own transaction (refuseRuleNamedTag) -- from
+// passing its check against this save's old rules while this one passes
+// against its old tags.
+func checkBaseRuleActions(tx *gorm.DB, data json.RawMessage) error {
+	rawConfig, err := baseForCore(data)
+	if err != nil {
+		return common.NewErrorf("invalid config: %v", err)
+	}
+	var outboundTags, endpointTags []string
+	if err = tx.Model(model.Outbound{}).Pluck("tag", &outboundTags).Error; err != nil {
+		return err
+	}
+	if err = tx.Model(model.Endpoint{}).Pluck("tag", &endpointTags).Error; err != nil {
+		return err
+	}
+	if err = corePtr.CheckRuleActions(rawConfig, outboundTags, endpointTags); err != nil {
+		return common.NewErrorf("invalid config: %v", err)
+	}
+	return nil
+}
+
+// baseForCore shapes a base config the way GetConfig does, with the tables
+// left out: keys SingBoxConfig does not list are dropped, and the four lists
+// the tables fill are emptied.
+func baseForCore(data []byte) ([]byte, error) {
+	var base SingBoxConfig
+	if err := json.Unmarshal(data, &base); err != nil {
+		return nil, err
+	}
+	base.Inbounds, base.Outbounds, base.Services, base.Endpoints = nil, nil, nil, nil
+	return json.Marshal(base)
+}
+
+// refuseRuleNamedTag refuses taking an outbound or endpoint out of the config
+// -- a delete, or a rename away from tag -- while a route rule of the stored
+// base config names it: since sing-box 1.14.6 the core would then refuse to
+// start at all. A running core refuses the same itself (core/ruleTargets.go);
+// this is what covers a core that is down or in maintenance, whose next start
+// would otherwise be the first to find out. Read through tx so that it sees
+// the transaction's own view. A stored base the core cannot read is left to
+// the start to report rather than blocking every delete.
+func refuseRuleNamedTag(tx *gorm.DB, kind string, tag string) error {
+	var stored []string
+	if err := tx.Model(model.Setting{}).Where("key = ?", "config").Pluck("value", &stored).Error; err != nil {
+		return err
+	}
+	if len(stored) == 0 || stored[0] == "" {
+		// The default config names no outbound.
+		return nil
+	}
+	rawConfig, err := baseForCore([]byte(stored[0]))
+	if err != nil {
+		return nil
+	}
+	named, err := corePtr.RuleNamedOutbounds(rawConfig)
+	if err != nil {
+		return nil
+	}
+	if i, found := named[tag]; found {
+		return common.NewErrorf("%s[%s] is named by route rule %s; change the rule first", kind, tag, core.RuleNumber(i))
+	}
+	return nil
+}
+
+// WarnRuleActions says once, at panel start, that the stored config names an
+// outbound or DNS server that is gone. sing-box 1.14.4 ran such a config and
+// failed only what the rule matched; 1.14.6 refuses to start the core at all.
+// The start itself reports the error on every watchdog retry, but in words
+// that do not say the upgrade is what changed, or that editing the rule is the
+// whole fix. A config the core cannot parse is left to the start to report.
+func (s *ConfigService) WarnRuleActions() {
+	rawConfig, err := s.GetConfig("")
+	if err != nil {
+		return
+	}
+	if corePtr.ValidateConfig(*rawConfig) != nil {
+		return
+	}
+	err = corePtr.CheckConfigRuleActions(*rawConfig)
+	if err == nil {
+		return
+	}
+	const why = " -- since sing-box 1.14.6 a rule naming a missing outbound or DNS server stops the whole core;" +
+		" before, only what the rule matched failed. Edit or remove the rule in the panel's config."
+	if s.InMaintenance() {
+		// The core is meant to be down: not a failure yet, but it will be one
+		// the moment maintenance is switched off.
+		logger.Warning("the core will not start when maintenance mode is switched off until these rules are fixed: ", err, why)
+		return
+	}
+	logger.Error("the core will not start until these rules are fixed: ", err, why)
 }
 
 // checkRuleSetDownloads refuses a base config that leaves a remote rule-set on
@@ -618,7 +713,12 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 	case "endpoints":
 		restartCore, err = s.EndpointService.Save(tx, act, data)
 	case "config":
-		// Checked above, ahead of the transaction.
+		// Parsed above, ahead of the transaction; the rules against the
+		// tables here, inside it (checkBaseRuleActions).
+		err = checkBaseRuleActions(tx, data)
+		if err != nil {
+			return nil, err
+		}
 		err = s.SettingService.SaveConfig(tx, data)
 		if err != nil {
 			return nil, err

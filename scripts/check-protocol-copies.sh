@@ -189,10 +189,10 @@ fi
 # core/managers.go, carry over whatever matters, then update the sum here.
 pinned_sha256() {
   case "$1" in
-    box.go) echo ef74d46689ef631dfb57872e4feb9991d40480213f4ac8aaa757ab42977c3671 ;;
+    box.go) echo 0b0fcba568b006f60f50eb4754291a5a58c0540e66d76533cbb4ba9402ca0079 ;;
     adapter/lifecycle.go) echo 3229c6760a18010397d04a985bef7da832855e3d5d138498aceab99f3647bfac ;;
     adapter/inbound/manager.go) echo 86a590a31281399a376aef4caf2d59bb1287f3a38c4a561a9982cf8d6f3c2576 ;;
-    adapter/outbound/manager.go) echo 531429c3a382fb6a50bd854d956de59b5ab4676dedd532a03af592d4e0e867ae ;;
+    adapter/outbound/manager.go) echo 86b0678322a1f089f960e20898d051e25ca65ca0632365e5569a9615655d8b7e ;;
     adapter/endpoint/manager.go) echo 27f6fe25e0c635ad17ad91ebb2f7728ea010cce9ed0e6242f5b49fec2589183b ;;
     adapter/service/manager.go) echo 14446e05ea83f34b9f20fb3aed9b6be55b2097f11c998cd5d2bcdc798ff6e372 ;;
   esac

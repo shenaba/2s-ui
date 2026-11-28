@@ -100,6 +100,19 @@ func (s *OutboundService) Save(tx *gorm.DB, act string, data json.RawMessage) (r
 		if err != nil {
 			return false, err
 		}
+		if act == "edit" {
+			// A rename takes the old tag out of the config; see refuseRuleNamedTag.
+			var oldTags []string
+			err = tx.Model(model.Outbound{}).Where("id = ?", outbound.Id).Pluck("tag", &oldTags).Error
+			if err != nil {
+				return false, err
+			}
+			if len(oldTags) > 0 && oldTags[0] != outbound.Tag {
+				if err = refuseRuleNamedTag(tx, "outbound", oldTags[0]); err != nil {
+					return false, err
+				}
+			}
+		}
 
 		if corePtr.IsRunning() {
 			configData, err := outbound.MarshalJSON()
@@ -164,6 +177,9 @@ func (s *OutboundService) Save(tx *gorm.DB, act string, data json.RawMessage) (r
 		var tag string
 		err = json.Unmarshal(data, &tag)
 		if err != nil {
+			return false, err
+		}
+		if err = refuseRuleNamedTag(tx, "outbound", tag); err != nil {
 			return false, err
 		}
 		if corePtr.IsRunning() {

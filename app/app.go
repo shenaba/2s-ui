@@ -104,6 +104,11 @@ func (a *APP) Start() error {
 	// first connection on.
 	service.ApplyProxyProtocol()
 
+	// Once per start, ahead of the watchdog's first attempt: an upgrade to
+	// sing-box 1.14.6 turns a rule naming a removed outbound from a few failed
+	// connections into a core that never starts.
+	a.configService.WarnRuleActions()
+
 	// The hub must exist before the cron jobs first fire into it and before
 	// the web server accepts the first upgrade.
 	service.StartHub()
