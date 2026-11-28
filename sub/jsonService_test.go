@@ -866,17 +866,22 @@ func TestAddHTTPClientsKeepsTemplateClients(t *testing.T) {
 
 func runAddOthersRoute(t *testing.T, template string) map[string]interface{} {
 	t.Helper()
-	var othersJson map[string]interface{}
-	if err := json.Unmarshal([]byte(template), &othersJson); err != nil {
+	setupSubDB(t)
+	seedLocalIPv6Client(t, "resolver", "")
+	if err := database.GetDB().Create(&model.Setting{Key: "subJsonExt", Value: template}).Error; err != nil {
 		t.Fatal(err)
 	}
-	route := map[string]interface{}{"final": "proxy"}
-	if defaultDomainResolver, ok := othersJson["default_domain_resolver"].(string); ok && defaultDomainResolver != "" {
-		route["default_domain_resolver"] = defaultDomainResolver
-	} else if fallback := fallbackDomainResolver(othersJson); fallback != "" {
-		route["default_domain_resolver"] = fallback
+	raw, _, err := (&JsonService{}).GetJson("resolver", "json")
+	if err != nil {
+		t.Fatal(err)
 	}
-	return route
+	var config struct {
+		Route map[string]interface{} `json:"route"`
+	}
+	if err := json.Unmarshal([]byte(*raw), &config); err != nil {
+		t.Fatal(err)
+	}
+	return config.Route
 }
 
 // With two or more DNS servers and nothing naming the resolver for dial

@@ -229,6 +229,25 @@ rm /usr/bin/s-ui
 > Docker 里新二进制写在容器可写层：`docker restart` 后仍在，但重建容器会退回镜像
 > 自带的版本——想长期生效请拉取新镜像。
 
+## sing-box 订阅面板和 DNS 解析器
+
+在「设置 → JSON 订阅 → 编辑器」中，顶层 `services` 可以配置 sing-box 1.14.0 及以上版本的 `api` 服务。服务运行在导入订阅的客户端上，例如下面的内置网页面板可以在客户端设备上通过 `http://127.0.0.1:9090/dashboard/` 打开。订阅者可以读取下发给客户端的 `secret`，请使用客户端 API 专用密钥。
+
+模板顶层的 `default_domain_resolver` 会写入生成配置的 `route`。可以填写 DNS 服务器标签字符串，也可以用对象指定 `server`、`strategy` 等 sing-box 选项。下例使用直连 DNS 解析出站服务器域名，客户端 DNS 的默认服务器仍由 `dns.final` 决定。
+
+```json
+{
+  "dns": {
+    "servers": [{ "type": "udp", "tag": "dns-direct", "server": "223.5.5.5" }],
+    "final": "dns-direct"
+  },
+  "default_domain_resolver": { "server": "dns-direct", "strategy": "ipv4_only" },
+  "services": [
+    { "type": "api", "tag": "api", "listen": "127.0.0.1", "listen_port": 9090, "dashboard": true }
+  ]
+}
+```
+
 ## 多节点集群
 
 一个面板可以管理其余面板。在 **节点**（Nodes）页面填上远程 2S-UI 实例的地址和 API Token，
