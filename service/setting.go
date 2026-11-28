@@ -76,6 +76,9 @@ var protectedSettings = map[string]bool{
 	// row, so a write arriving through the settings endpoint would leave the
 	// two disagreeing.
 	maintenanceKey: true,
+	// The downloaded package lists (excludePkg.go). Only the refresh worker
+	// writes it, and at up to a few MB it has no business in the settings form.
+	excludePkgCacheKey: true,
 }
 
 var defaultValueMap = map[string]string{
@@ -172,6 +175,10 @@ var defaultValueMap = map[string]string{
 	// Minutes a client must be gone before it counts as offline -- and so
 	// before its next appearance is announced. See service/presence.go.
 	"notifyPresenceGrace": "5",
+	// JSON subscription package lists (excludePkg.go): one URL per line, and
+	// the days between downloads of each, 0 for manual only.
+	excludePkgURLsKey:     "",
+	excludePkgIntervalKey: "1",
 }
 
 // notifySecrets are the notification settings that must never be read back out
@@ -927,6 +934,18 @@ func (s *SettingService) Save(tx *gorm.DB, data json.RawMessage) error {
 		}
 		if key == "subCustomHeaders" {
 			if _, err = ParseSubCustomHeaders(obj); err != nil {
+				return err
+			}
+		}
+		if key == excludePkgURLsKey {
+			urls, perr := parseExcludePkgURLs(obj)
+			if perr != nil {
+				return perr
+			}
+			obj = strings.Join(urls, "\n")
+		}
+		if key == excludePkgIntervalKey {
+			if _, err = parseExcludePkgInterval(obj); err != nil {
 				return err
 			}
 		}

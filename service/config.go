@@ -582,6 +582,9 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 		startMu.RUnlock()
 		if obj == "settings" {
 			ApplyProxyProtocol()
+			// A newly added package list URL is downloaded now rather than on
+			// the next hourly tick. Asynchronous, and a no-op without URLs.
+			RequestExcludePkgRefresh(false)
 		}
 		if restartCore {
 			s.requestRestart()

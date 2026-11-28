@@ -221,6 +221,28 @@
         </div>
       </template>
 
+      <!-- 远程排除列表:并进 TUN 的 exclude_package;没打开入站选项时默认模板里的 TUN 同样生效,所以常驻 -->
+      <div class="sub-label">{{ $t('setting.excludePkgLists') }}</div>
+      <div class="pkg-hint">{{ $t('setting.excludePkgListsDesc') }}</div>
+      <div v-for="(u, i) in pkgUrls" :key="i" class="pkg-row">
+        <div class="pkg-url">
+          <input class="input mono" dir="ltr" :value="u" placeholder="https://example.com/apps.txt"
+                 @input="setPkgUrl(i, ($event.target as HTMLInputElement).value)" />
+          <IconBtn name="trash" danger :title="$t('actions.del')" @click="removePkgUrl(i)" />
+        </div>
+        <div class="pkg-status" :class="{ warn: pkgSource(u)?.err }">{{ pkgStatusText(u) }}</div>
+      </div>
+      <div class="pkg-foot">
+        <Btn sm :disabled="pkgUrls.length >= 10" @click="addPkgUrl"><Ico name="plus" :size="14" /> {{ $t('setting.excludePkgAdd') }}</Btn>
+        <Field :label="$t('setting.excludePkgInterval')" :mb="0" class="pkg-interval">
+          <input class="input mono" type="number" min="0" max="365" step="1" v-model.number="pkgInterval" />
+        </Field>
+        <Btn sm :loading="pkgStatus.refreshing" :disabled="stateChange || !pkgStatus.sources.length" @click="refreshPkgLists">
+          <Ico name="refresh" :size="14" /> {{ $t('setting.excludePkgRefresh') }}
+        </Btn>
+        <span v-if="pkgStatus.sources.length" class="pkg-total">{{ $t('setting.excludePkgTotal', { n: pkgStatus.total }) }}</span>
+      </div>
+
       <div class="builder-foot">
         <div style="flex: 1;" />
         <Btn sm @click="jsonEditor = true"><Ico name="edit" :size="14" /> {{ $t('editor') }}</Btn>
@@ -401,10 +423,10 @@
 
 <script lang="ts" setup>
 import Select from '@/components/ui/Select.vue'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import yaml from 'yaml'
 import { push } from 'notivue'
-import { i18n } from '@/locales'
+import { i18n, intlLocale } from '@/locales'
 import HttpUtils from '@/plugins/httputil'
 import api from '@/plugins/api'
 import { FindDiff } from '@/plugins/utils'
@@ -420,6 +442,7 @@ import ChipSelect from '@/components/ui/ChipSelect.vue'
 import SettingsGroup from '@/components/ui/SettingsGroup.vue'
 import SRow from '@/components/ui/SRow.vue'
 import SectionLabel from '@/components/ui/SectionLabel.vue'
+import IconBtn from '@/components/ui/IconBtn.vue'
 import ToggleRow from '@/components/ui/ToggleRow.vue'
 import DomainInput from '@/components/ui/DomainInput.vue'
 import CertsPanel from '@/components/settings/CertsPanel.vue'
@@ -477,6 +500,8 @@ const settings = ref({
   subRemarkPrefix: "true",
   subURI: "",
   subJsonExt: "",
+  subJsonExcludePkgUrls: "",
+  subJsonExcludePkgInterval: "1",
   subClashExt: "",
   subClashNoDefGrp: "false",
   subClashSprtAll: "false",
@@ -612,6 +637,7 @@ const setData = (data: any) => {
     push.warning({ message: i18n.global.t('setting.acmeMigrated'), duration: 8000 })
   }
   loadSubJsonExt()
+  pkgUrls.value = splitPkgUrls(settings.value.subJsonExcludePkgUrls)
   // 证书路径是域名的派生量,在快照【之前】规整成一致状态:证书页「编辑路径」之后,
   // 这里跟着换,面板下次重启读的才是证书页展示的那份文件
   syncCertsFromList()
@@ -751,6 +777,8 @@ const save = async () => {
     })
     // 保存的响应只描述这次写了什么,不再回带整份设置——重新读一次。
     await loadData()
+    // 保存会在后台开始下载新加的列表,状态跟着刷新
+    if (tab.value === 'jsonSub') loadPkgStatus()
   }
   loading.value = false
 }
@@ -1452,6 +1480,60 @@ const tunAddress = computed({
   }
 })
 
+// ---- 远程排除列表(subJsonExcludePkgUrls,一行一个 URL) ----
+// 用本地数组而不是 split/join 的 computed:刚点「添加」的空行 join 之后就没了。
+const pkgUrls = ref<string[]>([])
+const splitPkgUrls = (raw: string | undefined) => (raw ?? '').split('\n').map(s => s.trim()).filter(s => s.length > 0)
+watch(pkgUrls, (v) => {
+  settings.value.subJsonExcludePkgUrls = v.map(s => s.trim()).filter(s => s.length > 0).join('\n')
+}, { deep: true })
+// 设置一律按字符串存:type="number" 的 v-model 会把值转成数字,后端按 map[string]string
+// 解析,收到数字会把整次保存拒掉。清空当作 0(仅手动)。
+const pkgInterval = computed({
+  get: () => parseInt(settings.value.subJsonExcludePkgInterval) || 0,
+  set: (v: number | string) => { settings.value.subJsonExcludePkgInterval = String(v === '' ? 0 : v) }
+})
+const addPkgUrl = () => { pkgUrls.value.push('') }
+const removePkgUrl = (i: number) => { pkgUrls.value.splice(i, 1) }
+const setPkgUrl = (i: number, v: string) => { pkgUrls.value[i] = v }
+
+type PkgSource = { url: string; count: number; ok: number; tried: number; err?: string }
+const pkgStatus = ref<{ sources: PkgSource[]; total: number; refreshing: boolean }>({ sources: [], total: 0, refreshing: false })
+const pkgSource = (u: string) => pkgStatus.value.sources.find(s => s.url === u.trim())
+const pkgDate = (sec: number) => new Date(sec * 1000).toLocaleString(intlLocale())
+const pkgStatusText = (u: string) => {
+  if (!u.trim()) return ''
+  const s = pkgSource(u)
+  const t = i18n.global.t
+  if (!s) return t('setting.excludePkgUnsaved')
+  if (!s.tried) return t('setting.excludePkgPending')
+  const parts: string[] = []
+  if (s.ok) parts.push(t('setting.excludePkgApps', { n: s.count, time: pkgDate(s.ok) }))
+  if (s.err) parts.push(t('setting.excludePkgFailed', { err: s.err }))
+  return parts.join(' · ')
+}
+
+// 故意绕开 HttpUtils(同 checkProxyDrift):这是后台轮询,失败不该弹错误。
+let pkgPoll: ReturnType<typeof setTimeout> | undefined
+const loadPkgStatus = async () => {
+  clearTimeout(pkgPoll)
+  try {
+    const { data } = await api.get('api/excludePkgStatus')
+    if (data?.success && data.obj) pkgStatus.value = data.obj
+  } catch { /* 留着上一次的状态 */ }
+  // 下载在后台跑,跑完之前每 1.5 秒问一次;离开这一页就停
+  if (pkgStatus.value.refreshing && tab.value === 'jsonSub') pkgPoll = setTimeout(loadPkgStatus, 1500)
+}
+const refreshPkgLists = async () => {
+  const msg = await HttpUtils.post('api/excludePkgRefresh', {})
+  if (msg.success) {
+    pkgStatus.value.refreshing = true
+    loadPkgStatus()
+  }
+}
+watch(tab, (t) => { if (t === 'jsonSub') loadPkgStatus(); else clearTimeout(pkgPoll) }, { immediate: true })
+onBeforeUnmount(() => clearTimeout(pkgPoll))
+
 const tunExcludePkg = computed({
   get: (): string => (inbounds.value?.[0]?.exclude_package ?? []).join(','),
   set: (v: string) => {
@@ -1773,6 +1855,15 @@ const saveClashEditor = (data: string) => {
   letter-spacing: .04em; text-transform: uppercase;
   margin: 16px 0 10px;
 }
+.pkg-hint { font-size: 12px; color: var(--text-3); margin: -4px 0 10px; }
+.pkg-row { margin-bottom: 10px; }
+.pkg-url { display: flex; align-items: center; gap: 6px; }
+.pkg-url .input { flex: 1; min-width: 0; }
+.pkg-status { font-size: 11.5px; color: var(--text-3); margin-top: 4px; padding-inline-start: 2px; overflow-wrap: anywhere; }
+.pkg-status.warn { color: var(--amber); }
+.pkg-foot { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; }
+.pkg-interval { width: 220px; max-width: 100%; }
+.pkg-total { font-size: 12px; color: var(--text-3); padding-bottom: 8px; }
 .builder-foot {
   display: flex; align-items: center; gap: 10px;
   margin-top: 18px; padding-top: 14px;
