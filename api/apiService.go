@@ -627,6 +627,20 @@ func (a *ApiService) savedRows(r *service.SaveResult) (map[string]interface{}, e
 	return resp, nil
 }
 
+// GetExcludePkgStatus reports the JSON subscription's saved package list URLs
+// with what each last download gave.
+func (a *ApiService) GetExcludePkgStatus(c *gin.Context) {
+	status, err := service.GetExcludePkgStatus()
+	jsonObj(c, status, err)
+}
+
+// RefreshExcludePkgs downloads every saved package list again, in the
+// background; the settings page polls GetExcludePkgStatus until it is done.
+func (a *ApiService) RefreshExcludePkgs(c *gin.Context) {
+	service.RequestExcludePkgRefresh(true)
+	jsonObj(c, nil, nil)
+}
+
 func (a *ApiService) RestartApp(c *gin.Context) {
 	// 单位是 time.Duration(纳秒)。这里曾传裸 3,即 3 纳秒 ≈ 立即重启,响应能否在
 	// gin server 被拆掉前刷出去纯属竞态:前端 restartApp 靠 msg.success 才跳转,

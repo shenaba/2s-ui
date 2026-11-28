@@ -91,6 +91,12 @@ func (j *JsonService) GetJson(subId string, format string) (*string, []string, e
 	if err = j.addOthers(&jsonConfig, *outbounds); err != nil {
 		return nil, nil, err
 	}
+	// After addOthers: the inbounds and the rules are final only now.
+	excludePkgs, err := j.SettingService.GetExcludePkgsForSub()
+	if err != nil {
+		return nil, nil, err
+	}
+	mergeExcludePkgs(jsonConfig, excludePkgs)
 
 	result, _ := json.MarshalIndent(jsonConfig, "", "  ")
 	resultStr := string(result)

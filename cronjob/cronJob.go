@@ -81,6 +81,9 @@ func (c *CronJob) Start(loc *time.Location, statsBucketSeconds int64) error {
 	addJob("@every 1m", NewNodeTrafficJob(), "node traffic")
 	// Safety net: reconcile every online node to repair silent node-side drift
 	addJob("@every 1h", NewNodeReconcileJob(), "node reconcile")
+	// Download the JSON subscription's package lists that are due (no-op
+	// without URLs). Hourly; the interval itself is in days, per URL.
+	addJob("@every 1h", cron.FuncJob(func() { service.RequestExcludePkgRefresh(false) }), "package list refresh")
 	// Sample CPU/memory for threshold alerts (no-op unless a threshold is set)
 	addJob("@every 1m", NewCheckSystemJob(), "system check")
 	// Probe outbound reachability (no-op unless the alerts are enabled)
@@ -114,6 +117,9 @@ func (c *CronJob) Start(loc *time.Location, statsBucketSeconds int64) error {
 	addJob("@every 10m", NewWALCheckpointJob(), "WAL checkpoint")
 
 	c.cron.Start()
+	// Once at start too: "@every 1h" first fires an hour in, and lists that
+	// fell due while the panel was down should not wait that long.
+	service.RequestExcludePkgRefresh(false)
 	return nil
 }
 
